@@ -1,12 +1,16 @@
 """analyze 모드 (그림 05~08): 분석·추천 + 빌드 파일 생성.
 
 흐름: 소스 읽기 → 스캔(코드) → LLM 판단 → 검사·보정(코드) → 비용·권한(코드) → 빌드 파일 → 저장
+
+컨테이너가 여러 개면(InfraFit deploy_units 에 컨테이너 2개 이상 또는 데이터 저장소 컨테이너) `_run_multi`:
+추천 대상은 aws_ec2_compose, 추천안에 검사·보완한 deploy_units 를 넣고, 이미지마다 빌드 파일을 만든다.
+컨테이너 1개 앱의 응답은 예전과 같다.
 """
 import re
 import secrets
 from datetime import datetime, timezone
 
-from . import buildfiles, catalog, config, cost, source
+from . import buildfiles, catalog, compose, config, cost, source, units
 from .errors import AgentError
 from .scan import scan as run_scan
 from .schemas import LLMRecommendation
@@ -18,6 +22,8 @@ SECRETISH = re.compile(r"(KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE|DS
 SECRET_VALUE = re.compile(r"AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|\bsk-[A-Za-z0-9_\-]{16,}|\bgh[pousr]_[A-Za-z0-9]{20,}"
                           r"|\bxox[abposr]-|-----BEGIN [A-Z ]*PRIVATE KEY|\bAIza[0-9A-Za-z_\-]{30,}")
 RESERVED_ENV = {"PORT", "AWS_LWA_PORT", "AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
+MULTI_TARGET = "aws_ec2_compose"
+COMPOSE_COMPUTE = "cp:aws/ec2/docker-compose"      # InfraFit capabilities.yaml 의 같은 실행기
 
 
 def new_analysis_id() -> str:
@@ -36,6 +42,9 @@ def run(payload: dict, brain, store: Store) -> dict:
     src = source.load(source_uri)
     scan = run_scan(src)
     rec, df = brain.analyze(src, scan, revision)
+    du = units.from_scan(scan)
+    if units.is_multi(du):
+        return _run_multi(payload, brain, store, src, scan, rec, du, analysis_id)
 
     recommendation, notes = validate(rec, src, scan)
     port = recommendation["container_port"]
@@ -62,22 +71,67 @@ def run(payload: dict, brain, store: Store) -> dict:
 
 
 def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tuple[dict, list[str]]:
-    """LLM 출력을 허용 목록·실제 파일과 대조해서 고친다. 고친 내용은 notes로 남긴다."""
+    """LLM 출력을 허용 목록·실제 파일과 대조해서 고친다. 고친 내용은 notes로 남긴다. (컨테이너 1개)"""
     notes: list[str] = []
     warnings = list(dict.fromkeys([*scan["warnings"], *rec.warnings]))
 
     target = rec.target
+    if target in catalog.MULTI_CONTAINER:
+        notes.append(f"추천 대상 {target}은 컨테이너 여러 개용 → 컨테이너 1개라 aws_ec2 로 변경")
+        target = "aws_ec2"
     if not catalog.is_deployable(target):
         ranked = sorted(rec.candidates, key=lambda c: -c.fit)
-        fallback = next((c.target for c in ranked if catalog.is_deployable(c.target)), "aws_ec2")
+        fallback = next((c.target for c in ranked if catalog.is_deployable(c.target)
+                         and c.target not in catalog.MULTI_CONTAINER), "aws_ec2")
         notes.append(f"추천 대상 {target}은 지금 배포 불가 → {fallback}로 변경")
         target = fallback
 
+    health = _health(rec, notes)
+    env, secrets_needed = _env(rec, notes)
+    clues = _clues(rec, src, notes)
+
+    seen, candidates = set(), []
+    ordered = sorted(rec.candidates, key=lambda c: (c.target != target, -c.fit))
+    for c in ordered:
+        if c.target in seen or c.target in catalog.MULTI_CONTAINER:
+            continue
+        seen.add(c.target)
+        candidates.append(_candidate(c.target, c.fit, c.verdict, c.why, rec.size))
+    for tid in catalog.TARGETS:        # LLM이 빠뜨린 대상도 표시 (적합도 없음)
+        if tid not in seen and tid not in catalog.MULTI_CONTAINER:
+            candidates.append(_candidate(tid, None, "부적합" if not catalog.is_deployable(tid) else "적합",
+                                         "모델이 평가하지 않음", rec.size))
+    for i, c in enumerate(candidates, 1):
+        c["rank"] = i
+
+    t = catalog.TARGETS[target]
+    # 여러 컨테이너 구성은 InfraFit deploy_units 로만 읽는다. 인벤토리가 실패했는데 compose·k8s 에 서비스가 여럿이면
+    # 어떤 컨테이너를 같이 띄워야 하는지 몰라 배포할 수 없다
+    unknown_multi = units.from_scan(scan) is None and bool(scan["compose_services"][1:] or scan["k8s_dirs"])
+    if unknown_multi:
+        warnings.append("InfraFit 인벤토리가 없어 여러 컨테이너 구성(compose·k8s)을 읽지 못했습니다. 다시 분석해 주세요.")
+    supported = rec.supported and not unknown_multi
+    return {
+        # ↓ Terraform Worker가 읽는 필드
+        "cloud": t["cloud"], "architecture": t["architecture"], "container_port": rec.container_port,
+        "size": rec.size, "health_path": health, "env": env, "reason": rec.reason,
+        # ↓ 화면·사용자 검토용
+        "target": target, "label": t["label"], "summary": rec.summary,
+        "required_secrets": sorted(set(secrets_needed)), "permissions": t["permissions"],
+        "cost": cost.estimate(target, rec.size), "clues": clues, "candidates": candidates,
+        "supported": supported, "warnings": warnings,
+    }, notes
+
+
+def _health(rec: LLMRecommendation, notes: list[str]) -> str:
     health = rec.health_path if rec.health_path.startswith("/") else "/" + rec.health_path
     if len(health) > 200 or any(ch in health for ch in " \n\t"):
         notes.append("health_path 형식 오류 → '/'")
         health = "/"
+    return health
 
+
+def _env(rec: LLMRecommendation, notes: list[str]) -> tuple[dict, list[str]]:
     env, secrets_needed = {}, list(rec.required_secrets)
     for k, v in list(rec.env.items())[:30]:
         if not ENV_KEY_RE.match(k) or k in RESERVED_ENV:
@@ -91,7 +145,10 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
             secrets_needed.append(k)
             continue
         env[k] = str(v)[:200].replace("\n", " ")
+    return env, secrets_needed
 
+
+def _clues(rec: LLMRecommendation, src: source.SourceTree, notes: list[str]) -> list[dict]:
     clues = []
     for c in rec.clues[:8]:
         p = source.normalize(c.file)
@@ -103,33 +160,132 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
             notes.append(f"근거 줄 번호가 범위를 벗어나서 지움: {p}:{line}")
             line = None
         clues.append({**c.model_dump(), "file": p, "line": line})
+    return clues
 
-    seen, candidates = set(), []
-    ordered = sorted(rec.candidates, key=lambda c: (c.target != target, -c.fit))
-    for c in ordered:
+
+# ---------------- 컨테이너 여러 개 (ec2_compose) ----------------
+
+def validate_multi(rec: LLMRecommendation, src: source.SourceTree, scan: dict, du: dict) -> tuple[dict, list[str]]:
+    """deploy_units 를 코드로 검사하고, LLM 보완(unit_fixes)을 다시 검사해 반영한다.
+    supported=false 는 실행할 수 없는 컨테이너가 있거나 InfraFit 후보가 없을 때만."""
+    notes: list[str] = []
+    warnings = list(dict.fromkeys([*scan["warnings"], *rec.warnings]))
+    u, check_notes, problems = units.check(du, src)
+    notes += check_notes
+    applied, rejected = units.apply_fixes(u, rec.unit_fixes, src)
+    notes += rejected
+    problems += units.final_problems(u)
+    run_notes, run_secrets = units.prepare_run(u, src)
+    if not problems:
+        try:
+            compose.render(u)
+        except AgentError as e:
+            problems.append(f"compose 를 만들 수 없습니다: {e.message}")
+
+    target = MULTI_TARGET
+    if not catalog.is_deployable(target):
+        problems.append(f"컨테이너 여러 개를 실행하는 {target} 가 지금 배포 가능 목록(PAWPLOY_DEPLOYABLE)에 없습니다")
+    if rec.target != target:
+        notes.append(f"모델 추천 {rec.target} → 컨테이너가 여러 개라 {target} 로 정함")
+    if not rec.supported:
+        notes.append("모델은 supported=false 로 봤지만, 여러 컨테이너는 코드 검사 결과로만 판단함")
+    reco = ((scan.get("inventory") or {}).get("summary") or {}).get("recommendation") or {}
+    if reco.get("no_feasible"):
+        problems.append("InfraFit: 조건을 모두 만족하는 컴퓨트 후보가 없습니다")
+    services = [*u["containers"], *u["datastores"]]
+    warnings += _infrafit_compute_warnings(reco, len(services))
+    if rec.size == "micro" and len(services) > 2:
+        warnings.append(f"컨테이너 {len(services)}개를 t3.micro(메모리 1GB)에 띄웁니다. 메모리가 모자라면 medium 을 고르세요.")
+
+    health = _health(rec, notes)
+    env, secrets_needed = _env(rec, notes)
+    clues = _clues(rec, src, notes)
+    names = ", ".join(s["id"] for s in services[:8])
+    llm_fit = {c.target: c for c in rec.candidates}
+    first = llm_fit.get(target) or llm_fit.get("aws_ec2")
+    candidates = [_candidate(target, first.fit if first else None, "추천",
+                             f"컨테이너 {len(services)}개({names})를 서버 1대에서 Docker Compose 로 함께 실행", rec.size)]
+    seen = {target}
+    for c in sorted(rec.candidates, key=lambda c: -c.fit):
         if c.target in seen:
             continue
         seen.add(c.target)
         candidates.append(_candidate(c.target, c.fit, c.verdict, c.why, rec.size))
-    for tid in catalog.TARGETS:        # LLM이 빠뜨린 대상도 표시 (적합도 없음)
+    for tid in catalog.TARGETS:
         if tid not in seen:
-            candidates.append(_candidate(tid, None, "부적합" if not catalog.is_deployable(tid) else "적합",
-                                         "모델이 평가하지 않음", rec.size))
+            candidates.append(_candidate(tid, None, "부적합", "모델이 평가하지 않음", rec.size))
     for i, c in enumerate(candidates, 1):
         c["rank"] = i
+        if i > 1:                                  # 컨테이너 하나만 받는 대상: 이 앱은 그대로 못 띄움
+            c["deployable"] = False
+            c["why"] = f"컨테이너가 {len(services)}개라 이 대상 하나로는 그대로 띄울 수 없음. {c['why']}"
 
     t = catalog.TARGETS[target]
-    supported = rec.supported and not scan["compose_services"][1:] and not scan["k8s_dirs"]
+    warnings += problems + applied + units.review_warnings(u) + run_notes
     return {
-        # ↓ Terraform Worker가 읽는 필드
-        "cloud": t["cloud"], "architecture": t["architecture"], "container_port": rec.container_port,
+        "cloud": t["cloud"], "architecture": t["architecture"], "container_port": (u.get("entry") or {}).get("port"),
         "size": rec.size, "health_path": health, "env": env, "reason": rec.reason,
-        # ↓ 화면·사용자 검토용
         "target": target, "label": t["label"], "summary": rec.summary,
-        "required_secrets": sorted(set(secrets_needed)), "permissions": t["permissions"],
+        "required_secrets": sorted(set(secrets_needed) | set(run_secrets)), "permissions": t["permissions"],
         "cost": cost.estimate(target, rec.size), "clues": clues, "candidates": candidates,
-        "supported": supported, "warnings": warnings,
+        "supported": not problems, "warnings": list(dict.fromkeys(warnings)),
+        "deploy_units": u,
     }, notes
+
+
+def _infrafit_compute_warnings(reco: dict, count: int) -> list[str]:
+    rec = reco.get("recommended") or {}
+    assignment = rec.get("assignment") or {}
+    compute = next((c for c in assignment.values() if str(c).startswith("cp:")), None)
+    out = []
+    if compute and compute != COMPOSE_COMPUTE:
+        out.append(f"InfraFit 1순위 컴퓨트는 {rec.get('target') or '?'}({compute})지만, 컨테이너 {count}개를 그대로 함께 "
+                   f"띄울 수 있는 배포 대상은 {MULTI_TARGET} 뿐이라 이것으로 정했습니다.")
+    managed = sorted(c for c in assignment.values() if not str(c).startswith("cp:"))
+    if managed:
+        out.append(f"InfraFit 은 데이터 저장소를 관리형({', '.join(managed[:4])})으로 추천했지만, 이번 배포는 같은 서버의 "
+                   "컨테이너로 띄웁니다 (서버를 지우면 데이터도 사라짐).")
+    return out
+
+
+def _run_multi(payload: dict, brain, store: Store, src, scan: dict, rec, du: dict, analysis_id: str) -> dict:
+    project_id = payload["project_id"]
+    recommendation, notes = validate_multi(rec, src, scan, du)
+    u = recommendation["deploy_units"]
+    ports = units.image_ports(u)
+    files = {"dockerignore": buildfiles.DOCKERIGNORE, "buildspec.yml": buildfiles.buildspec_images()}
+    images, df_notes = {}, []
+    for img in u["images"]:
+        iid = img["id"]
+        if img.get("dockerfile"):              # 프로젝트 Dockerfile 은 그대로 쓴다 (고치지 않음)
+            images[iid] = {"dockerfile": img["dockerfile"], "generated": False, "context": img["context"],
+                           "target": img.get("target"), "port": ports.get(iid)}
+            df_notes.append(f"{iid}: 프로젝트 Dockerfile 그대로 사용 ({img['dockerfile']})")
+            continue
+        out = brain.image_dockerfile(src, scan, img, units.users_of(u, iid))
+        text, fixes = buildfiles.normalize_dockerfile(out.dockerfile, ports.get(iid), lambda_adapter=False)
+        name = buildfiles.generated_name(iid)
+        files[name] = text
+        images[iid] = {"dockerfile": name, "generated": True, "context": img["context"], "target": None,
+                       "port": ports.get(iid)}
+        df_notes += [f"{iid}: {n}" for n in [*out.notes, *fixes]]
+    files[buildfiles.IMAGES_JSON], files[buildfiles.IMAGES_TSV] = buildfiles.images_manifest(images)
+
+    build_prefix = f"projects/{project_id}/build/{analysis_id}/attempt-1/"
+    for name, text in files.items():
+        store.put_text(build_prefix + name, text)
+    recommendation["dockerfile_notes"] = df_notes
+    recommendation.update({"project_id": project_id, "analysis_id": analysis_id,
+                           "commit_sha": payload.get("commit_sha"), "model_id": config.MODEL_ID,
+                           "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")})
+    rec_uri = store.put_json(f"projects/{project_id}/analysis/{analysis_id}/recommendation.json", recommendation)
+    return {
+        "status": "ok", "mode": "analyze", "project_id": project_id, "analysis_id": analysis_id,
+        "recommendation": recommendation, "recommendation_uri": rec_uri,
+        "build_files": {"attempt": 1, "uri_prefix": store.prefix_uri(build_prefix), "images": images,
+                        "buildspec": files["buildspec.yml"]},
+        "validation_notes": notes,
+    }
 
 
 def _candidate(tid: str, fit, verdict, why, size) -> dict:

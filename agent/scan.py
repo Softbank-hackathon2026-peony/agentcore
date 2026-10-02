@@ -159,9 +159,9 @@ def scan(src: SourceTree, inventory: bool = True) -> dict:
     warnings = []
     if len(compose_services) > 1:
         warnings.append(f"docker compose 서비스가 {len(compose_services)}개입니다 ({', '.join(compose_services[:6])}). "
-                        "컨테이너 1개 배포만 지원합니다.")
+                        "같이 떠야 하는 컨테이너는 InfraFit deploy_units 로 묶어 서버 1대(aws_ec2_compose)에 함께 띄웁니다.")
     if k8s:
-        warnings.append("Kubernetes 매니페스트가 있습니다. 쿠버네티스 배포는 지원하지 않습니다.")
+        warnings.append("Kubernetes 매니페스트가 있습니다. 쿠버네티스로 배포하지는 않고 컨테이너 구성만 참고합니다.")
     if datastores and datastores != ["sqlite"]:
         warnings.append(f"외부 데이터베이스/캐시가 필요해 보입니다: {', '.join(datastores)}")
     if secrets_present:

@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-TargetId = Literal["aws_lambda", "aws_ec2", "gcp_cloud_run", "aws_ecs_fargate", "gcp_compute_engine"]
+TargetId = Literal["aws_lambda", "aws_ec2", "aws_ec2_compose", "gcp_cloud_run", "aws_ecs_fargate", "gcp_compute_engine"]
 Size = Literal["micro", "small", "medium"]
 Verdict = Literal["추천", "적합", "과함", "낭비", "부적합"]
 
@@ -27,6 +27,16 @@ class Candidate(BaseModel):
     why: str = Field(description="한두 문장 이유 (초보자용)")
 
 
+class UnitFix(BaseModel):
+    """InfraFit deploy_units 에서 비어 있거나(unresolved) 개발용인 값 하나를 보완. 코드가 다시 검사하고 warnings 에 남긴다."""
+    field: Literal["port", "command", "entrypoint", "build_target", "entry"] = Field(
+        description="port=듣는 포트, command/entrypoint=운영용 실행 명령, build_target=Dockerfile 운영 단계, entry=80번으로 받을 컨테이너")
+    id: str = Field(description="containers[].id 또는 datastores[].id (build_target 은 images[].id)")
+    value: str = Field(description="port·entry: 포트 숫자 / command·entrypoint: 실행 명령 (entrypoint 를 빈 문자열로 주면 이미지 기본값) "
+                                   "/ build_target: Dockerfile 의 `FROM ... AS <이름>` 단계 이름")
+    why: str = Field(description="실제로 읽은 파일·줄 근거 한 문장")
+
+
 class LLMRecommendation(BaseModel):
     summary: str = Field(description="이 프로젝트가 무엇인지 한 문장")
     target: TargetId = Field(description="최종 추천 배포 대상 (배포 가능한 대상 중에서)")
@@ -40,8 +50,10 @@ class LLMRecommendation(BaseModel):
     reason: str = Field(description="왜 이 대상을 골랐는지 초보자용 2~3문장")
     clues: list[Clue] = Field(description="판단 근거 3~6개")
     candidates: list[Candidate] = Field(description="모든 대상을 적합한 순서로 (1위 = target)")
-    supported: bool = Field(description="컨테이너 1개로 배포 가능한 프로젝트면 true")
+    supported: bool = Field(description="배포 가능한 대상으로 실행할 수 없는 컨테이너가 있을 때만 false")
     warnings: list[str] = Field(default_factory=list)
+    unit_fixes: list[UnitFix] = Field(default_factory=list,
+                                      description="컨테이너가 여러 개일 때만: deploy_units 의 빈 값·개발용 값 보완 (없으면 빈 목록)")
 
 
 class DockerfileOut(BaseModel):

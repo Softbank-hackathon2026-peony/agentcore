@@ -77,6 +77,7 @@ def test_scan_multi_service_warns():
     assert "fastapi" in s["frameworks"] and "postgres" in s["datastores"]
     assert {"DATABASE_URL", "REDIS_URL"} <= set(s["env_names"])
     assert any("서비스가 4개" in w for w in s["warnings"])
+    assert not any("1개" in w and "지원" in w for w in s["warnings"])      # 예전 "컨테이너 1개 배포만 지원" 경고 없음
 
 
 # ---------- analyze ----------
@@ -94,6 +95,10 @@ def test_analyze_ok_and_worker_fields(tmp_path):
     assert rec["candidates"][0]["target"] == "aws_lambda" and rec["candidates"][0]["rank"] == 1
     assert len(rec["candidates"]) == 5                         # 1~5순위
     assert rec["cost"]["monthly"] is not None and rec["cost"]["source"]   # 단가는 출처와 함께
+    # 컨테이너 1개 앱은 예전 응답 그대로 (여러 컨테이너용 필드·대상 없음)
+    assert "deploy_units" not in rec and "aws_ec2_compose" not in [c["target"] for c in rec["candidates"]]
+    assert set(out["build_files"]) == {"attempt", "uri_prefix", "dockerfile", "buildspec"}
+    assert "ECR_IMAGE_URI" in out["build_files"]["buildspec"] and "IMAGE_DIGESTS" not in out["build_files"]["buildspec"]
     # 저장 경로
     saved = json.loads((tmp_path / f"projects/prj_demo/analysis/{out['analysis_id']}/recommendation.json").read_text("utf-8"))
     assert saved["architecture"] == "lambda"
@@ -121,9 +126,33 @@ def test_analyze_revision_passed_to_brain(tmp_path):
     assert brain.calls[0][1]["message"] == "항상 켜져 있어야 해"
 
 
-def test_analyze_multi_service_unsupported(tmp_path):
+def test_analyze_multi_service_runs_as_compose(tmp_path):
+    """예전에는 compose 서비스가 여럿이면 supported=false 로 막았다. 이제는 deploy_units 로 서버 1대(ec2_compose)에 함께 띄운다."""
+    brain = FakeBrain()
+    out, _ = analyze(tmp_path, brain=brain, source_uri=MULTI)
+    rec = out["recommendation"]
+    assert rec["supported"] is True, rec["warnings"]
+    assert (rec["target"], rec["cloud"], rec["architecture"], rec["container_port"]) == \
+        ("aws_ec2_compose", "aws", "ec2_compose", 8000)
+    du = rec["deploy_units"]
+    assert [c["id"] for c in du["containers"]] == ["api", "worker"] and [d["id"] for d in du["datastores"]] == ["db", "redis"]
+    # Dockerfile 이 없는 이미지만 LLM 이 만든다 (Lambda 어댑터 없음, api·worker 가 같은 이미지)
+    assert ("image_dockerfile", "api", ["api", "worker"]) in brain.calls
+    img = out["build_files"]["images"]["api"]
+    assert img["generated"] is True and img["dockerfile"] == "Dockerfile.pawploy.api" and img["context"] == "api"
+    df = (tmp_path / f"projects/prj_demo/build/{out['analysis_id']}/attempt-1/Dockerfile.pawploy.api").read_text()
+    assert buildfiles.LWA_LINE not in df and "ENV PORT=8000" in df
+    assert "dockerfile" not in out["build_files"]
+
+
+def test_analyze_compose_without_inventory_still_blocked(tmp_path, monkeypatch):
+    """InfraFit 이 없으면 어떤 컨테이너를 같이 띄울지 몰라 예전처럼 막는다."""
+    from agent import config
+    monkeypatch.setattr(config, "INVENTORY_TIMEOUT", 0)
     out, _ = analyze(tmp_path, source_uri=MULTI)
-    assert out["recommendation"]["supported"] is False
+    rec = out["recommendation"]
+    assert rec["supported"] is False and "deploy_units" not in rec
+    assert any("InfraFit 인벤토리가 없어" in w for w in rec["warnings"])
 
 
 def test_unsafe_dockerfile_rejected(tmp_path):
@@ -498,3 +527,9 @@ def test_inventory_outcome_detail_is_text():
     block = inventory.recommendation_summary({"dimensions": []}, {"matrix": []}, reco)
     assert block["outcome"] == "static_only"
     assert block["outcome_detail"] == "정적 사이트 / 현재: static hosting (vercel.json)"
+
+
+def test_example_buildspecs_match_templates():
+    root = Path(__file__).resolve().parent.parent / "examples"
+    assert (root / "buildspec.yml").read_text(encoding="utf-8") == buildfiles.buildspec()
+    assert (root / "buildspec-images.yml").read_text(encoding="utf-8") == buildfiles.buildspec_images()

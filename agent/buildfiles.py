@@ -6,6 +6,9 @@
   * 비밀 파일(.env, 키 파일)을 COPY/ADD 하지 않음
 - buildspec 은 LLM이 만들지 않는다. CodeBuild 안에서 임의 셸 명령이 실행되는 파일이라
   정해진 템플릿을 코드로 생성한다 (프롬프트 인젝션 방지).
+- 컨테이너가 여러 개면(ec2_compose) 이미지마다 빌드한다. 이미지 목록은 코드가 검사한 images.tsv 로 넘기고
+  buildspec 은 그 목록을 도는 고정 템플릿(buildspec_images)이다. 프로젝트 Dockerfile 은 그대로 쓰고,
+  없을 때만 LLM 이 만든 Dockerfile.pawploy.<이미지 id> 를 쓴다.
 """
 import re
 
@@ -16,6 +19,10 @@ LWA_IMAGE = "public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0"   # Terraform-work
 LWA_LINE = f"COPY --from={LWA_IMAGE} /lambda-adapter /opt/extensions/lambda-adapter"
 DOCKERFILE_NAME = "Dockerfile.pawploy"
 MAX_DOCKERFILE_CHARS = 8000
+IMAGES_JSON = "images.json"      # 이미지 목록 (사람·fix_build 용)
+IMAGES_TSV = "images.tsv"        # 같은 목록을 buildspec 이 읽는 모양으로 (id, 컨텍스트, Dockerfile, 단계, 생성 여부)
+_TSV_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")       # Worker job.IMAGE_ID_RE 와 같음
+_TSV_PATH = re.compile(r"^[A-Za-z0-9_.][A-Za-z0-9_./@+-]{0,250}$")  # 탭·줄바꿈·공백 없음, - 로 시작하지 않음
 
 DOCKERIGNORE = "\n".join([
     "# Pawploy가 추가한 규칙: 비밀·불필요 파일은 이미지에 넣지 않는다",
@@ -28,8 +35,14 @@ _SECRET_COPY = re.compile(r"^\s*(COPY|ADD)\b(.*)$", re.I)
 _FROM = re.compile(r"^\s*FROM\s+", re.I)
 
 
-def normalize_dockerfile(text: str, port: int) -> tuple[str, list[str]]:
-    """규칙을 강제한 Dockerfile과, 코드가 고친 내용 목록을 돌려준다."""
+def generated_name(image_id: str) -> str:
+    """여러 이미지 중 하나를 위해 만든 Dockerfile 이름 (빌드 파일 폴더 안, CodeBuild 에서는 소스 루트에 둔다)."""
+    return f"{DOCKERFILE_NAME}.{image_id}"
+
+
+def normalize_dockerfile(text: str, port: int | None, lambda_adapter: bool = True) -> tuple[str, list[str]]:
+    """규칙을 강제한 Dockerfile과, 코드가 고친 내용 목록을 돌려준다.
+    여러 컨테이너(ec2_compose) 이미지는 Lambda 에서 돌지 않으므로 lambda_adapter=False, 포트를 모르면 port=None."""
     if not text or not text.strip():
         raise AgentError("dockerfile_invalid", "Dockerfile이 비어 있습니다")
     if len(text) > MAX_DOCKERFILE_CHARS:
@@ -48,9 +61,12 @@ def normalize_dockerfile(text: str, port: int) -> tuple[str, list[str]]:
 
     # Lambda Web Adapter: 마지막 스테이지에 없으면 FROM 바로 아래 추가
     last = from_idx[-1]
-    if not any("aws-lambda-adapter" in l for l in lines[last:]):
+    if lambda_adapter and not any("aws-lambda-adapter" in l for l in lines[last:]):
         lines.insert(last + 1, LWA_LINE)
         fixes.append("Lambda Web Adapter 줄을 추가함 (EC2·Cloud Run에서는 무시됨)")
+
+    if port is None:
+        return "\n".join(lines).strip("\n") + "\n", fixes
 
     # PORT / EXPOSE
     body = "\n".join(lines)
@@ -124,3 +140,51 @@ phases:
       - if [ -n "$GCP_AR_REPO" ]; then docker tag "$ECR_REPO_URI:$IMAGE_TAG" "$GCP_AR_REPO:$IMAGE_TAG" && docker push "$GCP_AR_REPO:$IMAGE_TAG" && export GCP_IMAGE_URI="$(docker inspect --format='{{{{range .RepoDigests}}}}{{{{println .}}}}{{{{end}}}}' "$GCP_AR_REPO:$IMAGE_TAG" | grep "$GCP_AR_REPO" | head -1)"; fi
       - echo "ECR_IMAGE_URI=$ECR_IMAGE_URI GCP_IMAGE_URI=$GCP_IMAGE_URI"
 """
+
+
+def images_manifest(images: dict[str, dict]) -> tuple[str, str]:
+    """build_files.images → (images.json, images.tsv). 셸에 들어가는 값이라 형식을 코드로 다시 확인한다."""
+    rows = []
+    for iid, img in images.items():
+        ctx = img.get("context") or "."
+        values = [iid, ctx, img["dockerfile"], img.get("target") or "-"]
+        paths_ok = all(_TSV_PATH.match(v) and ".." not in v.split("/") for v in values[1:3])
+        if not _TSV_ID.match(iid) or not paths_ok or not (values[3] == "-" or _TSV_ID.match(values[3])):
+            raise AgentError("build_files_invalid", f"이미지 {iid!r} 의 빌드 정보 형식이 맞지 않습니다: {values}")
+        rows.append("\t".join(values + ["true" if img.get("generated") else "false"]))
+    import json
+    return json.dumps(images, ensure_ascii=False, indent=2) + "\n", "\n".join(rows) + "\n"
+
+
+def buildspec_images() -> str:
+    """여러 이미지 CodeBuild buildspec (고정 템플릿). 이미지 목록은 BUILD_FILES_URI 의 images.tsv.
+
+    Main Server가 start_build 때 넘겨야 하는 환경변수: SOURCE_URI, BUILD_FILES_URI, ECR_REPO_URI, IMAGE_TAG (buildspec() 과 같음)
+    이미지마다 태그 <IMAGE_TAG>-<이미지 id> 로 빌드·푸시한다 (ec2_compose 는 AWS 만이라 GCP push 는 없음).
+    결과(exported-variables): IMAGE_DIGESTS = {"<이미지 id>": "<ECR_REPO_URI>@sha256:...", ...} (JSON 한 줄)
+    """
+    return """version: 0.2
+env:
+  shell: bash
+  exported-variables:
+    - IMAGE_DIGESTS
+phases:
+  pre_build:
+    commands:
+      - mkdir -p /tmp/src && cd /tmp/src
+      - case "$SOURCE_URI" in */) aws s3 cp --recursive "$SOURCE_URI" . ;; *.zip) aws s3 cp "$SOURCE_URI" /tmp/src.zip && unzip -q /tmp/src.zip -d . ;; *) aws s3 cp "$SOURCE_URI" /tmp/src.tgz && tar -xzf /tmp/src.tgz -C . ;; esac
+      - if [ "$(ls -A | wc -l)" = "1" ] && [ -d "$(ls -A)" ]; then cd "$(ls -A)"; fi
+      - aws s3 cp --recursive "${BUILD_FILES_URI}" /tmp/pawploy/
+      - echo "$PWD" > /tmp/build_dir
+      - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "${ECR_REPO_URI%%/*}"
+  build:
+    commands:
+      - cd "$(cat /tmp/build_dir)"
+      - fail=0; while IFS=$'\\t' read -r id ctx df target gen; do if [ "$gen" = "true" ]; then cp "/tmp/pawploy/$df" "./$df"; fi; cat /tmp/pawploy/dockerignore >> "$ctx/.dockerignore"; if [ -f "$df.dockerignore" ]; then cat /tmp/pawploy/dockerignore >> "$df.dockerignore"; fi; tgt=(); if [ "$target" != "-" ]; then tgt=(--target "$target"); fi; echo "[pawploy] build $id ($df @ $ctx)"; docker build --platform linux/amd64 -f "$df" "${tgt[@]}" -t "$ECR_REPO_URI:$IMAGE_TAG-$id" "$ctx" || { fail=1; break; }; done < /tmp/pawploy/IMAGES_TSV; test "$fail" = 0
+  post_build:
+    commands:
+      - test "$CODEBUILD_BUILD_SUCCEEDING" = "1"
+      - cd "$(cat /tmp/build_dir)"
+      - fail=0; sep=""; out="{"; while IFS=$'\\t' read -r id ctx df target gen; do docker push "$ECR_REPO_URI:$IMAGE_TAG-$id" || { fail=1; break; }; d="$(docker inspect --format='{{index .RepoDigests 0}}' "$ECR_REPO_URI:$IMAGE_TAG-$id")"; out="$out$sep\\"$id\\":\\"$d\\""; sep=","; done < /tmp/pawploy/IMAGES_TSV; test "$fail" = 0 && export IMAGE_DIGESTS="$out}"
+      - echo "IMAGE_DIGESTS=$IMAGE_DIGESTS"
+""".replace("IMAGES_TSV", IMAGES_TSV)

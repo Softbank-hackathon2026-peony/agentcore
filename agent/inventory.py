@@ -12,6 +12,8 @@ LLM 프롬프트에 넣을 수 있게 작게(약 10KB 이하) 요약한다.
 - 별도 프로세스 + 시간 제한: InfraFit이 멈추거나 죽어도 analyze 는 계속된다.
 - 절대 예외를 던지지 않는다. 실패하면 {"status": "error"|"timeout", "message": ...}.
 - 요약의 file:line 은 inventory.json 의 근거를 그대로 옮긴 것이다 (실제 저장소 경로).
+- deploy_units(같이 떠야 하는 컨테이너 묶음)는 결과 최상위 `deploy_units` 에 **전체**를 두고(코드가 검사·렌더에 씀),
+  프롬프트용 `summary.deploy_units` 에는 줄인 것만 둔다 (근거 snippet·환경변수 값 제외, 3KB 이하).
 """
 import json
 import os
@@ -30,6 +32,7 @@ CODE_ROOT = Path(__file__).resolve().parent.parent        # 배포 zip 루트 (�
 VENDOR_DIR = CODE_ROOT / "vendor" / "infrafit"
 MAX_SUMMARY_BYTES = 10000                                  # 요약 전체 (S1 + recommendation)
 MAX_RECOMMENDATION_BYTES = 4000                            # 그중 recommendation 블록
+MAX_DEPLOY_UNITS_BYTES = 3000                              # 그중 deploy_units 블록
 APP_DIMENSIONS = ("A1", "A2", "A3", "A4", "B1", "B2", "B3", "E2")
 ENV_EXAMPLE_FILES = {".env.example", ".env.sample", ".env.template", "env.example"}
 EXPLICIT_SETTING = re.compile(r"timeout|body", re.I)
@@ -100,6 +103,8 @@ def run_inventory(src: SourceTree, timeout_s: int = 60) -> dict:
                 later = {st: json.loads((run_dir / f).read_text(encoding="utf-8")) for st, f in STAGE_FILES.items()}
             result = {"status": "ok", "infrafit_commit": _commit(),
                       "summary": summarize(inventory, later.get("S2"), later.get("S3"), later.get("S4"))}
+            if inventory.get("deploy_units"):
+                result["deploy_units"] = inventory["deploy_units"]
             if stage_error:
                 result["stage_error"] = stage_error
             return result
@@ -209,12 +214,47 @@ def summarize(inv: dict, profile: dict | None = None, fit: dict | None = None,
         "request_paths": dict(list(paths.items())[:10]),
         "unmapped": [u.get("label") for u in inv.get("unmapped") or []][:20],
     }
+    units = deploy_units_summary(inv["deploy_units"]) if inv.get("deploy_units") else None
+    reserved = _size(units) + len(', "deploy_units": ') if units else 0
     if reco is None or profile is None:
-        return _bound(summary)
-    block = _bound_recommendation(recommendation_summary(profile, fit or {}, reco))
-    _bound(summary, MAX_SUMMARY_BYTES - _size(block) - len(', "recommendation": '))
-    summary["recommendation"] = block
+        _bound(summary, MAX_SUMMARY_BYTES - reserved)
+    else:
+        block = _bound_recommendation(recommendation_summary(profile, fit or {}, reco))
+        _bound(summary, MAX_SUMMARY_BYTES - reserved - _size(block) - len(', "recommendation": '))
+        summary["recommendation"] = block
+    if units:
+        summary["deploy_units"] = units
     return summary
+
+
+def deploy_units_summary(du: dict) -> dict:
+    """프롬프트용 deploy_units: 근거 snippet·환경변수 값은 빼고 이름·구조만. 3KB 를 넘으면 뒤에서부터 줄인다."""
+    def short(text, n=160):
+        return _short(text, n) if text else None
+
+    out = {
+        "source": du.get("source"),
+        "images": [{k: v for k, v in {"id": i.get("id"), "context": i.get("context"), "dockerfile": i.get("dockerfile"),
+                                       "target": i.get("target")}.items() if v is not None} for i in du.get("images") or []],
+        "containers": [{k: v for k, v in {
+            "id": c.get("id"), "image": c.get("image"), "registry_image": c.get("registry_image"),
+            "command": short(c.get("command")), "entrypoint": short(c.get("entrypoint")), "ports": c.get("ports"),
+            "env_names": c.get("env_names"), "depends_on": c.get("depends_on"), "one_shot": c.get("one_shot"),
+            "at": _at(c.get("evidence"))}.items() if v not in (None, [])} for c in du.get("containers") or []],
+        "datastores": [{k: v for k, v in {
+            "id": d.get("id"), "image": d.get("image"), "build_image": d.get("build_image"), "ports": d.get("ports"),
+            "datastore": d.get("datastore")}.items() if v not in (None, [])} for d in du.get("datastores") or []],
+        "entry": du.get("entry"),
+        "unresolved": [{"field": u.get("field"), "why": short(u.get("why"))} for u in du.get("unresolved") or []][:10],
+    }
+    if _size(out) > MAX_DEPLOY_UNITS_BYTES:
+        for c in out["containers"]:
+            c.pop("env_names", None)
+    for key in ("unresolved", "containers", "datastores", "images"):
+        while _size(out) > MAX_DEPLOY_UNITS_BYTES and out[key]:
+            out[key] = out[key][:-1]
+            out["truncated"] = True
+    return out
 
 
 def _component_of(inv: dict, scope: str) -> str | None:
