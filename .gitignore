@@ -6,3 +6,4 @@ __pycache__/
 work/
 .bedrock_agentcore/
 .agentcore/
+.tools/
