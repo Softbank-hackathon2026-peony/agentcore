@@ -226,11 +226,19 @@ def validate_multi(rec: LLMRecommendation, src: source.SourceTree, scan: dict, d
         "cloud": t["cloud"], "architecture": t["architecture"], "container_port": (u.get("entry") or {}).get("port"),
         "size": rec.size, "health_path": health, "env": env, "reason": rec.reason,
         "target": target, "label": t["label"], "summary": rec.summary,
-        "required_secrets": sorted(set(secrets_needed) | set(run_secrets)), "permissions": t["permissions"],
+        "required_secrets": sorted((set(secrets_needed) - _generated_env(u)) | set(run_secrets)),
+        "permissions": t["permissions"],
         "cost": cost.estimate(target, rec.size), "clues": clues, "candidates": candidates,
         "supported": not problems, "warnings": list(dict.fromkeys(warnings)),
         "deploy_units": u,
     }, notes
+
+
+def _generated_env(u: dict) -> set[str]:
+    """배포 때 모듈이 만드는 비밀번호(passwords)로 채우는 환경변수 이름. 사용자가 넣을 비밀값이 아니다."""
+    return {name for svc in [*u["containers"], *u["datastores"]]
+            for name, parts in ((svc.get("run") or {}).get("env") or {}).items()
+            if any(isinstance(p, dict) and "password" in p for p in parts)}
 
 
 def _infrafit_compute_warnings(reco: dict, count: int) -> list[str]:

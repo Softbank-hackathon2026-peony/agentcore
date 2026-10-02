@@ -132,6 +132,13 @@ def test_board_end_to_end(tmp_path):
     assert s["postgres"]["healthcheck"]["test"] == ["CMD-SHELL", "pg_isready -U app -d app"]
 
 
+def test_generated_passwords_are_not_required_secrets(tmp_path):
+    """LLM 이 DATABASE_URL·POSTGRES_PASSWORD 를 비밀값으로 적어도, 모듈이 만드는 비밀번호로 채우면 사용자에게 묻지 않는다."""
+    brain = _brain(BOARD_FIXES, required_secrets=["DATABASE_URL", "POSTGRES_PASSWORD", "STRIPE_KEY"])
+    out, _, _ = _analyze(tmp_path, BOARD, brain=brain)
+    assert out["recommendation"]["required_secrets"] == ["STRIPE_KEY"]
+
+
 def test_board_gen_terraform_is_deterministic_and_only_aws(tmp_path):
     out, store, _ = _analyze(tmp_path, BOARD, BOARD_FIXES)
     rec = out["recommendation"]
