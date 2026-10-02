@@ -10,3 +10,5 @@ ARTIFACT_BUCKET = os.environ.get("PAWPLOY_ARTIFACT_BUCKET", "")
 MAX_ATTEMPTS = int(os.environ.get("PAWPLOY_MAX_ATTEMPTS", "3"))
 # 에이전트가 도구를 부를 수 있는 최대 턴 수 (무한 루프 방지)
 MAX_TURNS = int(os.environ.get("PAWPLOY_MAX_TURNS", "12"))
+# InfraFit 인벤토리(별도 프로세스) 시간 제한(초). 0 이하면 인벤토리를 돌리지 않는다.
+INVENTORY_TIMEOUT = int(os.environ.get("PAWPLOY_INVENTORY_TIMEOUT", "60"))

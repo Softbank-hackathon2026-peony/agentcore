@@ -1,0 +1,261 @@
+{
+  "current_components": [
+    {
+      "component": "ds:local/sqlite/wal",
+      "evidence": [
+        {
+          "kind": "tech",
+          "line": 8,
+          "path": "db.py",
+          "snippet": "conn = sqlite3.connect(DB_PATH, timeout=5)"
+        },
+        {
+          "kind": "tech",
+          "line": 9,
+          "path": "db.py",
+          "snippet": "conn.execute(\"PRAGMA journal_mode=WAL\")"
+        }
+      ],
+      "label": "SIG-DS-SQLITE",
+      "scope": "ds-sqlite",
+      "settings": [],
+      "status": "confirmed"
+    },
+    {
+      "component": "fs:local/container-disk/default",
+      "evidence": [
+        {
+          "kind": "tech",
+          "line": 56,
+          "path": "app.py",
+          "snippet": "f.save(os.path.join(UPLOAD_DIR, f.filename))"
+        }
+      ],
+      "label": "SIG-FS-LOCAL",
+      "scope": "svc-container-disk",
+      "settings": [],
+      "status": "candidate"
+    },
+    {
+      "component": "cp:docker/container/unspecified-host",
+      "evidence": [
+        {
+          "line": null,
+          "path": "Dockerfile",
+          "snippet": "Dockerfile"
+        }
+      ],
+      "scope": "w-web",
+      "settings": [],
+      "status": "confirmed"
+    }
+  ],
+  "datastores": [
+    {
+      "evidence": [
+        {
+          "kind": "tech",
+          "line": 8,
+          "path": "db.py",
+          "snippet": "conn = sqlite3.connect(DB_PATH, timeout=5)"
+        },
+        {
+          "kind": "tech",
+          "line": 9,
+          "path": "db.py",
+          "snippet": "conn.execute(\"PRAGMA journal_mode=WAL\")"
+        }
+      ],
+      "id": "ds-sqlite",
+      "role": "primary-db",
+      "status": "confirmed",
+      "used_by": [
+        "w-web"
+      ]
+    },
+    {
+      "evidence": [
+        {
+          "kind": "tech",
+          "line": 56,
+          "path": "app.py",
+          "snippet": "f.save(os.path.join(UPLOAD_DIR, f.filename))"
+        }
+      ],
+      "id": "svc-container-disk",
+      "role": "file-storage",
+      "status": "candidate",
+      "used_by": [
+        "w-web"
+      ]
+    }
+  ],
+  "endpoints": [
+    {
+      "framework": "flask",
+      "handler": {
+        "line": 14,
+        "path": "app.py",
+        "snippet": "@app.route(\"/login\", methods=[\"POST\"])"
+      },
+      "id": "ep-web-001",
+      "method": "POST",
+      "route": "/login",
+      "status": "confirmed",
+      "workload": "w-web"
+    },
+    {
+      "framework": "flask",
+      "handler": {
+        "line": 20,
+        "path": "app.py",
+        "snippet": "@app.get(\"/approvals\")"
+      },
+      "id": "ep-web-002",
+      "method": "GET",
+      "route": "/approvals",
+      "status": "confirmed",
+      "workload": "w-web"
+    },
+    {
+      "framework": "flask",
+      "handler": {
+        "line": 26,
+        "path": "app.py",
+        "snippet": "@app.post(\"/approvals\")"
+      },
+      "id": "ep-web-003",
+      "method": "POST",
+      "route": "/approvals",
+      "status": "confirmed",
+      "workload": "w-web"
+    },
+    {
+      "framework": "flask",
+      "handler": {
+        "line": 35,
+        "path": "app.py",
+        "snippet": "@app.post(\"/approvals/<int:approval_id>/approve\")"
+      },
+      "id": "ep-web-004",
+      "method": "POST",
+      "route": "/approvals/<int:approval_id>/approve",
+      "status": "confirmed",
+      "workload": "w-web"
+    },
+    {
+      "framework": "flask",
+      "handler": {
+        "line": 41,
+        "path": "app.py",
+        "snippet": "@app.get(\"/export\")"
+      },
+      "id": "ep-web-005",
+      "method": "GET",
+      "route": "/export",
+      "status": "confirmed",
+      "workload": "w-web"
+    },
+    {
+      "framework": "flask",
+      "handler": {
+        "line": 53,
+        "path": "app.py",
+        "snippet": "@app.post(\"/attachments\")"
+      },
+      "id": "ep-web-006",
+      "method": "POST",
+      "route": "/attachments",
+      "status": "confirmed",
+      "workload": "w-web"
+    }
+  ],
+  "environments": [],
+  "existing_artifacts": [
+    {
+      "kind": "dockerfile",
+      "parsed": true,
+      "path": "Dockerfile",
+      "settings": [
+        {
+          "defaulted": false,
+          "evidence": {
+            "line": 1,
+            "path": "Dockerfile",
+            "snippet": "FROM python:3.12-slim"
+          },
+          "key": "base_image",
+          "value": "python:3.12-slim"
+        },
+        {
+          "defaulted": false,
+          "evidence": {
+            "line": 7,
+            "path": "Dockerfile",
+            "snippet": "CMD [\"flask\", \"run\", \"--host=0.0.0.0\"]"
+          },
+          "key": "cmd",
+          "value": "flask run --host=0.0.0.0"
+        },
+        {
+          "defaulted": false,
+          "key": "stages",
+          "value": 1
+        },
+        {
+          "defaulted": false,
+          "evidence": {
+            "line": 1,
+            "path": "Dockerfile",
+            "snippet": "FROM python:3.12-slim"
+          },
+          "key": "user_inherited_from",
+          "value": "python:3.12-slim"
+        }
+      ]
+    }
+  ],
+  "external_services": [],
+  "meta": {
+    "input_hash": "sha256:example",
+    "run_id": "example",
+    "stage": "S1"
+  },
+  "request_paths": [
+    {
+      "environment": null,
+      "hops": [
+        {
+          "component": "nw:app/flask-dev/default",
+          "evidence": [
+            {
+              "line": 7,
+              "path": "Dockerfile",
+              "snippet": "CMD [\"flask\", \"run\", \"--host=0.0.0.0\"]"
+            }
+          ],
+          "kind": "app-server",
+          "order": 0,
+          "osi_layer": "L7",
+          "settings": []
+        }
+      ],
+      "id": "path-web",
+      "workload": "w-web"
+    }
+  ],
+  "unmapped": [],
+  "workloads": [
+    {
+      "entrypoint": {
+        "line": 1,
+        "path": "requirements.txt",
+        "snippet": "flask==3.0.3"
+      },
+      "id": "w-web",
+      "kind": "web",
+      "name": "web",
+      "status": "confirmed"
+    }
+  ]
+}

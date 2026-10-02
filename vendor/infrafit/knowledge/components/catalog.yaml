@@ -1,0 +1,71 @@
+# S1이 쓰는 구성 요소 ID 목록. 능력 값은 계획 3에서 같은 ID로 components/*.yaml에 채운다.
+# recommendable: false — 능력 근거가 적격 출처가 아니다(docs/research/source-audit.md §8.2). 현재 상태로는 보고하지만 추천하지 않는다. reason 필수.
+components:
+  # 저장소
+  - {id: "ds:local/sqlite/default", family: ds, name: "SQLite (롤백 저널)", source: docs/research/capabilities/01-sql-databases.md}
+  - {id: "ds:local/sqlite/wal", family: ds, name: "SQLite (WAL)", source: docs/research/capabilities/01-sql-databases.md}
+  - {id: "ds:unspecified/postgresql/default", family: ds, name: "PostgreSQL (호스팅 미확인)", source: docs/research/capabilities/01-sql-databases.md}
+  - {id: "ds:unspecified/mysql/default", family: ds, name: "MySQL (호스팅 미확인)", source: docs/research/capabilities/01-sql-databases.md}
+  - {id: "ds:unspecified/mongodb/default", family: ds, name: "MongoDB (호스팅 미확인)", source: docs/research/capabilities/02-nosql-baas.md}
+  - {id: "ds:supabase/postgres/unspecified-plan", family: ds, name: "Supabase Postgres (플랜 미확인)", source: docs/research/capabilities/01-sql-databases.md}
+  - {id: "ds:firebase/firestore/standard", family: ds, name: "Cloud Firestore (Standard)", source: docs/research/capabilities/02-nosql-baas.md}
+  - {id: "ds:aws/rds-postgres/single-az", family: ds, name: "RDS for PostgreSQL 단일 AZ", source: docs/research/capabilities/01-sql-databases.md}
+  - {id: "ds:aws/rds-postgres/multi-az-instance", family: ds, name: "RDS for PostgreSQL Multi-AZ 인스턴스", source: docs/research/capabilities/01-sql-databases.md}
+  - {id: "ds:gcp/cloudsql-postgres/single", family: ds, name: "Cloud SQL for PostgreSQL 단일", source: docs/research/capabilities/01-sql-databases.md}
+  - {id: "ds:gcp/cloudsql-postgres/ha", family: ds, name: "Cloud SQL for PostgreSQL HA", source: docs/research/capabilities/01-sql-databases.md}
+  # 캐시
+  - {id: "ca:local/process-memory/default", family: ca, name: "프로세스 메모리", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
+  - {id: "ca:unspecified/redis/default", family: ca, name: "Redis (호스팅 미확인)", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
+  - {id: "ca:aws/elasticache/node-based", family: ca, name: "ElastiCache 노드 기반", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
+  - {id: "ca:gcp/memorystore/redis", family: ca, name: "Memorystore for Redis", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
+  # 큐
+  - {id: "qu:unspecified/redis-streams/default", family: qu, name: "Redis Streams", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
+  - {id: "qu:lib/bullmq/default", family: qu, name: "BullMQ", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md, recommendable: false, reason: "근거 절이 BullMQ 문서(C)에만 기댐"}
+  - {id: "qu:lib/celery/default", family: qu, name: "Celery", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md, recommendable: false, reason: "근거 절이 Celery 문서(C)에만 기댐"}
+  - {id: "qu:aws/sqs/standard", family: qu, name: "Amazon SQS 표준", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
+  # 스케줄러
+  - {id: "sc:local/in-process/default", family: sc, name: "앱 프로세스 안 스케줄러", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md, recommendable: false, reason: "근거 절 삭제(부적격 출처)"}
+  - {id: "sc:k8s/cronjob/default", family: sc, name: "Kubernetes CronJob", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
+  - {id: "sc:vercel/cron/unspecified-plan", family: sc, name: "Vercel Cron (플랜 미확인)", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
+  - {id: "sc:github/actions-schedule/default", family: sc, name: "GitHub Actions schedule", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
+  # 실시간
+  - {id: "rt:lib/socketio/no-adapter", family: rt, name: "Socket.IO (어댑터 없음)", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md, recommendable: false, reason: "근거 절이 Socket.IO 문서(C)에만 기댐"}
+  - {id: "rt:lib/socketio/redis-adapter", family: rt, name: "Socket.IO (Redis 어댑터)", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md, recommendable: false, reason: "근거 절 삭제(부적격 출처)"}
+  - {id: "rt:lib/ws/default", family: rt, name: "ws", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md, recommendable: false, reason: "조사 문서에 ws 절이 없음"}
+  # 파일 저장소
+  - {id: "fs:local/container-disk/default", family: fs, name: "컨테이너 로컬 디스크", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
+  - {id: "fs:aws/s3/default", family: fs, name: "Amazon S3", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
+  - {id: "fs:gcp/gcs/default", family: fs, name: "Google Cloud Storage", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
+  - {id: "fs:supabase/storage/default", family: fs, name: "Supabase Storage", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
+  # 컴퓨트
+  - {id: "cp:vercel/functions/unspecified-plan", family: cp, name: "Vercel Functions (플랜 미확인)", source: docs/research/capabilities/04-compute-tier0.md}
+  - {id: "cp:netlify/functions/unspecified-plan", family: cp, name: "Netlify Functions (플랜 미확인)", source: docs/research/capabilities/04-compute-tier0.md}
+  - {id: "cp:fly/machines/default", family: cp, name: "Fly.io Machines", source: docs/research/capabilities/04-compute-tier0.md, recommendable: false, reason: "근거 절 삭제(부적격 출처)"}
+  - {id: "cp:render/web/unspecified-plan", family: cp, name: "Render 웹 서비스 (플랜 미확인)", source: docs/research/capabilities/04-compute-tier0.md, recommendable: false, reason: "근거 절 삭제(부적격 출처)"}
+  - {id: "cp:railway/service/unspecified-plan", family: cp, name: "Railway 서비스 (플랜 미확인)", source: docs/research/capabilities/04-compute-tier0.md}
+  - {id: "cp:k8s/deployment/unspecified-cluster", family: cp, name: "쿠버네티스 (클러스터 미확인)", source: docs/research/capabilities/05-compute-tier1-2.md, recommendable: false, reason: "조사 문서에 일반 쿠버네티스 절이 없음"}
+  - {id: "cp:aws/eks/unspecified", family: cp, name: "Amazon EKS (구성 미확인)", source: docs/research/capabilities/05-compute-tier1-2.md}
+  - {id: "cp:gcp/gke/unspecified", family: cp, name: "GKE (구성 미확인)", source: docs/research/capabilities/05-compute-tier1-2.md}
+  - {id: "cp:local/compose/default", family: cp, name: "docker compose", source: docs/research/capabilities/05-compute-tier1-2.md}
+  - {id: "cp:docker/container/unspecified-host", family: cp, name: "컨테이너 (실행 환경 미확인)", source: docs/research/capabilities/05-compute-tier1-2.md, recommendable: false, reason: "조사 문서에 일반 컨테이너 절이 없음"}
+  # CI 배포 명령이 가리키는 compute(05 §2 Cloud Run, §3 ECS, §7.1 EC2 + compose)
+  - {id: "cp:gcp/cloud-run/unspecified", family: cp, name: "Cloud Run 서비스 (과금 방식 미확인)", source: docs/research/capabilities/05-compute-tier1-2.md}
+  - {id: "cp:aws/ecs/unspecified", family: cp, name: "Amazon ECS (시작 유형 미확인)", source: docs/research/capabilities/05-compute-tier1-2.md}
+  - {id: "cp:aws/ec2/docker-compose", family: cp, name: "단일 EC2 + docker compose", source: docs/research/capabilities/05-compute-tier1-2.md}
+  # 네트워크 경로
+  - {id: "nw:app/uvicorn/default", family: nw, name: "uvicorn", source: docs/research/capabilities/09-network-lb-ingress.md}
+  - {id: "nw:app/gunicorn/default", family: nw, name: "gunicorn", source: docs/research/capabilities/09-network-lb-ingress.md}
+  - {id: "nw:app/node-http/default", family: nw, name: "Node.js http 서버", source: docs/research/capabilities/09-network-lb-ingress.md}
+  - {id: "nw:app/next-start/default", family: nw, name: "next start", source: docs/research/capabilities/09-network-lb-ingress.md}
+  - {id: "nw:app/flask-dev/default", family: nw, name: "Flask 개발 서버", source: docs/research/capabilities/09-network-lb-ingress.md}
+  - {id: "nw:app/django-runserver/default", family: nw, name: "Django 개발 서버", source: docs/research/capabilities/09-network-lb-ingress.md}
+  - {id: "nw:app/spring-boot-tomcat/default", family: nw, name: "Spring Boot 내장 Tomcat", source: docs/research/capabilities/09-network-lb-ingress.md, recommendable: false, reason: "Spring Boot 기본 keep-alive 값이 조사 문서의 추론(출처 없음)"}
+  - {id: "nw:proxy/nginx/default", family: nw, name: "nginx 리버스 프록시", source: docs/research/capabilities/09-network-lb-ingress.md}
+  - {id: "nw:aws/alb/default", family: nw, name: "AWS Application Load Balancer", source: docs/research/capabilities/09-network-lb-ingress.md}
+  - {id: "nw:gcp/classic-alb/gke-ingress", family: nw, name: "GCP Classic Application LB (GKE Ingress)", source: docs/research/capabilities/09-network-lb-ingress.md}
+  - {id: "nw:k8s/ingress-nginx/default", family: nw, name: "ingress-nginx", source: docs/research/capabilities/09-network-lb-ingress.md}
+  - {id: "nw:vercel/edge-proxy/default", family: nw, name: "Vercel 엣지 프록시", source: docs/research/capabilities/09-network-lb-ingress.md}
+  - {id: "nw:netlify/edge-proxy/default", family: nw, name: "Netlify 엣지 프록시", source: docs/research/capabilities/09-network-lb-ingress.md}
+  - {id: "nw:fly/proxy/default", family: nw, name: "Fly.io 프록시", source: docs/research/capabilities/09-network-lb-ingress.md, recommendable: false, reason: "근거 절 삭제(부적격 출처)"}
+  - {id: "nw:render/proxy/default", family: nw, name: "Render 프록시", source: docs/research/capabilities/09-network-lb-ingress.md, recommendable: false, reason: "근거 절 삭제(부적격 출처)"}
+  - {id: "nw:railway/proxy/default", family: nw, name: "Railway 프록시", source: docs/research/capabilities/09-network-lb-ingress.md}

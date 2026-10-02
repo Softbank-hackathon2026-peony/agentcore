@@ -1,0 +1,25 @@
+signatures:
+  - id: SIG-RT-SOCKETIO
+    component: "rt:lib/socketio/no-adapter"
+    role: realtime
+    status: confirmed
+    when: {any: [{dependency: socket.io}]}
+    refine:
+      - component: "rt:lib/socketio/redis-adapter"
+        when: {any: [{dependency: "@socket.io/redis-adapter"}]}
+  - id: SIG-RT-WS
+    component: "rt:lib/ws/default"
+    role: realtime
+    status: candidate
+    when: {any: [{dependency: ws}]}
+# 카탈로그에 구성 요소 ID가 없어(능력 연구 문서에 절이 없다) unmapped label로 내는 실시간 시그니처
+unmapped:
+  - id: SIG-RT-SPRING-STOMP-SIMPLE
+    label: spring-stomp-simple-broker
+    role: realtime
+    when:
+      all:
+        - {dependency: "org.springframework.boot:spring-boot-starter-websocket"}
+        - any:
+            - {code: {glob: "**/*.java", regex: "@EnableWebSocketMessageBroker\\b|\\.enableSimpleBroker\\s*\\("}}
+            - {code: {glob: "**/*.kt", regex: "@EnableWebSocketMessageBroker\\b|\\.enableSimpleBroker\\s*\\("}}

@@ -1,0 +1,42 @@
+signatures:
+  - id: SIG-QU-REDIS-STREAMS
+    component: "qu:unspecified/redis-streams/default"
+    role: queue
+    status: confirmed
+    when:
+      any:
+        - {code: {glob: "**/*.py", regex: "\\.xadd\\("}}
+        - {code: {glob: "**/*.ts", regex: "\\.xadd\\("}}
+        - {code: {glob: "**/*.js", regex: "\\.xadd\\("}}
+  - id: SIG-QU-BULLMQ
+    component: "qu:lib/bullmq/default"
+    role: queue
+    status: confirmed
+    when: {any: [{dependency: bullmq}]}
+  - id: SIG-QU-CELERY
+    component: "qu:lib/celery/default"
+    role: queue
+    status: confirmed
+    when: {any: [{dependency: celery}]}
+  # JVM SDK 의존성만 있으면 후보다(코드에서 쓰는지 모른다). 보내기 호출이나 클라이언트·리스너 사용이 있어야 확정
+  - id: SIG-QU-SQS
+    component: "qu:aws/sqs/standard"
+    role: queue
+    status: candidate
+    when:
+      any:
+        - {code: {glob: "**/*.ts", regex: "SendMessageCommand"}}
+        - {code: {glob: "**/*.js", regex: "SendMessageCommand"}}
+        - {code: {glob: "**/*.py", regex: "\\.send_message\\("}}
+        - {dependency: "software.amazon.awssdk:sqs"}
+        - {dependency: "io.awspring.cloud:spring-cloud-aws-starter-sqs"}
+    refine:
+      - component: "qu:aws/sqs/standard"
+        status: confirmed
+        when:
+          any:
+            - {code: {glob: "**/*.ts", regex: "SendMessageCommand"}}
+            - {code: {glob: "**/*.js", regex: "SendMessageCommand"}}
+            - {code: {glob: "**/*.py", regex: "\\.send_message\\("}}
+            - {code: {glob: "**/*.java", regex: "\\b(?:SqsClient|SqsAsyncClient|SqsTemplate)\\b|@SqsListener\\b"}}
+            - {code: {glob: "**/*.kt", regex: "\\b(?:SqsClient|SqsAsyncClient|SqsTemplate)\\b|@SqsListener\\b"}}

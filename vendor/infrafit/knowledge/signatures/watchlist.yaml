@@ -1,0 +1,32 @@
+# 인프라에 영향을 주지만 아직 시그니처가 없는 패키지. 있으면 S1의 unmapped로 나온다.
+packages:
+  - pg-boss
+  - kafkajs
+  - nats
+  - amqplib
+  - pika
+  - cassandra-driver
+  - neo4j-driver
+  - "@elastic/elasticsearch"
+  - elasticsearch
+  - meilisearch
+  - typesense
+  - pusher
+  - ably
+  - "@upstash/redis"
+  - "@planetscale/database"
+  - "@neondatabase/serverless"
+  - "@vercel/postgres"
+  - "@vercel/kv"
+  - "@vercel/blob"
+  - appwrite
+  - convex
+  - pocketbase
+  # JVM(Gradle·Maven `그룹:아티팩트`)
+  - "org.springframework.boot:spring-boot-starter-websocket"
+  - "org.springframework.boot:spring-boot-starter-amqp"
+  - "org.springframework.amqp:spring-rabbit"
+  - "com.rabbitmq:amqp-client"
+  - "org.springframework.kafka:spring-kafka"
+  - "org.apache.kafka:kafka-clients"
+  - "org.springframework.boot:spring-boot-starter-data-elasticsearch"

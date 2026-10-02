@@ -1,0 +1,2922 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infrafit.local/schemas/infrafit.schema.json",
+  "title": "infrafit result and stage outputs",
+  "$ref": "#/$defs/Result",
+  "$defs": {
+    "Evidence": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "line": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "snippet": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "tech",
+            "context",
+            "pain"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "snippet"
+      ]
+    },
+    "Source": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "지식 베이스 경로#앵커 또는 공식 URL"
+        },
+        "quote": {
+          "type": "string"
+        },
+        "checked_at": {
+          "type": "string",
+          "format": "date"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "ref"
+      ]
+    },
+    "ComponentId": {
+      "type": "string",
+      "pattern": "^(cp|ds|ca|qu|sc|rt|fs|nw):[a-z0-9._-]+/[a-z0-9._-]+/[a-z0-9._-]+$"
+    },
+    "DimensionId": {
+      "type": "string",
+      "pattern": "^[A-G][0-9]+$"
+    },
+    "ScopeId": {
+      "type": "string",
+      "pattern": "^(w|ep|ds|svc|path)-[a-z0-9._-]+$",
+      "description": "w-=워크로드, ep-=엔드포인트, ds-=저장소, svc-=보조 구성 요소, path-=요청 경로"
+    },
+    "RuleId": {
+      "type": "string",
+      "pattern": "^(CMP|CAP|TIM|CMB|OVR|HYG|COST)-[A-Z]+-[0-9]{3}$"
+    },
+    "Value": {
+      "type": [
+        "string",
+        "number",
+        "boolean",
+        "object",
+        "array",
+        "null"
+      ]
+    },
+    "Error": {
+      "type": "object",
+      "properties": {
+        "stage": {
+          "type": "string",
+          "enum": [
+            "S0",
+            "S1",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9"
+          ]
+        },
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "fatal": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "code",
+        "message",
+        "fatal"
+      ]
+    },
+    "StageMeta": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "input_hash": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finished_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "stage",
+        "input_hash"
+      ]
+    },
+    "Intake": {
+      "type": "object",
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/StageMeta"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "commit": {
+          "type": "string"
+        },
+        "files_total": {
+          "type": "integer"
+        },
+        "files_scanned": {
+          "type": "integer"
+        },
+        "excluded": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "languages": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "overrides": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "meta",
+        "repo",
+        "commit",
+        "files_total",
+        "files_scanned",
+        "excluded",
+        "languages"
+      ]
+    },
+    "Workload": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ScopeId"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "web",
+            "worker",
+            "scheduled",
+            "realtime",
+            "static-frontend",
+            "migration-job",
+            "reverse-proxy"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "entrypoint": {
+          "$ref": "#/$defs/Evidence"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          }
+        },
+        "status": {
+          "$ref": "#/$defs/FactStatus"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "entrypoint",
+        "status"
+      ]
+    },
+    "Datastore": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ScopeId"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "primary-db",
+            "cache",
+            "session",
+            "queue",
+            "scheduler",
+            "realtime",
+            "file-storage",
+            "search",
+            "other"
+          ]
+        },
+        "used_by": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScopeId"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          }
+        },
+        "status": {
+          "$ref": "#/$defs/FactStatus"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "role",
+        "used_by",
+        "status"
+      ]
+    },
+    "SettingFact": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/Value"
+        },
+        "defaulted": {
+          "type": "boolean"
+        },
+        "default_source": {
+          "$ref": "#/$defs/Source"
+        },
+        "evidence": {
+          "$ref": "#/$defs/Evidence"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "value",
+        "defaulted"
+      ]
+    },
+    "CurrentComponent": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/ScopeId"
+        },
+        "component": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComponentId"
+            },
+            {
+              "const": "unmapped"
+            }
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "settings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SettingFact"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          }
+        },
+        "status": {
+          "$ref": "#/$defs/FactStatus"
+        },
+        "environment": {
+          "type": "string",
+          "description": "환경별 배포 대상(platform·ci-deploy 환경)의 compute 기록이면 그 환경 이름"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "component",
+        "evidence",
+        "status"
+      ]
+    },
+    "ExistingArtifact": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "dockerfile",
+            "compose",
+            "k8s",
+            "terraform",
+            "platform-config",
+            "ci",
+            "other"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "parsed": {
+          "type": "boolean"
+        },
+        "settings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SettingFact"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "path",
+        "parsed"
+      ]
+    },
+    "Inventory": {
+      "type": "object",
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/StageMeta"
+        },
+        "workloads": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Workload"
+          }
+        },
+        "datastores": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Datastore"
+          }
+        },
+        "current_components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CurrentComponent"
+          }
+        },
+        "existing_artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExistingArtifact"
+          }
+        },
+        "unmapped": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Evidence"
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "label"
+            ]
+          }
+        },
+        "request_paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RequestPath"
+          }
+        },
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Endpoint"
+          }
+        },
+        "environments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "kustomize",
+                  "compose",
+                  "platform",
+                  "ci-deploy"
+                ]
+              },
+              "rendered": {
+                "type": "boolean"
+              },
+              "source": {
+                "$ref": "#/$defs/Evidence"
+              },
+              "manual": {
+                "type": "boolean",
+                "description": "ci-deploy 환경: 워크플로가 수동 실행(workflow_dispatch 등)으로만 돈다"
+              },
+              "members": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/ScopeId"
+                },
+                "description": "platform·ci-deploy 환경이 배포하는 워크로드"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "kind",
+              "rendered",
+              "source"
+            ]
+          }
+        },
+        "external_services": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExternalService"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "meta",
+        "workloads",
+        "datastores",
+        "current_components",
+        "existing_artifacts",
+        "unmapped",
+        "request_paths",
+        "endpoints",
+        "environments",
+        "external_services"
+      ]
+    },
+    "DimensionValue": {
+      "type": "object",
+      "properties": {
+        "dimension": {
+          "$ref": "#/$defs/DimensionId"
+        },
+        "scope": {
+          "$ref": "#/$defs/ScopeId"
+        },
+        "value": {
+          "$ref": "#/$defs/Value"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          }
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "detector",
+            "inference",
+            "assumption",
+            "measurement",
+            "user"
+          ]
+        },
+        "confidence": {
+          "type": "string",
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        "assumption_key": {
+          "type": "string"
+        },
+        "aggregated_from": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScopeId"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "dimension",
+        "scope",
+        "value",
+        "source",
+        "confidence"
+      ]
+    },
+    "Assumption": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/Value"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string",
+          "enum": [
+            "domain-default",
+            "user",
+            "measurement"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "value",
+        "reason",
+        "origin"
+      ]
+    },
+    "DroppedInference": {
+      "type": "object",
+      "properties": {
+        "claim": {
+          "type": "object"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "claim",
+        "reason"
+      ]
+    },
+    "Profile": {
+      "type": "object",
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/StageMeta"
+        },
+        "domain": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "string"
+            },
+            "votes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "value",
+            "votes"
+          ]
+        },
+        "dimensions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DimensionValue"
+          }
+        },
+        "assumptions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Assumption"
+          }
+        },
+        "dropped_inferences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DroppedInference"
+          }
+        },
+        "llm_used": {
+          "type": "boolean"
+        },
+        "resolutions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Resolution"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "meta",
+        "domain",
+        "dimensions",
+        "assumptions",
+        "dropped_inferences",
+        "llm_used",
+        "resolutions"
+      ]
+    },
+    "Violation": {
+      "type": "object",
+      "properties": {
+        "rule": {
+          "$ref": "#/$defs/RuleId"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DimensionId"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/DimensionId"
+              }
+            }
+          ]
+        },
+        "required": {
+          "$ref": "#/$defs/Value"
+        },
+        "capability_key": {
+          "type": "string"
+        },
+        "actual": {
+          "$ref": "#/$defs/Value"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rule",
+        "required",
+        "capability_key",
+        "actual",
+        "source"
+      ]
+    },
+    "ConfigRequirement": {
+      "type": "object",
+      "properties": {
+        "rule": {
+          "$ref": "#/$defs/RuleId"
+        },
+        "setting": {
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/Value"
+        },
+        "why": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rule",
+        "setting",
+        "value"
+      ]
+    },
+    "FitCell": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/ScopeId"
+        },
+        "candidate": {
+          "$ref": "#/$defs/ComponentId"
+        },
+        "result": {
+          "type": "string",
+          "enum": [
+            "feasible",
+            "feasible_with_config",
+            "infeasible",
+            "unknown"
+          ]
+        },
+        "violations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Violation"
+          }
+        },
+        "requires_config": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConfigRequirement"
+          }
+        },
+        "unknown_keys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "is_current": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "candidate",
+        "result",
+        "violations",
+        "requires_config",
+        "unknown_keys",
+        "is_current"
+      ]
+    },
+    "CurrentAssessment": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/ScopeId"
+        },
+        "component": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComponentId"
+            },
+            {
+              "const": "unmapped"
+            }
+          ]
+        },
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "keep",
+            "modify",
+            "replace",
+            "overprovisioned"
+          ]
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Violation"
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "component",
+        "verdict",
+        "reasons"
+      ]
+    },
+    "HygieneFinding": {
+      "type": "object",
+      "properties": {
+        "rule": {
+          "$ref": "#/$defs/RuleId"
+        },
+        "message": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          }
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rule",
+        "message",
+        "evidence"
+      ]
+    },
+    "Fit": {
+      "type": "object",
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/StageMeta"
+        },
+        "matrix": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FitCell"
+          }
+        },
+        "current_assessment": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CurrentAssessment"
+          }
+        },
+        "hygiene": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HygieneFinding"
+          }
+        },
+        "path_checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PathCheck"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "meta",
+        "matrix",
+        "current_assessment",
+        "hygiene",
+        "path_checks"
+      ]
+    },
+    "Cost": {
+      "type": "object",
+      "properties": {
+        "monthly_baseline_usd": {
+          "type": "number"
+        },
+        "peak_hourly_usd": {
+          "type": "number"
+        },
+        "per_1000_users_monthly_usd": {
+          "type": "number"
+        },
+        "breakdown": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "component": {
+                "$ref": "#/$defs/ComponentId"
+              },
+              "item": {
+                "type": "string"
+              },
+              "monthly_usd": {
+                "type": "number"
+              },
+              "price_source": {
+                "$ref": "#/$defs/Source"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "component",
+              "item",
+              "monthly_usd"
+            ]
+          }
+        },
+        "price_snapshot": {
+          "type": "string",
+          "format": "date"
+        },
+        "dev_monthly_usd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "monthly_baseline_usd",
+        "price_snapshot"
+      ]
+    },
+    "Candidate": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^C[0-9]+$"
+        },
+        "assignment": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/ComponentId"
+          }
+        },
+        "cost": {
+          "$ref": "#/$defs/Cost"
+        },
+        "unknown_count": {
+          "type": "integer"
+        },
+        "ops_burden": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "human_steps": {
+          "type": "integer"
+        },
+        "rank": {
+          "type": "integer"
+        },
+        "is_current": {
+          "type": "boolean"
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RequestPath"
+          }
+        },
+        "cross_scope_violations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CrossScopeViolation"
+          }
+        },
+        "transforms": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sizing": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Sizing"
+          }
+        },
+        "change_effort": {
+          "type": "string",
+          "enum": [
+            "none",
+            "small",
+            "medium",
+            "large"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "assignment",
+        "cost",
+        "unknown_count",
+        "ops_burden",
+        "human_steps",
+        "change_effort",
+        "rank",
+        "paths",
+        "cross_scope_violations",
+        "transforms",
+        "sizing"
+      ]
+    },
+    "Rejected": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "violation",
+                  "cross_scope",
+                  "rank"
+                ]
+              },
+              "detail": {
+                "type": "string"
+              },
+              "violation": {
+                "$ref": "#/$defs/Violation"
+              },
+              "cross_scope": {
+                "$ref": "#/$defs/CrossScopeViolation"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "detail"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "reasons"
+      ]
+    },
+    "Sensitivity": {
+      "type": "object",
+      "properties": {
+        "assumption": {
+          "type": "string"
+        },
+        "current_value": {
+          "$ref": "#/$defs/Value"
+        },
+        "threshold": {
+          "$ref": "#/$defs/Value"
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "above",
+            "below"
+          ]
+        },
+        "then_chosen": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "assumption",
+        "current_value",
+        "threshold",
+        "direction",
+        "then_chosen"
+      ]
+    },
+    "ScenarioSummary": {
+      "type": "object",
+      "properties": {
+        "D": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "T": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "U": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "C": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "S": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "O": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "D",
+        "T",
+        "U",
+        "C",
+        "S",
+        "O"
+      ]
+    },
+    "CodeChange": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "swap": {
+          "type": "string",
+          "description": "교체 차이 표 ID"
+        },
+        "because": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "rule": {
+                "$ref": "#/$defs/RuleId"
+              },
+              "violation_ref": {
+                "type": "string"
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "applied",
+            "reverted",
+            "failed"
+          ]
+        },
+        "commit": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "summary",
+        "files",
+        "because",
+        "status"
+      ]
+    },
+    "ArtifactChange": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "dockerfile",
+            "dockerignore",
+            "compose",
+            "terraform",
+            "k8s",
+            "platform-config",
+            "ci",
+            "script",
+            "other"
+          ]
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "create",
+            "modify",
+            "replace",
+            "keep"
+          ]
+        },
+        "because": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "rule": {
+                "$ref": "#/$defs/RuleId"
+              },
+              "violation_ref": {
+                "type": "string"
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "explicit_settings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConfigRequirement"
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "applied",
+            "failed",
+            "skipped"
+          ]
+        },
+        "commit": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "kind",
+        "action",
+        "because",
+        "status"
+      ]
+    },
+    "DataMigration": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/ComponentId"
+        },
+        "to": {
+          "$ref": "#/$defs/ComponentId"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "executed": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to",
+        "tool",
+        "checks",
+        "executed"
+      ]
+    },
+    "HumanStep": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "why_manual": {
+          "type": "string"
+        },
+        "blocking": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "description",
+        "why_manual",
+        "blocking"
+      ]
+    },
+    "Changes": {
+      "type": "object",
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/StageMeta"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "code": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CodeChange"
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ArtifactChange"
+          }
+        },
+        "data_migration": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DataMigration"
+          }
+        },
+        "human_steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HumanStep"
+          }
+        },
+        "commits": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "meta",
+        "branch",
+        "code",
+        "artifacts",
+        "data_migration",
+        "human_steps",
+        "commits"
+      ]
+    },
+    "Check": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "result": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "skipped"
+          ]
+        },
+        "attempts": {
+          "type": "integer"
+        },
+        "log_excerpt": {
+          "type": "string"
+        },
+        "related_changes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "target",
+        "tool",
+        "result",
+        "attempts"
+      ]
+    },
+    "VerifyStatic": {
+      "type": "object",
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/StageMeta"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Check"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "meta",
+        "checks"
+      ]
+    },
+    "DynamicTest": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "verify_id": {
+          "type": "string"
+        },
+        "scenario": {
+          "type": "string",
+          "enum": [
+            "D",
+            "T",
+            "U",
+            "C",
+            "S",
+            "O"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "load",
+            "chaos",
+            "rollout",
+            "consistency",
+            "restore",
+            "soak",
+            "alerting"
+          ]
+        },
+        "result": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "invalid",
+            "skipped"
+          ]
+        },
+        "valid": {
+          "type": "boolean"
+        },
+        "invalid_reason": {
+          "type": "string"
+        },
+        "measurements": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Value"
+          }
+        },
+        "alert_latency_seconds": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "rules_confirmed": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RuleId"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "verify_id",
+        "scenario",
+        "kind",
+        "result",
+        "valid"
+      ]
+    },
+    "VerifyDynamic": {
+      "type": "object",
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/StageMeta"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "tests": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DynamicTest"
+          }
+        },
+        "measured_assumptions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Assumption"
+          }
+        },
+        "redecision": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "previous_chosen": {
+              "type": "string"
+            },
+            "new_chosen": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "meta",
+        "environment",
+        "tests",
+        "measured_assumptions"
+      ]
+    },
+    "Unverified": {
+      "type": "object",
+      "properties": {
+        "capability": {
+          "type": "string",
+          "description": "구성 요소 ID#능력 키"
+        },
+        "used_in": {
+          "type": "string",
+          "enum": [
+            "fit",
+            "decision",
+            "generation"
+          ]
+        },
+        "effect": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "capability",
+        "used_in",
+        "effect"
+      ]
+    },
+    "Result": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "run": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            },
+            "commit": {
+              "type": "string"
+            },
+            "until": {
+              "type": "string",
+              "enum": [
+                "S4",
+                "S7",
+                "S9"
+              ]
+            },
+            "knowledge_snapshot": {
+              "type": "string",
+              "format": "date"
+            },
+            "rulebook_version": {
+              "type": "string"
+            },
+            "price_snapshot": {
+              "type": "string",
+              "format": "date"
+            },
+            "started_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "finished_at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "repo",
+            "commit",
+            "until",
+            "knowledge_snapshot",
+            "rulebook_version",
+            "price_snapshot",
+            "started_at"
+          ]
+        },
+        "summary": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "recommended",
+                "decided",
+                "changed",
+                "verified_static",
+                "verified_dynamic",
+                "no_feasible",
+                "failed"
+              ]
+            },
+            "monthly_cost_usd": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "peak_hourly_usd": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "mismatches": {
+              "type": "integer"
+            },
+            "overprovisioned": {
+              "type": "integer"
+            },
+            "hygiene_findings": {
+              "type": "integer"
+            },
+            "human_steps": {
+              "type": "integer"
+            },
+            "unverified": {
+              "type": "integer"
+            },
+            "recommended_candidate": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "final_candidate": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "recommended_candidate",
+            "mismatches",
+            "overprovisioned",
+            "human_steps",
+            "unverified",
+            "final_candidate"
+          ]
+        },
+        "workloads": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Workload"
+          }
+        },
+        "datastores": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Datastore"
+          }
+        },
+        "profile": {
+          "type": "object",
+          "properties": {
+            "domain": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "string"
+                },
+                "votes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/Evidence"
+                  }
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "value",
+                "votes"
+              ]
+            },
+            "dimensions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/DimensionValue"
+              }
+            },
+            "assumptions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Assumption"
+              }
+            },
+            "dropped_inferences": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/DroppedInference"
+              }
+            },
+            "resolutions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Resolution"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "domain",
+            "dimensions",
+            "assumptions",
+            "dropped_inferences",
+            "resolutions"
+          ]
+        },
+        "current_state": {
+          "type": "object",
+          "properties": {
+            "components": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/CurrentComponent"
+              }
+            },
+            "artifacts": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ExistingArtifact"
+              }
+            },
+            "assessment": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/CurrentAssessment"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "components",
+            "artifacts",
+            "assessment"
+          ]
+        },
+        "fit": {
+          "type": "object",
+          "properties": {
+            "matrix": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/FitCell"
+              }
+            },
+            "hygiene": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/HygieneFinding"
+              }
+            },
+            "path_checks": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PathCheck"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "matrix",
+            "hygiene",
+            "path_checks"
+          ]
+        },
+        "changes": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "branch": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/CodeChange"
+                  }
+                },
+                "artifacts": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/ArtifactChange"
+                  }
+                },
+                "data_migration": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/DataMigration"
+                  }
+                },
+                "human_steps": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/HumanStep"
+                  }
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "branch",
+                "code",
+                "artifacts",
+                "data_migration",
+                "human_steps"
+              ]
+            }
+          ]
+        },
+        "verification": {
+          "type": "object",
+          "properties": {
+            "static": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/Check"
+                  }
+                }
+              ]
+            },
+            "dynamic": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/DynamicTest"
+                  }
+                }
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "static",
+            "dynamic"
+          ]
+        },
+        "unverified": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Unverified"
+          }
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Error"
+          }
+        },
+        "request_paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RequestPath"
+          }
+        },
+        "recommendation": {
+          "type": "object",
+          "properties": {
+            "candidates": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Candidate"
+              }
+            },
+            "rejected": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Rejected"
+              }
+            },
+            "sensitivity": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Sensitivity"
+              }
+            },
+            "scenario_summary": {
+              "$ref": "#/$defs/ScenarioSummary"
+            },
+            "no_feasible": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "properties": {
+                "blocking": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/Violation"
+                  }
+                },
+                "suggestions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "enabling_transforms": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "recommended": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "transforms": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Transform"
+              }
+            },
+            "perspectives": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/Perspectives"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "candidates",
+            "recommended",
+            "rejected",
+            "sensitivity",
+            "scenario_summary",
+            "transforms",
+            "perspectives"
+          ]
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "based_on": {
+                  "type": "string"
+                },
+                "adjustments": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/Adjustment"
+                  }
+                },
+                "recompute_runs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "final_candidate": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "differs_from_recommendation": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "approved": {
+                  "type": "boolean"
+                },
+                "approved_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "transcript_ref": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "based_on",
+                "adjustments",
+                "final_candidate",
+                "approved"
+              ]
+            }
+          ]
+        },
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Endpoint"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "run",
+        "summary",
+        "workloads",
+        "endpoints",
+        "datastores",
+        "request_paths",
+        "profile",
+        "current_state",
+        "fit",
+        "recommendation",
+        "decision",
+        "changes",
+        "verification",
+        "unverified",
+        "errors"
+      ]
+    },
+    "Hop": {
+      "type": "object",
+      "properties": {
+        "order": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "dns",
+            "cdn",
+            "waf",
+            "load-balancer",
+            "ingress",
+            "api-gateway",
+            "edge-proxy",
+            "reverse-proxy",
+            "app-server",
+            "egress",
+            "private-connectivity",
+            "datastore"
+          ]
+        },
+        "component": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComponentId"
+            },
+            {
+              "const": "unmapped"
+            },
+            {
+              "const": "pending"
+            }
+          ]
+        },
+        "osi_layer": {
+          "type": "string",
+          "enum": [
+            "L3",
+            "L4",
+            "L7",
+            "TLS",
+            "mixed"
+          ]
+        },
+        "settings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SettingFact"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "order",
+        "kind",
+        "component",
+        "settings"
+      ]
+    },
+    "RequestPath": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ScopeId"
+        },
+        "workload": {
+          "$ref": "#/$defs/ScopeId"
+        },
+        "hops": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Hop"
+          }
+        },
+        "environment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "workload",
+        "hops",
+        "environment"
+      ]
+    },
+    "PathCheck": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/ScopeId"
+        },
+        "hops": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Hop"
+          }
+        },
+        "violations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Violation"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "hops",
+        "violations"
+      ]
+    },
+    "CrossScopeViolation": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "cross_scope"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "sharing",
+            "aggregate-capacity",
+            "connectivity",
+            "path",
+            "cloud-mix",
+            "platform-coupling"
+          ]
+        },
+        "rule": {
+          "$ref": "#/$defs/RuleId"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScopeId"
+          }
+        },
+        "detail": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "kind",
+        "rule",
+        "scopes",
+        "detail",
+        "source"
+      ]
+    },
+    "Recommendation": {
+      "type": "object",
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/StageMeta"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Candidate"
+          }
+        },
+        "rejected": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Rejected"
+          }
+        },
+        "sensitivity": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Sensitivity"
+          }
+        },
+        "scenario_summary": {
+          "$ref": "#/$defs/ScenarioSummary"
+        },
+        "no_feasible": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "blocking": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Violation"
+              }
+            },
+            "suggestions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "enabling_transforms": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "recommended": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "transforms": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Transform"
+          }
+        },
+        "transform_fits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TransformFit"
+          }
+        },
+        "perspectives": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/Perspectives"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "meta",
+        "candidates",
+        "recommended",
+        "rejected",
+        "sensitivity",
+        "scenario_summary",
+        "no_feasible",
+        "transforms",
+        "transform_fits",
+        "perspectives"
+      ]
+    },
+    "Adjustment": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "assumption",
+            "domain",
+            "requirement",
+            "preference",
+            "constraint",
+            "candidate"
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "from": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "object",
+            "array",
+            "null"
+          ]
+        },
+        "to": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "object",
+            "array",
+            "null"
+          ]
+        },
+        "utterance": {
+          "type": "string"
+        },
+        "confirmed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "key",
+        "to",
+        "utterance",
+        "confirmed_at"
+      ]
+    },
+    "Decision": {
+      "type": "object",
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/StageMeta"
+        },
+        "based_on": {
+          "type": "string"
+        },
+        "adjustments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Adjustment"
+          }
+        },
+        "recompute_runs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "final_candidate": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "differs_from_recommendation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approved": {
+          "type": "boolean"
+        },
+        "approved_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "transcript_ref": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "meta",
+        "based_on",
+        "adjustments",
+        "recompute_runs",
+        "final_candidate",
+        "approved"
+      ]
+    },
+    "FactStatus": {
+      "type": "string",
+      "enum": [
+        "confirmed",
+        "candidate"
+      ]
+    },
+    "Endpoint": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ScopeId"
+        },
+        "workload": {
+          "$ref": "#/$defs/ScopeId"
+        },
+        "method": {
+          "type": "string"
+        },
+        "route": {
+          "type": "string"
+        },
+        "handler": {
+          "$ref": "#/$defs/Evidence"
+        },
+        "framework": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/FactStatus"
+        },
+        "exposure": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "environment": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "value": {
+                "type": "string",
+                "enum": [
+                  "routed",
+                  "not-routed"
+                ]
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "environment",
+              "value"
+            ]
+          },
+          "description": "환경별로, 그 환경의 프록시가 이 워크로드로 보내는 route가 있을 때만: 외부 요청이 프록시를 거쳐 이 엔드포인트에 닿는가"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "workload",
+        "method",
+        "route",
+        "handler",
+        "status"
+      ]
+    },
+    "Resolution": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "S1 사실을 가리키는 JSON 포인터"
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "confirm",
+            "reject"
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          }
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "detector",
+            "inference"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "decision",
+        "evidence",
+        "source"
+      ]
+    },
+    "DimensionChange": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/ScopeId"
+        },
+        "dimension": {
+          "$ref": "#/$defs/DimensionId"
+        },
+        "from": {
+          "$ref": "#/$defs/Value"
+        },
+        "to": {
+          "$ref": "#/$defs/Value"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "dimension",
+        "to"
+      ]
+    },
+    "Transform": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^TF-[A-Z0-9-]+$"
+        },
+        "title": {
+          "type": "string"
+        },
+        "applies_to": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScopeId"
+          }
+        },
+        "effects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DimensionChange"
+          }
+        },
+        "adds_scopes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/ScopeId"
+              },
+              "kind": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "kind"
+            ]
+          }
+        },
+        "new_requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DimensionChange"
+          }
+        },
+        "code_effort": {
+          "type": "string",
+          "enum": [
+            "small",
+            "medium",
+            "large"
+          ]
+        },
+        "requires": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "because": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "applies_to",
+        "effects",
+        "adds_scopes",
+        "code_effort",
+        "because"
+      ]
+    },
+    "TransformFit": {
+      "type": "object",
+      "properties": {
+        "transform_set": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "matrix": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FitCell"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "transform_set",
+        "matrix"
+      ]
+    },
+    "Sizing": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/ScopeId"
+        },
+        "component": {
+          "$ref": "#/$defs/ComponentId"
+        },
+        "env": {
+          "type": "string",
+          "enum": [
+            "prod",
+            "dev"
+          ]
+        },
+        "inputs": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Value"
+          }
+        },
+        "assumptions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "formula": {
+          "type": "string"
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "min_instances": {
+              "type": "integer"
+            },
+            "max_instances": {
+              "type": "integer"
+            },
+            "vcpu": {
+              "type": "number"
+            },
+            "memory_gib": {
+              "type": "number"
+            },
+            "class": {
+              "type": "string"
+            },
+            "requests_per_month": {
+              "type": "number"
+            },
+            "notes": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "component",
+        "env",
+        "inputs",
+        "formula",
+        "result"
+      ]
+    },
+    "Perspectives": {
+      "type": "object",
+      "properties": {
+        "balanced": {
+          "type": "string"
+        },
+        "minimal_change": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lowest_cost": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "balanced",
+        "minimal_change",
+        "lowest_cost"
+      ]
+    },
+    "ExternalService": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^ext:[a-z0-9-]+$"
+        },
+        "label": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "llm-api",
+            "auth",
+            "payments",
+            "messaging",
+            "email",
+            "push",
+            "maps",
+            "video",
+            "webhook",
+            "other"
+          ]
+        },
+        "used_by": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScopeId"
+          }
+        },
+        "secrets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "이 서비스에 맞은 환경변수 이름"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          }
+        },
+        "status": {
+          "$ref": "#/$defs/FactStatus"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "kind",
+        "used_by",
+        "secrets",
+        "evidence",
+        "status"
+      ]
+    }
+  },
+  "description": "infrafit 결과와 단계 출력. 단계 출력은 $defs의 Intake, Inventory, Profile, Fit, Recommendation, Decision, Changes, VerifyStatic, VerifyDynamic으로 검증한다."
+}

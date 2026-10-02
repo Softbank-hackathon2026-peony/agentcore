@@ -101,7 +101,7 @@ def ensure_role(account: str, bucket: str) -> str:
 
 
 def build_zip() -> Path:
-    """agent/ 코드 + arm64 리눅스용 의존성을 zip으로."""
+    """agent/ 코드 + vendor/(InfraFit) + arm64 리눅스용 의존성을 zip으로."""
     work = Path(tempfile.mkdtemp(prefix="pawploy-agent-"))
     pkg = work / "package"
     print("[패키징] 의존성 설치 (linux arm64)")
@@ -110,6 +110,8 @@ def build_zip() -> Path:
                     "--target", str(pkg), "--python-platform", "aarch64-manylinux2014",
                     "--python-version", PY_VERSION, "--only-binary", ":all:"], check=True)
     shutil.copytree(ROOT / "agent", pkg / "agent", ignore=shutil.ignore_patterns("__pycache__"))
+    # InfraFit (agent/inventory.py 가 별도 프로세스로 실행, PYTHONPATH=vendor/infrafit)
+    shutil.copytree(ROOT / "vendor", pkg / "vendor", ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copy(ROOT / "main.py", pkg / "main.py")
     zip_path = work / "agent.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
