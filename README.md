@@ -105,6 +105,17 @@ AI가 만드는 것은 **Worker의 `modules/<아키텍처>/` 자리에 들어갈
 결과는 exported variables `ECR_IMAGE_URI`, `GCP_IMAGE_URI`(@sha256 digest 고정).
 이미지는 Lambda Web Adapter 포함 · `linux/amd64` · `$PORT` 로 받으므로 EC2·Lambda·Cloud Run 공용입니다.
 
+## InfraFit 인벤토리 연동
+
+`analyze` 스캔 단계에서 [InfraFit](vendor/infrafit/SOURCE) S0+S1(규칙 기반, LLM 없음)을 함께 돌려 `scan.inventory` 로 넘깁니다.
+LLM 프롬프트에는 이것을 워크로드 수·리버스 프록시·엔드포인트·데이터 저장소·외부 서비스·기존 배포 환경의 우선 근거로 쓰라고 적었습니다.
+
+- 내용 (`status: ok` 일 때 `summary`, 8KB 이하): `workloads`, `endpoints`(총 개수·워크로드별 개수·앞 25개 `METHOD route @file:line`·노출), `datastores`, `external_services`, `environments`, `compute`(현재 컴퓨트 컴포넌트), `request_paths`(홉 + 명시된 timeout/body 설정), `unmapped`. 넘치면 긴 목록부터 줄이고 `truncated` 에 표시. 모든 file:line 은 inventory.json 근거 그대로.
+- 경고: 앱 워크로드 2개 이상, 리버스 프록시, 비밀값이 필요한 외부 서비스 → `warnings` 에 `InfraFit:` 로 추가. `supported`·추천 대상 판단은 바꾸지 않음.
+- 실행: 소스를 임시 폴더에 풀고(비밀 파일 제외, `.env.example` 류는 값 지우고 이름만) 별도 프로세스로 실행. 시간 제한 `PAWPLOY_INVENTORY_TIMEOUT`(기본 60초, 0이면 끔). 실패·시간 초과여도 analyze 는 계속되고 `inventory` 는 `{"status": "error"|"timeout", "message": ...}`. `fix_build` 는 인벤토리를 돌리지 않음(`skipped`).
+- 소스: `vendor/infrafit/` 에 복사본(vendoring). 갱신은 `python scripts/sync_infrafit.py <InfraFit 저장소 경로>` (커밋·날짜는 `vendor/infrafit/SOURCE`). 의존성 `crossplane`, `python-hcl2`(+`lark`, `regex`) 추가, `jsonschema`·`pyyaml` 은 기존에 이미 포함. kustomize 바이너리는 없어도 됨(overlay 는 미해석으로 기록).
+- 크기·시간: 배포 zip 약 +0.6MB (vendor 0.13MB + 새 의존성 약 0.5MB, 압축 기준). 실제 저장소에서 인벤토리 0.2~0.4초.
+
 ## 개발
 
 ```bash
@@ -120,6 +131,7 @@ AWS_PROFILE=peony .venv/Scripts/python -m agent.app   # 로컬 서버 → POST h
 | `PAWPLOY_ARTIFACT_BUCKET` | (없으면 저장 안 하고 응답에만) `local:<폴더>` 면 로컬 저장 |
 | `PAWPLOY_MAX_ATTEMPTS` | `3` |
 | `PAWPLOY_DEPLOYABLE` | `aws_lambda,aws_ec2,gcp_cloud_run` |
+| `PAWPLOY_INVENTORY_TIMEOUT` | `60` (초, 0이면 InfraFit 인벤토리 끔) |
 
 ## 배포 현황 (2026-10-02)
 

@@ -27,7 +27,7 @@ def run(payload: dict, brain, store: Store) -> dict:
         raise AgentError("bad_request", "build_log 가 비어 있습니다")
 
     src = source.load(source_uri)
-    scan = run_scan(src)
+    scan = run_scan(src, inventory=False)   # 빌드 수정에는 인벤토리가 필요 없다
     fix = brain.fix_dockerfile(src, scan, dockerfile, build_log, failed_phase)
     if not fix.fixable:
         return {**base, "status": "give_up", "reason": fix.cause, "fixable": False}

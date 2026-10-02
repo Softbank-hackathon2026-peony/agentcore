@@ -7,6 +7,8 @@ import json
 import posixpath
 import re
 
+from . import config
+from .inventory import run_inventory
 from .source import SourceTree, is_secret
 
 LANG_BY_EXT = {".py": "python", ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript",
@@ -49,7 +51,7 @@ CODE_EXTS = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".go", ".java"
 MAX_SCAN_FILES = 400
 
 
-def scan(src: SourceTree) -> dict:
+def scan(src: SourceTree, inventory: bool = True) -> dict:
     paths = src.paths()
     evidence: list[dict] = []
 
@@ -150,6 +152,13 @@ def scan(src: SourceTree) -> dict:
     if secrets_present:
         warnings.append(f"비밀 파일이 포함돼 있습니다 (내용은 읽지 않음): {', '.join(secrets_present[:5])}")
 
+    # InfraFit S1 인벤토리 (규칙 기반 정밀 분석, 별도 프로세스). 실패해도 스캔은 계속된다.
+    if inventory and config.INVENTORY_TIMEOUT > 0:
+        inv = run_inventory(src, timeout_s=config.INVENTORY_TIMEOUT)
+    else:
+        inv = {"status": "skipped", "message": "인벤토리를 돌리지 않음"}
+    warnings += _inventory_warnings(inv)
+
     return {
         "file_count": len(paths),
         "total_bytes": sum(src.size(p) for p in paths),
@@ -169,8 +178,29 @@ def scan(src: SourceTree) -> dict:
         "secret_files": secrets_present,
         "warnings": warnings,
         "evidence": evidence,
+        "inventory": inv,
         "tree": _tree_preview(paths),
     }
+
+
+def _inventory_warnings(inv: dict) -> list[str]:
+    if inv.get("status") != "ok":
+        return []
+    s = inv["summary"]
+    out = []
+    apps = [w for w in s["workloads"] if w["kind"] != "reverse-proxy"]
+    proxies = [w for w in s["workloads"] if w["kind"] == "reverse-proxy"]
+    if len(apps) > 1:
+        names = ", ".join(f"{w['name'] or w['id']}({w['kind']})" for w in apps[:6])
+        out.append(f"InfraFit: 앱 워크로드가 {len(apps)}개입니다 ({names}).")
+    if proxies:
+        names = ", ".join(f"{w['name'] or w['id']}" + (f" @{w['at']}" if w.get("at") else "") for w in proxies[:3])
+        out.append(f"InfraFit: 리버스 프록시가 있습니다 ({names}). 프록시 설정(타임아웃·본문 크기 등)은 배포 대상에서 다시 맞춰야 할 수 있습니다.")
+    needs = [x for x in s["external_services"] if x["secrets"]]
+    if needs:
+        names = ", ".join(f"{x['id']}({', '.join(x['secrets'][:3])})" for x in needs[:5])
+        out.append(f"InfraFit: 비밀값이 필요한 외부 서비스가 있습니다: {names}")
+    return out
 
 
 def _line_of(src: SourceTree, path: str, needle: str) -> int:

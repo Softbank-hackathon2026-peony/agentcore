@@ -266,3 +266,72 @@ def test_fix_terraform_ok_and_give_up(tmp_path):
     assert handle(fix_tf_payload(attempt=4), brain=FakeBrain())["status"] == "give_up"
     nf = FakeBrain(tf_fix=TerraformFix(fixable=False, cause="서비스 할당량 초과"))
     assert handle(fix_tf_payload(), brain=nf, store=LocalStore(str(tmp_path)))["fixable"] is False
+
+
+# ---------- InfraFit 인벤토리 ----------
+
+from agent import inventory  # noqa: E402
+
+
+def test_inventory_sample_app():
+    inv = scan(source.load(SAMPLE))["inventory"]
+    assert inv["status"] == "ok", inv
+    assert len(inv["infrafit_commit"]) == 40
+    s = inv["summary"]
+    assert [w["kind"] for w in s["workloads"]] == ["web"]
+    assert s["workloads"][0]["at"] and source.load(SAMPLE).exists(s["workloads"][0]["at"].split(":")[0])
+
+
+def test_inventory_multi_service():
+    s = scan(source.load(MULTI))
+    inv = s["inventory"]
+    assert inv["status"] == "ok", inv
+    assert {w["name"]: w["kind"] for w in inv["summary"]["workloads"]} == {"api": "web", "worker": "worker"}
+    assert {d["role"] for d in inv["summary"]["datastores"]} == {"primary-db", "cache"}
+    assert any("앱 워크로드가 2개" in w for w in s["warnings"])
+    tree = source.load(MULTI)
+    assert inv["summary"]["endpoints"]["total"] >= 1
+    for line in inv["summary"]["endpoints"]["first"]:          # 근거는 실제 파일·줄
+        path, _, ln = line.split(" @", 1)[1].split(" ")[0].partition(":")
+        assert tree.exists(path) and 1 <= int(ln) <= len(tree.lines(path))
+    assert any("서비스가 4개" in w for w in s["warnings"])          # 기존 경고 유지
+
+
+def test_inventory_secrets_not_written_and_env_example_names_only(tmp_path):
+    tree = source.SourceTree({"app.py": b"import os\n", ".env": b"OPENAI_API_KEY=sk-real",
+                              ".env.example": b"# comment sk-x\nOPENAI_API_KEY=sk-example\n"})
+    root = tmp_path / "repo"
+    inventory._materialize(tree, root)
+    assert not (root / ".env").exists()
+    assert (root / ".env.example").read_text() == "\nOPENAI_API_KEY=\n"
+
+
+def test_inventory_failure_does_not_break_analyze(tmp_path, monkeypatch):
+    assert inventory.run_inventory(source.load(SAMPLE), timeout_s=0)["status"] == "timeout"
+    monkeypatch.setattr(inventory, "VENDOR_DIR", tmp_path / "nope")
+    bad = inventory.run_inventory(source.load(SAMPLE))
+    assert bad["status"] == "error" and "InfraFit" in bad["message"]
+    brain = FakeBrain()
+    out, _ = analyze(tmp_path, brain=brain)
+    assert out["status"] == "ok"
+
+
+def test_inventory_disabled_by_config(monkeypatch):
+    from agent import config
+    monkeypatch.setattr(config, "INVENTORY_TIMEOUT", 0)
+    assert scan(source.load(SAMPLE))["inventory"]["status"] == "skipped"
+
+
+def test_inventory_summary_bounded():
+    eps = [{"id": f"ep-{i}", "workload": f"w-{i % 40}", "method": "GET", "route": "/r" * 40 + str(i),
+            "handler": {"path": f"src/routes/very/long/path/file_{i}.py", "line": i + 1, "snippet": "x"},
+            "status": "confirmed", "exposure": [{"environment": "prod", "value": "routed"}]} for i in range(500)]
+    inv = {"workloads": [{"id": f"w-{i}", "kind": "web", "name": f"svc-{i}" * 5, "status": "confirmed",
+                          "entrypoint": {"path": f"services/{i}/main.py", "line": 1, "snippet": "x"}}
+                         for i in range(40)],
+           "endpoints": eps, "datastores": [], "external_services": [], "environments": [],
+           "current_components": [], "request_paths": [],
+           "unmapped": [{"label": "SIG-" + "X" * 200} for _ in range(50)]}
+    s = inventory.summarize(inv)
+    assert len(json.dumps(s, ensure_ascii=False).encode()) <= inventory.MAX_SUMMARY_BYTES
+    assert s["endpoints"]["total"] == 500 and s["truncated"]
