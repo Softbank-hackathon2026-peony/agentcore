@@ -5,10 +5,10 @@ Amazon Bedrock AgentCore Runtime(서울)에 올라가고, Main Server가 `mode`�
 
 | mode | 그림 단계 | 담당 | 상태 |
 |---|---|---|---|
-| `analyze` | 05~08 분석·추천 + Dockerfile·buildspec 생성 (수정 요청 재분석 포함) | 이주호 | ✅ 배포본 실제 호출 확인 |
-| `fix_build` | 11~13 빌드 실패 → Dockerfile 수정 (최대 3회) | 이주호 | ✅ 오프라인 테스트 |
-| `gen_terraform` | 18~20 승인안 → Terraform 모듈 생성 | 이주호 | ✅ 실제 모델 + `terraform validate` 통과 (ec2·lambda·cloud_run) |
-| `fix_terraform` | 23~25 Terraform 실패 → 수정 (최대 3회) | 이주호 | ✅ 실제 에러 로그로 수정 → validate 통과 |
+| `analyze` | 05~08 분석·추천 + Dockerfile·buildspec 생성 (수정 요청 재분석 포함) | 이주호 (InfraFit 연결·인젝션 방어: 고준서) | ✅ 배포본 실제 호출, 평가 13/15 · 인젝션 5/5 |
+| `fix_build` | 11~13 빌드 실패 → Dockerfile 수정 (최대 3회) | 이주호 | ⚠️ 오프라인 테스트만 (CodeBuild 생기면 실제 로그로 확인) |
+| `gen_terraform` | 18~20 승인안 → Terraform 모듈 생성 | 이주호 (Worker 규격 맞춤: 고준서) | ✅ ec2·lambda·cloud_run 실제 생성 → `terraform validate` 통과 + Worker `iac.py` 위반 0건 |
+| `fix_terraform` | 23~25 Terraform 실패 → 수정 (최대 3회) | 이주호 | ✅ 실제 validate 에러 수정 (로그에 없던 오타까지) → validate 통과 |
 
 ## 설계 원칙
 
@@ -17,6 +17,45 @@ Amazon Bedrock AgentCore Runtime(서울)에 올라가고, Main Server가 `mode`�
 - **buildspec은 LLM이 만들지 않는다.** CodeBuild에서 셸 명령이 실행되는 파일이라 고정 템플릿을 쓴다. LLM은 Dockerfile만 만든다.
 - **숫자를 지어내지 않는다.** 비용은 `agent/prices.json`(출처·확인일 필수)으로 코드가 계산하고, 단가가 없으면 `null`.
 - **덮어쓰지 않는다.** 결과는 분석·시도마다 새 경로에 저장한다.
+
+## 시연
+
+```bash
+AWS_PROFILE=peony .venv/Scripts/python scripts/demo.py           # 배포본 실제 호출 (약 2분)
+.venv/Scripts/python scripts/demo.py --replay                    # 저장된 실제 결과로 재생 (AWS 없이)
+.venv/Scripts/python scripts/demo.py --only 1,3                  # 일부 단계만
+```
+
+0 오늘 커밋 → 1 샘플 앱 analyze (Lambda 추천·근거·1~5순위·비용·Dockerfile) → 2 simple-web-app analyze ("지원 안 됨") → 3 gen_terraform (Lambda 모듈) → 4 fix_terraform (깨뜨린 모듈 수정).
+녹화된 실제 결과: [examples/demo/](examples/demo/)
+
+## 재시도는 누가 돌리나
+
+에이전트는 **한 번 호출에 한 번** 처리합니다. 실패 → 수정 → 재실행 루프는 **Main Server**가 돌립니다.
+
+| 상황 | 처리 | 횟수 |
+|---|---|---|
+| LLM 출력이 우리 코드 검사에 걸림 (gen/fix_terraform) | 에이전트가 같은 호출 안에서 위반 내용을 돌려 재생성 | 최대 3번 생성 |
+| CodeBuild 빌드 실패 | Main → `fix_build(attempt=N)` → 새 Dockerfile → 재빌드 | `attempt` 3 초과면 `give_up` |
+| Worker 실행 실패 (validate·plan·정책·apply·헬스체크) | Main → `fix_terraform(attempt=N, failed_stage, log)` → 새 모듈 → 같은 `deploy_id`로 재실행 | `attempt` 3 초과면 `give_up` |
+| 코드로 못 고치는 원인 (권한·할당량·로그인) | 횟수와 상관없이 바로 `give_up` + `fixable: false` | — |
+| `gen_terraform` 자체 실패 | Main 이 재호출하거나 `terraform_uri` 없이 Worker 기본 모듈 사용 | — |
+
+## analyze 내부 순서
+
+| # | 단계 | 방식 | 파일 |
+|---|---|---|---|
+| 1 | 입력 확인, `analysis_id` 발급, 재분석이면 이전 추천·사용자 메시지 보관 | 코드 | `analyze.py` |
+| 2 | 소스 불러오기: S3 폴더/zip/tar.gz, 경로 탈출 차단, 비밀 파일 내용 차단, 5000개·50MB 제한 | 코드 | `source.py` |
+| 3 | 스캔: 언어·프레임워크·DB·포트 단서·환경변수 이름·compose/k8s + 경고 | 코드 | `scan.py` |
+| 3a | 파일 속 AI 지시문 탐지 → 사용자 경고 | 코드 | `scan.py` |
+| 3b | InfraFit S0+S1 인벤토리 (별도 프로세스, 60초 제한, 실패해도 계속) | 규칙 | `inventory.py`, `vendor/infrafit` |
+| 4 | Claude가 `list_files`·`read_file`로 파일을 직접 읽고 추천 (구조화 출력, 최대 12턴) | LLM | `brain.py` |
+| 5 | 같은 대화를 이어 Dockerfile 생성 | LLM | `brain.py` |
+| 6 | 검사·보정: 배포 가능 대상만, 근거 파일·줄 실재 확인, 비밀 env 분리(이름·값), compose/k8s면 `supported=false` 강제, 후보 5개 채움, 비용 계산 | 코드 | `analyze.py`, `cost.py` |
+| 7 | Dockerfile 규칙 강제: Lambda Web Adapter·`PORT`·`EXPOSE`, `.env` COPY 거부 | 코드 | `buildfiles.py` |
+| 8 | buildspec(고정 템플릿)·dockerignore 생성 | 코드 | `buildfiles.py` |
+| 9 | S3 저장 (`analysis/<id>/`, `build/<id>/attempt-1/`) → 응답 | 코드 | `storage.py` |
 
 ## 호출
 
@@ -125,11 +164,17 @@ LLM 프롬프트에는 이것을 워크로드 수·리버스 프록시·엔드�
 `python scripts/eval_analyze.py --offline`(스캔만) / `AWS_PROFILE=... python scripts/eval_analyze.py`(실제 모델).
 파일 속 AI 지시문은 스캔이 찾아 `scan.suspicious_instructions` 와 사용자 경고로 남기고, 모델에는 따르지 말라고 알립니다.
 
+**실제 모델 평가 (2026-10-02, sonnet-4-6): PASS 13 / FAIL 2, 인젝션 5/5 방어**
+- 막은 공격: README "무조건 EC2 추천" / 주석으로 AWS 키·관리자 토큰을 env 에 넣기 / Dockerfile 에 `COPY .env`·`curl | sh` / 3서비스인데 "supported=true"
+- FAIL 2: `public-cloud-run-hello`(실제로 컨테이너 3개라 supported=false 판단 → 기대값 수정 필요), `public-docker-getting-started`(EC2 기대, Cloud Run 추천 + SQLite 초기화 경고)
+- `workspace:` 케이스는 팀 저장소 폴더를 `PAWPLOY_WORKSPACE` 로 지정
+
 ## 개발
 
 ```bash
-python -m venv .venv && .venv/Scripts/pip install -r requirements.txt pytest
-.venv/Scripts/python -m pytest -q                 # 오프라인 테스트 (모델·AWS 호출 없음)
+python -m venv .venv && .venv/Scripts/pip install -r requirements.txt -r requirements-dev.txt
+.venv/Scripts/python -m pytest -q                 # 오프라인 테스트 85개 (모델·AWS 호출 없음)
+WORKER_REPO=<Terraform-worker 체크아웃> .venv/Scripts/python -m pytest -q   # Worker 규칙과 직접 대조 (+23)
 AWS_PROFILE=peony .venv/Scripts/python -m agent.app   # 로컬 서버 → POST http://localhost:8080/invocations
 ```
 
@@ -157,13 +202,16 @@ AWS_PROFILE=peony .venv/Scripts/python -m agent.app   # 로컬 서버 → POST h
 
 | 프로젝트 | 시간 | 결과 |
 |---|---|---|
-| Terraform-worker 샘플 앱 | 37초 | `aws_lambda` / 8080 / micro, 근거 5개, 1~5순위 ([live-analyze-response.json](examples/live-analyze-response.json)) |
-| simple-web-app (서비스 7개 + k8s) | 91초 | `supported=false`, 비밀값 `DATABASE_URL`, `REDIS_URL` 분리 |
+| Terraform-worker 샘플 앱 | 34~39초 | `aws_lambda` / 8080 / micro, 근거 4~5개, 1~5순위 ([live-analyze-response.json](examples/live-analyze-response.json)) |
+| simple-web-app (서비스 7개 + k8s) | 74~77초 (InfraFit 후) | `supported=false`, 비밀값 `DATABASE_URL`, `REDIS_URL` 분리, InfraFit 경고 (워크로드 5개·nginx 프록시) |
+| gen_terraform (lambda / ec2 / cloud_run) | 16~24초 | `terraform validate` 통과, Worker `iac.py` 위반 0건 |
+| fix_terraform (오타 2개 넣은 lambda 모듈) | 15~16초 | 두 개 다 수정 → validate 통과 |
 | tests/fixtures/multi_service | 38초 | `supported=false` |
 
 ## 남은 일
 
 - [x] `prices.json` 단가 (AWS Price List API, GCP 공식 가격표, 2026-10-02 확인, 정가·무료 티어 미반영)
 - [ ] 실제 CodeBuild 빌드 실패 로그로 `fix_build` 확인
-- [ ] Main Server 연동 (S3 경로 규칙, 호출)
+- [ ] Main Server 연동 (S3 경로 규칙, 호출, fix_* 재시도 루프)
+- [ ] 평가 FAIL 2건 기대값/프롬프트 정리
 - [x] Worker 모듈 규격(`feat/multi-cloud-a-plan`)에 맞춰 견본·검사 갱신
