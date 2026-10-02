@@ -1,15 +1,15 @@
 """mode 분기. AgentCore 진입점(app.py)과 테스트가 같은 함수를 부른다."""
 import traceback
 
-from . import analyze, fix_build
+from . import analyze, fix_build, terraform
 from .errors import AgentError
 from .storage import Store, default_store
 
 MODES = {
-    "analyze": analyze.run,          # 05~08 이주호
-    "fix_build": fix_build.run,      # 11~13 이주호
-    # "gen_terraform": ...,          # 18~20 고준서
-    # "fix_terraform": ...,          # 23~25 고준서
+    "analyze": analyze.run,           # 05~08
+    "fix_build": fix_build.run,       # 11~13
+    "gen_terraform": terraform.gen,   # 18~20
+    "fix_terraform": terraform.fix,   # 23~25
 }
 
 

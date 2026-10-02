@@ -50,6 +50,24 @@ class DockerfileOut(BaseModel):
     notes: list[str] = Field(default_factory=list, description="무엇을 근거로 어떻게 만들었는지")
 
 
+class TfFile(BaseModel):
+    name: str = Field(description="파일 이름. main.tf 또는 <이름>.tftpl 만 가능")
+    content: str
+
+
+class TerraformOut(BaseModel):
+    files: list[TfFile] = Field(description="모듈 파일들. main.tf 필수")
+    resources: list[str] = Field(default_factory=list, description="만드는 리소스를 한 줄씩 초보자용으로 설명")
+    notes: list[str] = Field(default_factory=list)
+
+
+class TerraformFix(BaseModel):
+    fixable: bool = Field(description="모듈 코드 수정으로 고칠 수 있는 에러면 true")
+    cause: str = Field(description="실패 원인 한두 문장")
+    files: list[TfFile] = Field(default_factory=list, description="고친 모듈 파일 전체 (fixable=false면 빈 목록)")
+    changes: list[str] = Field(default_factory=list)
+
+
 class DockerfileFix(BaseModel):
     fixable: bool = Field(description="Dockerfile 수정으로 고칠 수 있는 에러면 true")
     cause: str = Field(description="빌드 실패 원인 한두 문장")

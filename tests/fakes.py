@@ -25,12 +25,40 @@ def recommendation(**over) -> LLMRecommendation:
     return LLMRecommendation(**data)
 
 
+def reference_files(arch: str):
+    from pathlib import Path
+    from agent.schemas import TfFile
+    from agent.terraform import REF_DIR, REFERENCES
+    out = []
+    for name in REFERENCES[arch]:
+        target = "user_data.sh.tftpl" if name.endswith(".tftpl") else "main.tf"
+        out.append(TfFile(name=target, content=(Path(REF_DIR) / name).read_text(encoding="utf-8")))
+    return out
+
+
 class FakeBrain:
-    def __init__(self, rec=None, df=None, fix=None):
+    def __init__(self, rec=None, df=None, fix=None, tf=None, tf_fix=None):
         self.rec = rec or recommendation()
         self.df = df or DockerfileOut(dockerfile=GOOD_DOCKERFILE, container_port=8080, notes=["샘플 기반"])
         self.fix = fix
+        self.tf = tf            # list[TerraformOut] — 호출마다 하나씩
+        self.tf_fix = tf_fix
         self.calls = []
+
+    def gen_terraform(self, ctx, arch, reference, errors):
+        from agent.schemas import TerraformOut
+        self.calls.append(("gen_tf", arch, list(errors)))
+        if self.tf:
+            return self.tf.pop(0)
+        return TerraformOut(files=reference_files(arch), resources=["견본 그대로"])
+
+    def fix_terraform(self, files, arch, stage, log, reference, errors):
+        from agent.schemas import TerraformFix
+        self.calls.append(("fix_tf", stage))
+        if self.tf_fix:
+            return self.tf_fix
+        fixed = [f.model_copy(update={"content": f.content + "\n# fixed\n"}) for f in files]
+        return TerraformFix(fixable=True, cause="포트 불일치", files=fixed, changes=["포트 수정"])
 
     def analyze(self, src, scan, revision):
         self.calls.append(("analyze", revision))

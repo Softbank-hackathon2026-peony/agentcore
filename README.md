@@ -7,8 +7,8 @@ Amazon Bedrock AgentCore Runtime(서울)에 올라가고, Main Server가 `mode`�
 |---|---|---|---|
 | `analyze` | 05~08 분석·추천 + Dockerfile·buildspec 생성 (수정 요청 재분석 포함) | 이주호 | ✅ 배포본 실제 호출 확인 |
 | `fix_build` | 11~13 빌드 실패 → Dockerfile 수정 (최대 3회) | 이주호 | ✅ 오프라인 테스트 |
-| `gen_terraform` | 18~20 승인안 → Terraform 생성 | 고준서 | ⬜ |
-| `fix_terraform` | 23~25 Terraform 실패 → 수정 (최대 3회) | 고준서 | ⬜ |
+| `gen_terraform` | 18~20 승인안 → Terraform 모듈 생성 | 이주호 | ✅ 실제 모델 + `terraform validate` 통과 (ec2·lambda·cloud_run) |
+| `fix_terraform` | 23~25 Terraform 실패 → 수정 (최대 3회) | 이주호 | ✅ 실제 에러 로그로 수정 → validate 통과 |
 
 ## 설계 원칙
 
@@ -73,6 +73,22 @@ result = json.loads(resp["response"].read())
 - `status: ok` → `build_files.attempt` = 다음 시도 번호, `uri_prefix`에 새 파일
 - `status: give_up` → 3회 초과, 또는 Dockerfile로 못 고치는 원인(권한·로그인 등, `fixable: false`)
 
+### gen_terraform / fix_terraform (Terraform-worker 연동)
+
+AI가 만드는 것은 **Worker의 `modules/<아키텍처>/` 자리에 들어갈 모듈 하나**입니다. Worker 루트 `main.tf`(provider·필수 태그·backend·만료 예약)는 그대로 두고, 미리 만든 모듈 대신 이 모듈을 복사해서 `module "app"`으로 부르면 됩니다.
+
+- 입력 변수는 정확히 6개: `name`, `image_uri`, `container_port`, `size`, `env`, `health_path` / 출력은 `endpoint`, `health_url`, `resource_id` (지금 모듈과 동일)
+- 금지: `provider`(자동 제거), `backend`, provisioner(`local-exec`/`remote-exec`), 다른 `module`, `file()`·외부 경로 읽기, 허용 밖 리소스·data 소스, Worker가 안 넘기는 변수
+- 허용 리소스는 Worker `tfworker/policy.py`와 동일 + `cloud_run`: `google_cloud_run_v2_service`, `google_cloud_run_v2_service_iam_member` (**Worker 정책에 추가 필요**)
+- 검사에 걸리면 같은 호출 안에서 위반 내용을 모델에 돌려 최대 2번 다시 생성
+- 저장: `projects/<project_id>/deploy/<deploy_id>/attempt-N/` (`main.tf`, 필요하면 `user_data.sh.tftpl`)
+
+`gen_terraform` 요청: `project_id`, `deploy_id`, `recommendation`(analyze 결과 객체) 또는 `recommendation_uri`
+→ 응답: `module_uri`, `files{이름: 내용}`, `resources[]`(초보자용 설명)
+
+`fix_terraform` 요청: `project_id`, `deploy_id`, `architecture`, `attempt`(1부터), `failed_stage`(validate/plan/policy/apply/health), `log`, `files{}` 또는 `module_uri`
+→ `status: ok` 면 `next_attempt`, `module_uri`, `cause`, `changes` / `give_up` 이면 3회 초과 또는 코드로 못 고치는 원인(`fixable: false`)
+
 ## CodeBuild (buildspec) 약속 — Main Server 담당
 
 [examples/buildspec.yml](examples/buildspec.yml). `start_build` 때 넘길 환경변수:
@@ -129,4 +145,4 @@ AWS_PROFILE=peony .venv/Scripts/python -m agent.app   # 로컬 서버 → POST h
 - [x] `prices.json` 단가 (AWS Price List API, GCP 공식 가격표, 2026-10-02 확인, 정가·무료 티어 미반영)
 - [ ] 실제 CodeBuild 빌드 실패 로그로 `fix_build` 확인
 - [ ] Main Server 연동 (S3 경로 규칙, 호출)
-- [ ] `gen_terraform`, `fix_terraform` (고준서)
+- [ ] Worker: 미리 만든 모듈 대신 `module_uri`의 AI 모듈 사용 + `cloud_run` 정책·google provider 추가 (신의진·정아진)

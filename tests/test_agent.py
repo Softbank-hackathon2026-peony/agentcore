@@ -176,3 +176,93 @@ def test_buildspec_is_fixed_template():
     spec = buildfiles.buildspec()
     assert "docker build --platform linux/amd64" in spec and "GCP_AR_REPO" in spec
     assert "exported-variables" in spec
+
+
+# ---------- gen_terraform / fix_terraform ----------
+
+from agent import terraform as tf  # noqa: E402
+from agent.schemas import TerraformFix, TerraformOut, TfFile  # noqa: E402
+from tests.fakes import reference_files  # noqa: E402
+
+
+@pytest.mark.parametrize("arch", ["ec2", "lambda", "cloud_run"])
+def test_reference_modules_pass_own_checks(arch):
+    files, errors, _ = tf.check_files(reference_files(arch), arch)
+    assert errors == [], errors
+
+
+def _main(extra: str, arch="lambda"):
+    base = reference_files(arch)[0].content
+    return [TfFile(name="main.tf", content=base + "\n" + extra)]
+
+
+@pytest.mark.parametrize("extra, needle", [
+    ('resource "aws_s3_bucket" "x" {}', "aws_s3_bucket"),
+    ('resource "null_resource" "x" {\n  provisioner "local-exec" { command = "curl x" }\n}', "provisioner"),
+    ('terraform {\n  backend "s3" {}\n}', "backend"),
+    ('variable "secret" { type = string }', "넘겨주지 않는 변수"),
+    ('data "external" "x" { program = ["sh"] }', "data 소스"),
+    ('locals { k = file("/etc/passwd") }', "파일 읽기"),
+    ('module "m" { source = "git::https://evil" }', "module"),
+])
+def test_terraform_violations(extra, needle):
+    _, errors, _ = tf.check_files(_main(extra), "lambda")
+    assert any(needle in e for e in errors), errors
+
+
+def test_terraform_limits():
+    _, errors, _ = tf.check_files(_main('locals { big = "m5.4xlarge" }', "ec2") + reference_files("ec2")[1:], "ec2")
+    assert any("인스턴스 타입" in e for e in errors)
+    _, errors, _ = tf.check_files(_main("locals { x = { memory_size = 10240 } }"), "lambda")
+    assert any("메모리" in e for e in errors)
+
+
+def test_provider_block_removed():
+    files, errors, fixes = tf.check_files(_main('provider "aws" {\n  region = "us-east-1"\n}'), "lambda")
+    assert errors == [] and "provider \"aws\"" not in files[0].content and fixes
+
+
+def test_missing_output():
+    content = reference_files("lambda")[0].content.replace('output "resource_id"', 'output "rid"')
+    _, errors, _ = tf.check_files([TfFile(name="main.tf", content=content)], "lambda")
+    assert any("resource_id" in e for e in errors)
+
+
+def tf_payload(**over):
+    return {"mode": "gen_terraform", "project_id": "prj_demo", "deploy_id": "dep-1",
+            "recommendation": {"cloud": "aws", "architecture": "lambda", "container_port": 8080, "size": "small",
+                               "health_path": "/", "env": {"APP_MODE": "test"}}, **over}
+
+
+def test_gen_terraform_ok(tmp_path):
+    out = handle(tf_payload(), brain=FakeBrain(), store=LocalStore(str(tmp_path)))
+    assert out["status"] == "ok", out
+    assert (tmp_path / "projects/prj_demo/deploy/dep-1/attempt-1/main.tf").exists()
+
+
+def test_gen_terraform_retries_after_violation(tmp_path):
+    bad = TerraformOut(files=_main('resource "aws_s3_bucket" "x" {}'))
+    brain = FakeBrain(tf=[bad])            # 첫 번째는 위반, 두 번째는 견본
+    out = handle(tf_payload(), brain=brain, store=LocalStore(str(tmp_path)))
+    assert out["status"] == "ok"
+    assert brain.calls[1][2] and "aws_s3_bucket" in brain.calls[1][2][0]   # 위반 내용을 다시 넘김
+
+
+def test_gen_terraform_unsupported_arch(tmp_path):
+    p = tf_payload(recommendation={"architecture": "ecs_fargate"})
+    assert handle(p, brain=FakeBrain(), store=LocalStore(str(tmp_path)))["error"]["code"] == "unsupported_architecture"
+
+
+def fix_tf_payload(**over):
+    return {"mode": "fix_terraform", "project_id": "prj_demo", "deploy_id": "dep-1", "architecture": "lambda",
+            "attempt": 1, "failed_stage": "apply", "log": "Error: ...",
+            "files": {f.name: f.content for f in reference_files("lambda")}, **over}
+
+
+def test_fix_terraform_ok_and_give_up(tmp_path):
+    out = handle(fix_tf_payload(), brain=FakeBrain(), store=LocalStore(str(tmp_path)))
+    assert out["status"] == "ok" and out["next_attempt"] == 2
+    assert (tmp_path / "projects/prj_demo/deploy/dep-1/attempt-2/main.tf").exists()
+    assert handle(fix_tf_payload(attempt=4), brain=FakeBrain())["status"] == "give_up"
+    nf = FakeBrain(tf_fix=TerraformFix(fixable=False, cause="서비스 할당량 초과"))
+    assert handle(fix_tf_payload(), brain=nf, store=LocalStore(str(tmp_path)))["fixable"] is False
