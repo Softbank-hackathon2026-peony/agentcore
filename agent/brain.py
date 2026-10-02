@@ -138,7 +138,9 @@ class StrandsBrain:
 
     def gen_terraform(self, ctx: dict, arch: str, reference: str, errors: list[str]):
         prompt = (
-            f"아래 승인된 추천안에 맞는 `{arch}` 모듈을 작성하라.\n\n"
+            f"아래 승인된 추천안에 맞는 `{arch}` 모듈을 작성하라.\n"
+            "AWS·GCP 모듈을 따로따로 만든다. 추천안의 1순위(recommended)가 다른 클라우드여도 "
+            f"이번에는 `{ctx.get('cloud')}/{arch}` 모듈만 만든다 (같은 이미지·포트·크기·헬스체크).\n\n"
             f"## 승인된 추천안\n{json.dumps(ctx, ensure_ascii=False, indent=1)}\n\n"
             f"## 견본 (팀이 검증한 모듈. 구조·보안 설정을 최대한 따르고, 추천안에 맞게만 바꿔라)\n{reference}\n"
         )

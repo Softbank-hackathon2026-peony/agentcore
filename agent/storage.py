@@ -4,6 +4,7 @@
 경로 규칙:
   projects/<project_id>/analysis/<analysis_id>/recommendation.json
   projects/<project_id>/build/<analysis_id>/attempt-<N>/{Dockerfile.pawploy, dockerignore, buildspec.yml}
+  projects/<project_id>/deploy/<deploy_id>/attempt-<N>/<aws|gcp>/{main.tf, ...}
 """
 import json
 from pathlib import Path
@@ -21,6 +22,17 @@ class Store:
 
     def prefix_uri(self, key_prefix: str) -> str | None:
         raise NotImplementedError
+
+    def subdirs(self, key_prefix: str) -> list[str]:
+        """key_prefix 바로 아래 폴더 이름들 (끝의 / 없이)."""
+        return []
+
+    def list_keys(self, key_prefix: str) -> list[str]:
+        """key_prefix 아래 모든 파일 키."""
+        return []
+
+    def get_text(self, key: str) -> str:
+        raise AgentError("store_failed", f"읽을 수 없습니다: {key}")
 
 
 class NullStore(Store):
@@ -48,6 +60,17 @@ class LocalStore(Store):
     def prefix_uri(self, key_prefix):
         return (self.root / key_prefix).as_posix().rstrip("/") + "/"
 
+    def subdirs(self, key_prefix):
+        d = self.root / key_prefix
+        return sorted(x.name for x in d.iterdir() if x.is_dir()) if d.is_dir() else []
+
+    def list_keys(self, key_prefix):
+        d = self.root / key_prefix
+        return sorted(f.relative_to(self.root).as_posix() for f in d.rglob("*") if f.is_file()) if d.is_dir() else []
+
+    def get_text(self, key):
+        return (self.root / key).read_text(encoding="utf-8")
+
 
 class S3Store(Store):
     def __init__(self, bucket: str, client=None):
@@ -66,6 +89,21 @@ class S3Store(Store):
 
     def prefix_uri(self, key_prefix):
         return f"s3://{self.bucket}/{key_prefix.rstrip('/')}/"
+
+    def subdirs(self, key_prefix):
+        prefix = key_prefix.rstrip("/") + "/"
+        out = []
+        for page in self.s3.get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=prefix, Delimiter="/"):
+            out += [c["Prefix"][len(prefix):].rstrip("/") for c in page.get("CommonPrefixes", [])]
+        return out
+
+    def list_keys(self, key_prefix):
+        prefix = key_prefix.rstrip("/") + "/"
+        return [o["Key"] for page in self.s3.get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=prefix)
+                for o in page.get("Contents", [])]
+
+    def get_text(self, key):
+        return self.s3.get_object(Bucket=self.bucket, Key=key)["Body"].read().decode("utf-8")
 
 
 def default_store() -> Store:

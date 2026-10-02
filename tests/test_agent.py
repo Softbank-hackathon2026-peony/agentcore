@@ -234,18 +234,50 @@ def tf_payload(**over):
                                "health_path": "/", "env": {"APP_MODE": "test"}}, **over}
 
 
-def test_gen_terraform_ok(tmp_path):
-    out = handle(tf_payload(), brain=FakeBrain(), store=LocalStore(str(tmp_path)))
+def test_gen_terraform_makes_aws_and_gcp(tmp_path):
+    brain = FakeBrain()
+    out = handle(tf_payload(), brain=brain, store=LocalStore(str(tmp_path)))
     assert out["status"] == "ok", out
-    assert (tmp_path / "projects/prj_demo/deploy/dep-1/attempt-1/main.tf").exists()
+    got = {t["cloud"]: t["architecture"] for t in out["targets"]}
+    assert got == {"aws": "lambda", "gcp": "cloud_run"}
+    base = tmp_path / "projects/prj_demo/deploy/dep-1/attempt-1"
+    assert (base / "aws/main.tf").exists() and (base / "gcp/main.tf").exists()
+    assert out["module_uri"].endswith("attempt-1/")
+    assert all(t["module_uri"].endswith(f"attempt-1/{t['cloud']}/") for t in out["targets"])
+
+
+def test_gen_terraform_other_cloud_from_candidates(tmp_path):
+    rec = {"cloud": "gcp", "architecture": "cloud_run", "container_port": 8080, "size": "small",
+           "health_path": "/", "env": {}, "candidates": [
+               {"rank": 1, "cloud": "gcp", "architecture": "cloud_run", "deployable": True},
+               {"rank": 2, "cloud": "aws", "architecture": "ecs_fargate", "deployable": False},
+               {"rank": 3, "cloud": "aws", "architecture": "ec2", "deployable": True},
+               {"rank": 4, "cloud": "aws", "architecture": "lambda", "deployable": True}]}
+    assert tf.plan_targets(rec) == [("aws", "ec2"), ("gcp", "cloud_run")]
+    assert tf.plan_targets(rec, {"aws": "lambda"}) == [("aws", "lambda")]
+    with pytest.raises(Exception):
+        tf.plan_targets(rec, {"gcp": "ec2"})
 
 
 def test_gen_terraform_retries_after_violation(tmp_path):
     bad = TerraformOut(files=_main('resource "aws_s3_bucket" "x" {}'))
     brain = FakeBrain(tf=[bad])            # 첫 번째는 위반, 두 번째는 견본
-    out = handle(tf_payload(), brain=brain, store=LocalStore(str(tmp_path)))
-    assert out["status"] == "ok"
+    out = handle(tf_payload(architectures={"aws": "lambda"}), brain=brain, store=LocalStore(str(tmp_path)))
+    assert out["status"] == "ok" and len(out["targets"]) == 1
     assert brain.calls[1][2] and "aws_s3_bucket" in brain.calls[1][2][0]   # 위반 내용을 다시 넘김
+
+
+def test_gen_terraform_partial(tmp_path):
+    class HalfBad(FakeBrain):
+        def gen_terraform(self, ctx, arch, reference, errors):
+            if arch == "cloud_run":
+                return TerraformOut(files=_main('resource "aws_s3_bucket" "x" {}', "cloud_run"))
+            return super().gen_terraform(ctx, arch, reference, errors)
+    out = handle(tf_payload(), brain=HalfBad(), store=LocalStore(str(tmp_path)))
+    assert out["status"] == "partial"
+    st = {t["cloud"]: t["status"] for t in out["targets"]}
+    assert st == {"aws": "ok", "gcp": "error"}
+    assert not (tmp_path / "projects/prj_demo/deploy/dep-1/attempt-1/gcp").exists()
 
 
 def test_gen_terraform_unsupported_arch(tmp_path):
@@ -261,11 +293,42 @@ def fix_tf_payload(**over):
 
 def test_fix_terraform_ok_and_give_up(tmp_path):
     out = handle(fix_tf_payload(), brain=FakeBrain(), store=LocalStore(str(tmp_path)))
-    assert out["status"] == "ok" and out["next_attempt"] == 2
-    assert (tmp_path / "projects/prj_demo/deploy/dep-1/attempt-2/main.tf").exists()
+    assert out["status"] == "ok" and out["next_attempt"] == 2 and out["saved_attempt"] == 2
+    assert (tmp_path / "projects/prj_demo/deploy/dep-1/attempt-2/aws/main.tf").exists()
     assert handle(fix_tf_payload(attempt=4), brain=FakeBrain())["status"] == "give_up"
     nf = FakeBrain(tf_fix=TerraformFix(fixable=False, cause="서비스 할당량 초과"))
     assert handle(fix_tf_payload(), brain=nf, store=LocalStore(str(tmp_path)))["fixable"] is False
+
+
+def test_fix_terraform_keeps_other_cloud_in_new_attempt(tmp_path):
+    """Worker 는 가장 큰 attempt-N 하나만 본다 → AWS 만 고쳐도 GCP 모듈이 새 attempt 에 같이 있어야 한다."""
+    store = LocalStore(str(tmp_path))
+    handle(tf_payload(), brain=FakeBrain(), store=store)
+    root = tmp_path / "projects/prj_demo/deploy/dep-1"
+    p = fix_tf_payload()
+    del p["files"]                           # 저장된 최신 attempt 에서 읽는다
+    out = handle(p, brain=FakeBrain(), store=store)
+    assert out["status"] == "ok" and out["saved_attempt"] == 2 and out["carried_over"] == ["gcp"]
+    assert "# fixed" in (root / "attempt-2/aws/main.tf").read_text(encoding="utf-8")
+    assert (root / "attempt-2/gcp/main.tf").read_text(encoding="utf-8") == \
+        (root / "attempt-1/gcp/main.tf").read_text(encoding="utf-8")
+
+    # 이어서 GCP 가 실패 (Main Server 기준 GCP 는 1번째 시도) → attempt-3, AWS 는 attempt-2 의 고친 것을 유지
+    g = fix_tf_payload(architecture="cloud_run")
+    del g["files"]
+    out = handle(g, brain=FakeBrain(), store=store)
+    assert out["saved_attempt"] == 3 and out["next_attempt"] == 2
+    assert "# fixed" in (root / "attempt-3/gcp/main.tf").read_text(encoding="utf-8")
+    assert "# fixed" in (root / "attempt-3/aws/main.tf").read_text(encoding="utf-8")
+
+
+def test_fix_terraform_from_attempt_folder_uri(tmp_path):
+    store = LocalStore(str(tmp_path))
+    gen = handle(tf_payload(), brain=FakeBrain(), store=store)
+    p = fix_tf_payload(architecture="cloud_run", module_uri=gen["module_uri"])
+    del p["files"]
+    out = handle(p, brain=FakeBrain(), store=store)
+    assert out["status"] == "ok" and "google_cloud_run_v2_service" in out["files"]["main.tf"]
 
 
 # ---------- InfraFit 인벤토리 ----------

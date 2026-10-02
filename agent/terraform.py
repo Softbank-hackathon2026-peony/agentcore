@@ -1,6 +1,7 @@
 """gen_terraform (그림 18~20) / fix_terraform (그림 23~25).
 
-AI가 만드는 것은 Terraform-worker의 `modules/<아키텍처>/` 자리에 들어갈 **모듈 하나**다.
+AI가 만드는 것은 Terraform-worker의 `modules/<아키텍처>/` 자리에 들어갈 **클라우드별 모듈**이다
+(AWS 하나 + GCP 하나를 동시에, `attempt-N/<aws|gcp>/`).
 Worker 루트 main.tf 가 provider(필수 태그·리전), backend(state), 만료 예약을 강제하고
 `module "app" { source = "./modules/<아키텍처>" }` 로 이 모듈을 부른다. 그래서
 - 입력 변수 6개(name, image_uri, container_port, size, env, health_path)와
@@ -10,6 +11,7 @@ Worker 의 IaC 정적 검사(tfworker/iac.py)와 같은 규칙을 `_check_worker
 여기서 하는 검사는 1차 방어선이고, 최종 방어선은 Worker의 plan 정책 검사다.
 """
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import config, source
@@ -32,6 +34,9 @@ ALLOWED_RESOURCES = {
                   "google_cloud_run_v2_service_iam_member"},
 }
 CLOUD_OF = {"ec2": "aws", "lambda": "aws", "cloud_run": "gcp"}
+CLOUDS = ("aws", "gcp")
+DEFAULT_ARCH = {"aws": "lambda", "gcp": "cloud_run"}   # 후보 순위에 그 클라우드가 없을 때
+ATTEMPT_DIR_RE = re.compile(r"attempt-(\d+)")
 # iac.ALLOWED_DATA
 ALLOWED_DATA = {
     "aws": {"aws_vpc", "aws_subnets", "aws_subnet", "aws_ssm_parameter", "aws_ami", "aws_availability_zones",
@@ -225,57 +230,131 @@ def _load_recommendation(payload: dict) -> dict:
     return json.loads(Path(uri).read_text(encoding="utf-8"))
 
 
-def _save(store: Store, project_id: str, deploy_id: str, attempt: int, files: list[TfFile]) -> str | None:
-    prefix = f"projects/{project_id}/deploy/{deploy_id}/attempt-{attempt}/"
+def _deploy_prefix(project_id: str, deploy_id: str) -> str:
+    return f"projects/{project_id}/deploy/{deploy_id}/"
+
+
+def _attempt_prefix(project_id: str, deploy_id: str, n: int, cloud: str) -> str:
+    return f"{_deploy_prefix(project_id, deploy_id)}attempt-{n}/{cloud}/"
+
+
+def _latest_attempt(store: Store, project_id: str, deploy_id: str) -> int:
+    """저장된 attempt-N 중 가장 큰 N (없으면 0). Worker 도 숫자 비교로 가장 큰 것을 쓴다."""
+    ns = [int(m.group(1)) for d in store.subdirs(_deploy_prefix(project_id, deploy_id))
+          if (m := ATTEMPT_DIR_RE.fullmatch(d))]
+    return max(ns, default=0)
+
+
+def _save(store: Store, prefix: str, files: list[TfFile]) -> str | None:
     for f in files:
         store.put_text(prefix + f.name, f.content)
     return store.prefix_uri(prefix)
 
 
-def gen(payload: dict, brain, store: Store) -> dict:
-    project_id = _need(payload, "project_id")
-    deploy_id = _need(payload, "deploy_id")
-    rec = _load_recommendation(payload)
-    arch = _arch(rec)
-    ctx = {k: rec.get(k) for k in ("cloud", "architecture", "container_port", "size", "health_path",
-                                    "summary", "reason", "required_secrets")}
-    ctx["env_names"] = sorted((rec.get("env") or {}).keys())
+def plan_targets(rec: dict, architectures: dict | None = None) -> list[tuple[str, str]]:
+    """[(cloud, architecture)] — 클라우드마다 모듈 하나.
+
+    architectures 를 주면 그대로 쓴다 (예: {"aws": "ec2"} → AWS 만, 사용자가 다른 순위를 골랐을 때).
+    안 주면 AWS·GCP 둘 다: 추천안과 같은 클라우드는 추천 아키텍처, 다른 클라우드는
+    analyze 후보 순위(candidates)에서 그 클라우드의 배포 가능한 첫 번째.
+    """
+    if architectures:
+        out = []
+        for cloud, arch in architectures.items():
+            arch = _arch({"architecture": arch})
+            if CLOUD_OF[arch] != cloud:
+                raise AgentError("bad_request", f"{arch} 는 {cloud} 아키텍처가 아닙니다")
+            out.append((cloud, arch))
+        return out
+    primary = _arch(rec)
+    ranked = sorted(rec.get("candidates") or [], key=lambda c: c.get("rank") or 99)
+    out = []
+    for cloud in CLOUDS:
+        if CLOUD_OF[primary] == cloud:
+            out.append((cloud, primary))
+            continue
+        arch = next((c["architecture"] for c in ranked if c.get("cloud") == cloud and c.get("deployable")
+                     and c.get("architecture") in ALLOWED_RESOURCES), DEFAULT_ARCH[cloud])
+        out.append((cloud, arch))
+    return out
+
+
+def _gen_one(brain, ctx: dict, cloud: str, arch: str) -> dict:
+    ctx = {**ctx, "cloud": cloud, "architecture": arch}
     errors: list[str] = []
     for _ in range(INTERNAL_RETRIES + 1):
         out = brain.gen_terraform(ctx, arch, reference(arch), errors)
         files, errors, fixes = check_files(out.files, arch)
         if not errors:
-            break
-    else:
-        return {"status": "error", "mode": "gen_terraform",
-                "error": {"code": "terraform_invalid", "message": "생성된 Terraform이 검사를 통과하지 못했습니다"},
-                "violations": errors}
-    uri = _save(store, project_id, deploy_id, 1, files)
-    return {"status": "ok", "mode": "gen_terraform", "project_id": project_id, "deploy_id": deploy_id,
-            "architecture": arch, "attempt": 1, "module_uri": uri,
-            "files": {f.name: f.content for f in files}, "resources": out.resources,
-            "notes": list(out.notes) + fixes}
+            return {"cloud": cloud, "architecture": arch, "status": "ok", "files": files,
+                    "resources": out.resources, "notes": list(out.notes) + fixes}
+    return {"cloud": cloud, "architecture": arch, "status": "error",
+            "error": {"code": "terraform_invalid", "message": "생성된 Terraform이 검사를 통과하지 못했습니다"},
+            "violations": errors}
+
+
+def gen(payload: dict, brain, store: Store) -> dict:
+    """AWS·GCP 모듈을 동시에 만들어 attempt-1/<cloud>/ 에 둔다 (Worker 멀티 클라우드 규칙)."""
+    project_id = _need(payload, "project_id")
+    deploy_id = _need(payload, "deploy_id")
+    rec = _load_recommendation(payload)
+    targets = plan_targets(rec, payload.get("architectures"))
+    ctx = {k: rec.get(k) for k in ("container_port", "size", "health_path", "summary", "reason", "required_secrets")}
+    ctx["recommended"] = f"{rec.get('cloud')}/{rec.get('architecture')}"
+    ctx["env_names"] = sorted((rec.get("env") or {}).keys())
+
+    with ThreadPoolExecutor(len(targets)) as ex:
+        results = list(ex.map(lambda t: _gen_one(brain, ctx, *t), targets))
+    for r in results:
+        if r["status"] == "ok":
+            files = r.pop("files")
+            r["module_uri"] = _save(store, _attempt_prefix(project_id, deploy_id, 1, r["cloud"]), files)
+            r["files"] = {f.name: f.content for f in files}
+
+    ok = [r for r in results if r["status"] == "ok"]
+    status = "ok" if len(ok) == len(results) else "partial" if ok else "error"
+    out = {"status": status, "mode": "gen_terraform", "project_id": project_id, "deploy_id": deploy_id,
+           "attempt": 1, "module_uri": store.prefix_uri(f"{_deploy_prefix(project_id, deploy_id)}attempt-1/"),
+           "targets": results}
+    if status == "error":
+        out["error"] = {"code": "terraform_invalid", "message": "생성된 Terraform이 검사를 통과하지 못했습니다"}
+    return out
 
 
 def fix(payload: dict, brain, store: Store) -> dict:
+    """실패한 클라우드 하나만 고친다. 고친 모듈은 attempt-(최신+1)/<cloud>/ 에 쓰고,
+    다른 클라우드는 최신 attempt 의 모듈을 그대로 복사한다 (Worker 는 가장 큰 attempt 하나만 보므로)."""
     project_id = _need(payload, "project_id")
     deploy_id = _need(payload, "deploy_id")
     arch = _arch({"architecture": _need(payload, "architecture")})
+    cloud = CLOUD_OF[arch]
     attempt = int(payload.get("attempt") or 1)
     stage = str(payload.get("failed_stage") or "apply")
     log = str(payload.get("log") or "")
-    base = {"mode": "fix_terraform", "project_id": project_id, "deploy_id": deploy_id, "attempt": attempt}
+    base = {"mode": "fix_terraform", "project_id": project_id, "deploy_id": deploy_id, "cloud": cloud,
+            "architecture": arch, "attempt": attempt}
     if attempt > config.MAX_ATTEMPTS:
         return {**base, "status": "give_up",
                 "reason": f"자동 수정 {config.MAX_ATTEMPTS}회를 넘었습니다. 사람이 확인해야 합니다."}
     if not log.strip():
         raise AgentError("bad_request", "log 가 비어 있습니다")
 
+    latest = _latest_attempt(store, project_id, deploy_id)
     if isinstance(payload.get("files"), dict):
         current = [TfFile(name=k, content=v) for k, v in payload["files"].items()]
+    elif payload.get("module_uri"):
+        tree = source.load(payload["module_uri"])
+        paths = tree.paths()
+        if any(x.startswith(cloud + "/") for x in paths):     # attempt-N/ 상위 폴더를 준 경우
+            paths = [x for x in paths if x.startswith(cloud + "/")]
+        current = [TfFile(name=x.split("/")[-1], content=tree.read_text(x, limit=MAX_FILE_CHARS)) for x in paths]
+    elif latest:
+        prefix = _attempt_prefix(project_id, deploy_id, latest, cloud)
+        current = [TfFile(name=k[len(prefix):], content=store.get_text(k)) for k in store.list_keys(prefix)]
     else:
-        tree = source.load(_need(payload, "module_uri"))
-        current = [TfFile(name=p, content=tree.read_text(p, limit=MAX_FILE_CHARS)) for p in tree.paths()]
+        current = []
+    if not current:
+        raise AgentError("bad_request", "고칠 모듈이 없습니다 (files / module_uri 가 없고 저장된 attempt 도 없음)")
 
     errors: list[str] = []
     for _ in range(INTERNAL_RETRIES + 1):
@@ -289,6 +368,26 @@ def fix(payload: dict, brain, store: Store) -> dict:
         return {**base, "status": "give_up", "reason": "수정본이 검사를 통과하지 못했습니다", "violations": errors}
     if {f.name: f.content.strip() for f in files} == {f.name: f.content.strip() for f in current}:
         return {**base, "status": "give_up", "reason": "모델이 코드를 바꾸지 못했습니다: " + res.cause}
-    uri = _save(store, project_id, deploy_id, attempt + 1, files)
+
+    n = max(latest, attempt) + 1
+    uri = _save(store, _attempt_prefix(project_id, deploy_id, n, cloud), files)
+    copied = _carry_other_clouds(store, project_id, deploy_id, latest, n, cloud)
     return {**base, "status": "ok", "cause": res.cause, "changes": list(res.changes) + fixes,
-            "next_attempt": attempt + 1, "module_uri": uri, "files": {f.name: f.content for f in files}}
+            "next_attempt": attempt + 1, "saved_attempt": n, "module_uri": uri, "carried_over": copied,
+            "files": {f.name: f.content for f in files}}
+
+
+def _carry_other_clouds(store: Store, project_id: str, deploy_id: str, src: int, dst: int, fixed: str) -> list[str]:
+    """attempt-src 의 다른 클라우드 모듈을 attempt-dst 로 복사. 이미 있으면 (다른 수정이 먼저 썼으면) 그대로 둔다."""
+    if not src:
+        return []
+    have = set(store.subdirs(f"{_deploy_prefix(project_id, deploy_id)}attempt-{dst}/"))
+    copied = []
+    for cloud in store.subdirs(f"{_deploy_prefix(project_id, deploy_id)}attempt-{src}/"):
+        if cloud == fixed or cloud not in CLOUDS or cloud in have:
+            continue
+        sp, dp = _attempt_prefix(project_id, deploy_id, src, cloud), _attempt_prefix(project_id, deploy_id, dst, cloud)
+        for k in store.list_keys(sp):
+            store.put_text(dp + k[len(sp):], store.get_text(k))
+        copied.append(cloud)
+    return copied

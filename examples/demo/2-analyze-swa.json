@@ -1,5 +1,5 @@
 {
- "seconds": 73.58415460586548,
+ "seconds": 76.10665726661682,
  "payload": {
   "mode": "analyze",
   "project_id": "prj_demo_swa",
@@ -9,7 +9,7 @@
   "status": "ok",
   "mode": "analyze",
   "project_id": "prj_demo_swa",
-  "analysis_id": "ana-20261002102446-e2d7",
+  "analysis_id": "ana-20261002103746-7130",
   "recommendation": {
    "cloud": "aws",
    "architecture": "ec2",
@@ -19,13 +19,14 @@
    "env": {
     "LOG_LEVEL": "INFO"
    },
-   "reason": "이 프로젝트는 auth, board-api, board-worker, nginx, PostgreSQL, Redis 등 총 6~7개의 서비스가 함께 실행되어야 합니다. 컨테이너 1개로는 배포할 수 없는 구조입니다. 현재 Pawploy가 지원하는 단일 컨테이너 배포 방식으로는 이 프로젝트를 그대로 올릴 수 없습니다. 쿠버네티스(K8s) 매니페스트가 이미 준비되어 있으므로, EKS(AWS)나 GKE(GCP) 같은 쿠버네티스 클러스터 환경이 가장 적합합니다.",
+   "reason": "이 프로젝트는 auth, board-api, board-worker, nginx, PostgreSQL, Redis 등 최소 6개의 서비스가 함께 동작해야 합니다. 컨테이너 1개로는 배포할 수 없어 Pawploy의 현재 지원 범위를 벗어납니다. 만약 직접 배포한다면, 항상 켜져 있어야 하고 여러 컨테이너를 함께 실행할 수 있는 EC2가 가장 현실적인 선택입니다. 원래 프로젝트는 Kubernetes(EKS/GKE) 환경을 목표로 설계되어 있습니다.",
    "target": "aws_ec2",
    "label": "AWS EC2",
-   "summary": "FastAPI 기반 인증(auth) + 게시판(board-api) 백엔드, React/Nginx 프론트엔드, board-worker, PostgreSQL, Redis(캐시+스트림 큐)로 구성된 마이크로서비스 웹 애플리케이션",
+   "summary": "FastAPI 기반 인증(auth) + 게시판(board-api) 백엔드, React/Nginx 프론트엔드, board-worker, PostgreSQL, Redis(캐시+스트림 큐)로 구성된 멀티 서비스 웹 애플리케이션",
    "required_secrets": [
     "DATABASE_URL",
-    "REDIS_URL"
+    "REDIS_URL",
+    "SECRET_KEY"
    ],
    "permissions": [
     "ECR 이미지 읽기",
@@ -48,43 +49,43 @@
      "file": "docker-compose.yml",
      "line": 14,
      "finding": "postgres, redis, migrate, auth, board-api, board-worker, nginx 총 7개 서비스가 정의됨",
-     "plain": "쉽게 말하면: 앱이 혼자 실행되는 게 아니라 7개의 프로그램이 동시에 켜져야 작동합니다.",
+     "plain": "쉽게 말하면: 앱이 혼자 실행되는 게 아니라 7개의 프로그램이 동시에 켜져야 동작합니다.",
      "tag": "멀티 서비스"
-    },
-    {
-     "file": "services/auth/pyproject.toml",
-     "line": 9,
-     "finding": "asyncpg>=0.29 (PostgreSQL 필수 의존성)",
-     "plain": "쉽게 말하면: 인증 서비스가 PostgreSQL 데이터베이스 없이는 실행되지 않습니다.",
-     "tag": "외부 DB 필수"
-    },
-    {
-     "file": "services/auth/pyproject.toml",
-     "line": 10,
-     "finding": "redis>=5.0.4 (Redis 필수 의존성)",
-     "plain": "쉽게 말하면: 인증 서비스가 Redis 캐시 서버 없이는 실행되지 않습니다.",
-     "tag": "외부 캐시 필수"
-    },
-    {
-     "file": "services/auth/src/auth/events.py",
-     "line": 8,
-     "finding": "redis.xadd()로 Redis Streams 큐 사용 (USER_EVENTS 스트림)",
-     "plain": "쉽게 말하면: 서비스 간 메시지를 주고받기 위해 Redis를 메시지 큐로도 사용합니다.",
-     "tag": "Redis Streams 큐"
     },
     {
      "file": "k8s/base/board-worker.yaml",
      "line": 4,
-     "finding": "board-worker가 별도 Deployment로 정의됨 (python -m board.worker 상시 실행)",
-     "plain": "쉽게 말하면: 백그라운드에서 계속 돌아가는 워커 프로세스가 별도 컨테이너로 분리되어 있습니다.",
-     "tag": "백그라운드 워커"
+     "finding": "board-worker가 별도 Kubernetes Deployment로 분리되어 Redis Streams 큐를 소비하는 상시 실행 워커",
+     "plain": "쉽게 말하면: 백그라운드에서 계속 돌아가는 일꾼 프로세스가 따로 있어서, 웹 서버와 별개로 항상 켜져 있어야 합니다.",
+     "tag": "상시 워커"
+    },
+    {
+     "file": "services/auth/src/auth/events.py",
+     "line": 8,
+     "finding": "redis.xadd()로 Redis Streams에 이벤트를 발행 — auth와 board가 Redis 큐로 통신",
+     "plain": "쉽게 말하면: 인증 서비스와 게시판 서비스가 Redis를 통해 메시지를 주고받으므로 Redis가 반드시 필요합니다.",
+     "tag": "Redis 큐 의존"
+    },
+    {
+     "file": "services/auth/pyproject.toml",
+     "line": 9,
+     "finding": "asyncpg>=0.29 — PostgreSQL 필수 의존성",
+     "plain": "쉽게 말하면: 데이터를 저장하려면 PostgreSQL 데이터베이스가 별도로 실행되고 있어야 합니다.",
+     "tag": "PostgreSQL 필수"
     },
     {
      "file": "k8s/base/nginx.yaml",
      "line": 4,
-     "finding": "nginx가 별도 Deployment로 정의됨, 프론트엔드+리버스프록시 역할",
-     "plain": "쉽게 말하면: 사용자 요청을 받아 각 서비스로 나눠주는 nginx도 독립 컨테이너로 운영됩니다.",
+     "finding": "nginx가 별도 Deployment로 존재하며 프론트엔드 정적 파일 서빙 + 리버스 프록시 역할",
+     "plain": "쉽게 말하면: 사용자 요청을 받아 각 서비스로 나눠주는 nginx도 독립적인 컨테이너로 실행됩니다.",
      "tag": "리버스 프록시"
+    },
+    {
+     "file": "k8s/overlays/aws/dev/kustomization.yaml",
+     "line": null,
+     "finding": "aws/dev, aws/prod, gcp/dev, gcp/prod 등 Kubernetes Kustomize 오버레이가 존재 — EKS/GKE 배포 전제",
+     "plain": "쉽게 말하면: 이 프로젝트는 처음부터 쿠버네티스 클러스터(EKS 또는 GKE)에 배포하도록 설계되었습니다.",
+     "tag": "K8s 전용 설계"
     }
    ],
    "candidates": [
@@ -94,9 +95,9 @@
      "architecture": "ec2",
      "label": "AWS EC2",
      "deployable": true,
-     "fit": 42,
-     "verdict": "부적합",
-     "why": "단일 컨테이너 배포만 지원하므로 7개 서비스가 필요한 이 프로젝트는 현재 Pawploy로 배포할 수 없습니다. 이미 K8s 매니페스트(EKS/GKE용)가 준비되어 있어 쿠버네티스 클러스터가 더 적합합니다.",
+     "fit": 35,
+     "verdict": "적합",
+     "why": "여러 컨테이너를 Docker Compose로 한 서버에서 실행할 수 있는 유일한 현실적 대안이지만, 원래 설계는 K8s 클러스터를 전제로 합니다.",
      "size_spec": "t3.medium",
      "permissions": [
       "ECR 이미지 읽기",
@@ -117,70 +118,14 @@
      "rank": 1
     },
     {
-     "target": "aws_ecs_fargate",
-     "cloud": "aws",
-     "architecture": "ecs_fargate",
-     "label": "AWS ECS Fargate",
-     "deployable": false,
-     "fit": 35,
-     "verdict": "부적합",
-     "why": "Fargate는 멀티 컨테이너를 지원하지만 현재 Pawploy에서 배포가 불가합니다. 기술적으로는 가능하나 지금은 선택할 수 없습니다.",
-     "size_spec": "1 vCPU / 2GB",
-     "permissions": [
-      "ECR 이미지 읽기",
-      "로드밸런서 공개"
-     ],
-     "cost": {
-      "assumptions": {
-       "test_hours": 1,
-       "monthly_requests": 100000,
-       "avg_request_seconds": 0.2
-      },
-      "currency": "USD",
-      "test_1h": 0.0568,
-      "monthly": 41.45,
-      "source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonECS/current/ap-northeast-2/index.json",
-      "checked": "2026-10-02"
-     },
-     "rank": 2
-    },
-    {
-     "target": "gcp_cloud_run",
-     "cloud": "gcp",
-     "architecture": "cloud_run",
-     "label": "Google Cloud Run",
-     "deployable": true,
-     "fit": 20,
-     "verdict": "부적합",
-     "why": "Cloud Run은 단일 컨테이너 단위로 배포하며, 여러 서비스 간 내부 통신 구성이 복잡해집니다. Redis Streams 워커처럼 상시 실행이 필요한 서비스에도 맞지 않습니다.",
-     "size_spec": "메모리 2GiB",
-     "permissions": [
-      "Artifact Registry 이미지 읽기",
-      "공개 접속 허용"
-     ],
-     "cost": {
-      "assumptions": {
-       "test_hours": 1,
-       "monthly_requests": 100000,
-       "avg_request_seconds": 0.2
-      },
-      "currency": "USD",
-      "test_1h": 0.0,
-      "monthly": 0.85,
-      "source": "https://cloud.google.com/run/pricing (Seoul asia-northeast3 = Tier 2: https://docs.cloud.google.com/run/docs/locations)",
-      "checked": "2026-10-02"
-     },
-     "rank": 3
-    },
-    {
      "target": "gcp_compute_engine",
      "cloud": "gcp",
      "architecture": "compute_engine",
      "label": "Google Compute Engine",
      "deployable": false,
-     "fit": 20,
-     "verdict": "부적합",
-     "why": "단일 VM에 모든 서비스를 올릴 수는 있지만 현재 Pawploy에서 배포가 불가하며, K8s 기반 구성과도 맞지 않습니다.",
+     "fit": 30,
+     "verdict": "적합",
+     "why": "GCP 환경에서 EC2와 동일하게 Docker Compose로 실행 가능하지만, 역시 단일 서버에서 모든 서비스를 돌리는 것은 임시방편입니다.",
      "size_spec": "e2-medium",
      "permissions": [
       "Artifact Registry 이미지 읽기",
@@ -198,6 +143,62 @@
       "source": "https://cloud.google.com/products/compute/pricing/general-purpose#e2-machine-types (E2 shared-core, Seoul asia-northeast3, Default)",
       "checked": "2026-10-02"
      },
+     "rank": 2
+    },
+    {
+     "target": "aws_ecs_fargate",
+     "cloud": "aws",
+     "architecture": "ecs_fargate",
+     "label": "AWS ECS Fargate",
+     "deployable": false,
+     "fit": 20,
+     "verdict": "부적합",
+     "why": "컨테이너 오케스트레이션은 가능하지만 Pawploy에서 현재 지원하지 않으며, 서비스 간 네트워크 구성이 복잡합니다.",
+     "size_spec": "1 vCPU / 2GB",
+     "permissions": [
+      "ECR 이미지 읽기",
+      "로드밸런서 공개"
+     ],
+     "cost": {
+      "assumptions": {
+       "test_hours": 1,
+       "monthly_requests": 100000,
+       "avg_request_seconds": 0.2
+      },
+      "currency": "USD",
+      "test_1h": 0.0568,
+      "monthly": 41.45,
+      "source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonECS/current/ap-northeast-2/index.json",
+      "checked": "2026-10-02"
+     },
+     "rank": 3
+    },
+    {
+     "target": "gcp_cloud_run",
+     "cloud": "gcp",
+     "architecture": "cloud_run",
+     "label": "Google Cloud Run",
+     "deployable": true,
+     "fit": 10,
+     "verdict": "부적합",
+     "why": "요청 단위 실행 구조라 상시 실행이 필요한 board-worker와 Redis Streams 소비자를 운영할 수 없습니다.",
+     "size_spec": "메모리 2GiB",
+     "permissions": [
+      "Artifact Registry 이미지 읽기",
+      "공개 접속 허용"
+     ],
+     "cost": {
+      "assumptions": {
+       "test_hours": 1,
+       "monthly_requests": 100000,
+       "avg_request_seconds": 0.2
+      },
+      "currency": "USD",
+      "test_1h": 0.0,
+      "monthly": 0.85,
+      "source": "https://cloud.google.com/run/pricing (Seoul asia-northeast3 = Tier 2: https://docs.cloud.google.com/run/docs/locations)",
+      "checked": "2026-10-02"
+     },
      "rank": 4
     },
     {
@@ -208,7 +209,7 @@
      "deployable": true,
      "fit": 5,
      "verdict": "부적합",
-     "why": "Lambda는 단일 함수 단위 실행 환경으로, 상시 실행 워커·PostgreSQL·Redis 연결이 필요한 이 구조와 맞지 않습니다.",
+     "why": "상태 유지, 상시 워커, WebSocket 등 Lambda의 제약에 걸리는 요소가 많아 이 프로젝트에는 맞지 않습니다.",
      "size_spec": "메모리 2048MB",
      "permissions": [
       "CloudWatch Logs 쓰기 (실행 로그)"
@@ -235,32 +236,35 @@
     "외부 데이터베이스/캐시가 필요해 보입니다: postgres, redis, sql",
     "InfraFit: 앱 워크로드가 5개입니다 (auth(web), auth-verify(web), board-api(web), board-worker(worker), db-migrate(migration-job)).",
     "InfraFit: 리버스 프록시가 있습니다 (nginx @k8s/base/nginx.yaml:4). 프록시 설정(타임아웃·본문 크기 등)은 배포 대상에서 다시 맞춰야 할 수 있습니다.",
-    "⛔ 컨테이너 1개 배포 불가: auth, board-api, board-worker, nginx, PostgreSQL, Redis 등 7개 서비스가 모두 필요합니다.",
-    "⛔ Kubernetes 매니페스트(k8s/)가 이미 준비되어 있습니다. EKS(AWS) 또는 GKE(GCP) 쿠버네티스 클러스터에 배포하는 것을 권장합니다.",
-    "⚠️ PostgreSQL과 Redis는 외부 관리형 서비스(AWS RDS, ElastiCache / GCP Cloud SQL, Memorystore)를 사용해야 합니다.",
-    "⚠️ Redis Streams를 메시지 큐로 사용하므로 board-worker가 항상 실행 중이어야 합니다."
+    "⛔ 컨테이너 1개 배포 불가: auth, board-api, board-worker, nginx, PostgreSQL, Redis 등 최소 6개 서비스가 동시에 실행되어야 합니다.",
+    "⛔ Kubernetes 전용 설계: k8s/overlays/aws, k8s/overlays/gcp 등 EKS/GKE 배포를 전제로 설계되어 있습니다. Pawploy는 현재 K8s 배포를 지원하지 않습니다.",
+    "⚠️ board-worker는 Redis Streams를 상시 소비하는 워커로, Cloud Run·Lambda처럼 요청 단위로 실행되는 환경에서는 동작하지 않습니다.",
+    "⚠️ PostgreSQL과 Redis는 외부 관리형 서비스(RDS, ElastiCache 등)로 별도 구성이 필요합니다.",
+    "ℹ️ 이 프로젝트를 제대로 배포하려면 EKS(AWS) 또는 GKE(GCP) 쿠버네티스 클러스터가 필요합니다."
    ],
    "dockerfile_notes": [
-    "기존 frontend/Dockerfile(lines 1-24)을 그대로 기반으로 사용했습니다. 빌드 스테이지(node:22-alpine)와 런타임 스테이지(nginxinc/nginx-unprivileged:1.27-alpine) 구조를 유지했습니다.",
-    "AWS Lambda Web Adapter(public.ecr.aws/awsgeo/aws-lambda-web-adapter:0.8.4)를 /opt/extensions/lambda-adapter에 복사했습니다. Lambda 환경이 아닌 EC2·Cloud Run에서는 자동으로 비활성화되므로 동일 이미지로 세 환경 모두 동작합니다.",
-    "nginx는 nginx/default.conf.template:52 에서 listen 8080으로 고정되어 있어 PORT 환경변수를 직접 읽지 않습니다. Lambda Web Adapter의 기본 포트도 8080이므로 PORT=8080 기본값을 ENV로 선언해 Lambda가 올바른 포트로 트래픽을 전달하게 했습니다.",
-    "nginx/default.conf.template, nginx/snippets/, frontend/docker/15-real-ip.sh 를 모두 복사했습니다. 15-real-ip.sh는 REAL_IP_FROM 환경변수를 set_real_ip_from 지시어로 변환합니다(frontend/docker/15-real-ip.sh:9-11).",
-    "AUTH_UPSTREAM, VERIFY_UPSTREAM, BOARD_UPSTREAM 등 백엔드 주소는 환경변수로 주입해야 합니다. 실제 값(DB URL, Redis URL 등 비밀값)은 이미지에 포함하지 않았습니다.",
-    "이 이미지는 nginx+프론트엔드 컨테이너만 빌드합니다. auth(services/auth/Dockerfile), board-api/board-worker(services/board/Dockerfile), PostgreSQL, Redis는 별도 컨테이너로 실행해야 합니다. 단일 컨테이너 배포로는 전체 서비스를 운영할 수 없습니다.",
-    "linux/amd64 플랫폼 빌드 시: docker build --platform linux/amd64 -f Dockerfile -t simple-web-app/frontend .",
-    "Lambda Web Adapter 줄을 추가함 (EC2·Cloud Run에서는 무시됨)"
+    "기반 Dockerfile: frontend/Dockerfile (line 1-24) 을 그대로 계승했습니다. 빌드 스테이지(node:22-alpine)와 런타임 스테이지(nginxinc/nginx-unprivileged:1.27-alpine) 구조를 유지합니다.",
+    "플랫폼 고정: 두 스테이지 모두 --platform=linux/amd64 를 명시했습니다 (요구사항).",
+    "PORT 환경변수 대응: /docker-entrypoint.d/20-envport.sh 스크립트가 nginx-unprivileged 이미지의 entrypoint 훅 디렉터리에서 실행되어, default.conf.template 의 'listen 8080;' 을 PORT 값으로 교체합니다. 이 스크립트는 envsubst 처리(30-envsubst-on-templates.sh) 보다 먼저 실행되므로 치환이 정상 적용됩니다.",
+    "Lambda Web Adapter: public.ecr.aws/awsguru/aws-lambda-web-adapter:0.8.4 이미지에서 바이너리만 복사합니다. Lambda 환경에서는 AWS_LAMBDA_RUNTIME_API 환경변수가 자동 주입되어 어댑터가 활성화되고, EC2·Cloud Run 에서는 해당 변수가 없으므로 어댑터가 동작하지 않아 nginx 가 직접 요청을 받습니다.",
+    "nginx 설정 파일: nginx/default.conf.template (line 52: listen 8080), nginx/snippets/proxy_common.conf, nginx/snippets/auth_proxy.conf 를 그대로 복사합니다. 업스트림 주소(AUTH_UPSTREAM, VERIFY_UPSTREAM, BOARD_UPSTREAM)는 환경변수로 주입해야 합니다.",
+    "real-ip 스크립트: frontend/docker/15-real-ip.sh (line 1-12) 를 그대로 복사합니다. REAL_IP_FROM 환경변수로 신뢰할 LB CIDR 를 지정하세요.",
+    "비밀값 미포함: DATABASE_URL, REDIS_URL 등 시크릿은 이미지에 포함하지 않았습니다. 런타임에 환경변수로 주입하세요.",
+    "주의 — 이 이미지는 nginx(프론트엔드+프록시) 단독 컨테이너입니다. 실제 서비스를 위해서는 auth(포트 8000), board-api(포트 8000), PostgreSQL, Redis 가 별도로 실행되어야 하며, AUTH_UPSTREAM / VERIFY_UPSTREAM / BOARD_UPSTREAM 환경변수로 각 서비스 주소를 지정해야 합니다. 컨테이너 1개 배포로는 전체 기능이 동작하지 않습니다.",
+    "Lambda Web Adapter 줄을 추가함 (EC2·Cloud Run에서는 무시됨)",
+    "ENV PORT=8080 로 맞춤"
    ],
    "project_id": "prj_demo_swa",
-   "analysis_id": "ana-20261002102446-e2d7",
+   "analysis_id": "ana-20261002103746-7130",
    "commit_sha": null,
    "model_id": "global.anthropic.claude-sonnet-4-6",
-   "created_at": "2026-10-02T10:25:56Z"
+   "created_at": "2026-10-02T10:38:59Z"
   },
-  "recommendation_uri": "s3://pawploy-agent-135808950984/projects/prj_demo_swa/analysis/ana-20261002102446-e2d7/recommendation.json",
+  "recommendation_uri": "s3://pawploy-agent-135808950984/projects/prj_demo_swa/analysis/ana-20261002103746-7130/recommendation.json",
   "build_files": {
    "attempt": 1,
-   "uri_prefix": "s3://pawploy-agent-135808950984/projects/prj_demo_swa/build/ana-20261002102446-e2d7/attempt-1/",
-   "dockerfile": "# syntax=docker/dockerfile:1\n# =============================================================================\n# 추천 배포 대상: aws_ec2 (포트 8080)\n# 이 이미지는 AWS Lambda(Lambda Web Adapter), EC2, GCP Cloud Run 모두에서\n# 동작하도록 설계되었습니다.\n#\n# ⚠️  이 프로젝트는 컨테이너 1개로 완전히 실행될 수 없습니다.\n#     nginx(프론트엔드+리버스프록시), auth, board-api, board-worker,\n#     PostgreSQL, Redis 총 6~7개 서비스가 필요합니다.\n#     이 Dockerfile은 그 중 nginx(프론트엔드) 컨테이너만 빌드합니다.\n#     백엔드(auth, board-api 등)와 데이터스토어(PostgreSQL, Redis)는\n#     별도로 실행해야 합니다.\n#\n# 빌드 컨텍스트: 저장소 루트\n#   docker build -f Dockerfile -t simple-web-app/frontend .\n#\n# 실행 예시 (EC2 / Cloud Run):\n#   docker run --rm -p 8080:8080 \\\n#     -e AUTH_UPSTREAM=<auth-host>:8000 \\\n#     -e VERIFY_UPSTREAM=<auth-verify-host>:8000 \\\n#     -e BOARD_UPSTREAM=<board-api-host>:8000 \\\n#     simple-web-app/frontend\n# =============================================================================\n\n# ── Stage 1: React 빌드 ──────────────────────────────────────────────────────\nFROM node:22-alpine AS build\n# frontend/Dockerfile:2-7 기반\nWORKDIR /app\nCOPY frontend/package.json frontend/package-lock.json ./\nRUN npm ci\nCOPY frontend/ ./\nRUN npm run build\n# 결과물: /app/dist\n\n# ── Stage 2: nginx 런타임 ────────────────────────────────────────────────────\n# frontend/Dockerfile:9 기반 (nginxinc/nginx-unprivileged:1.27-alpine)\n# nginx-unprivileged 이미지는 기본 포트가 8080이며 root 권한 없이 실행됩니다.\nFROM nginxinc/nginx-unprivileged:1.27-alpine\nCOPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0 /lambda-adapter /opt/extensions/lambda-adapter\n\n# ── Lambda Web Adapter 설치 ──────────────────────────────────────────────────\n# AWS Lambda에서도 동작하려면 Lambda Web Adapter가 필요합니다.\n# Lambda 환경이 아닐 때(EC2, Cloud Run)는 어댑터가 자동으로 비활성화됩니다.\n# https://github.com/awslabs/aws-lambda-web-adapter\nCOPY --from=public.ecr.aws/awsgeo/aws-lambda-web-adapter:0.8.4 \\\n     /lambda-adapter /opt/extensions/lambda-adapter\n\n# ── 환경변수 기본값 ──────────────────────────────────────────────────────────\n# frontend/Dockerfile:10-19 기반\n# PORT: Lambda Web Adapter / Cloud Run이 주입하는 포트 변수.\n#       nginx는 이 값을 직접 읽지 않으므로 listen 8080은 고정입니다.\n#       EC2/Cloud Run에서는 -p <host>:8080 으로 외부 포트를 매핑하세요.\nENV PORT=8080 \\\n    AUTH_UPSTREAM=auth:8000 \\\n    VERIFY_UPSTREAM=auth:8000 \\\n    BOARD_UPSTREAM=board-api:8000 \\\n    REAL_IP_FROM=10.0.0.0/8 \\\n    RATE_READ=100r/s \\\n    BURST_READ=200 \\\n    RATE_WRITE=2r/s \\\n    BURST_WRITE=5 \\\n    RATE_LOGIN=30r/m \\\n    BURST_LOGIN=10\n\n# ── nginx 설정 파일 복사 ─────────────────────────────────────────────────────\n# frontend/Dockerfile:20-23 기반\nCOPY nginx/default.conf.template /etc/nginx/templates/default.conf.template\nCOPY nginx/snippets/ /etc/nginx/snippets/\n# 15-real-ip.sh: REAL_IP_FROM 환경변수를 set_real_ip_from 지시어로 변환\n# frontend/docker/15-real-ip.sh 참고\nCOPY --chmod=755 frontend/docker/15-real-ip.sh /docker-entrypoint.d/15-real-ip.sh\n\n# ── 빌드된 React 정적 파일 복사 ─────────────────────────────────────────────\nCOPY --from=build /app/dist /usr/share/nginx/html\n\n# ── 포트 선언 ────────────────────────────────────────────────────────────────\n# frontend/Dockerfile:24, nginx/default.conf.template:52 기반\n# nginx는 8080에서 수신합니다.\nEXPOSE 8080\n",
+   "uri_prefix": "s3://pawploy-agent-135808950984/projects/prj_demo_swa/build/ana-20261002103746-7130/attempt-1/",
+   "dockerfile": "# syntax=docker/dockerfile:1\n# 빌드 컨텍스트: 저장소 루트\n# 이 이미지는 nginx(프론트엔드 + 리버스 프록시) 역할을 합니다.\n# AWS Lambda(Lambda Web Adapter), EC2, Cloud Run 모두에서 동작합니다.\n# 환경변수 PORT 로 수신 포트를 지정합니다 (기본값 8080).\n\n# ── 1단계: React 프론트엔드 빌드 ──────────────────────────────────────────────\nFROM --platform=linux/amd64 node:22-alpine AS build\nWORKDIR /app\nCOPY frontend/package.json frontend/package-lock.json ./\nRUN npm ci\nCOPY frontend/ ./\nRUN npm run build\n\n# ── 2단계: nginx 런타임 ────────────────────────────────────────────────────────\nFROM --platform=linux/amd64 nginxinc/nginx-unprivileged:1.27-alpine\nCOPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0 /lambda-adapter /opt/extensions/lambda-adapter\n\n# Lambda Web Adapter 설치 (Lambda 환경에서만 실제로 사용됨)\n# EC2 / Cloud Run 에서는 nginx가 직접 PORT 를 수신하므로 영향 없음\nCOPY --from=public.ecr.aws/awsguru/aws-lambda-web-adapter:0.8.4 \\\n     /lambda-web-adapter /usr/local/bin/lambda-web-adapter\n\n# nginx 기본 환경변수\nENV AUTH_UPSTREAM=auth:8000 \\\n    VERIFY_UPSTREAM=auth:8000 \\\n    BOARD_UPSTREAM=board-api:8000 \\\n    REAL_IP_FROM=10.0.0.0/8 \\\n    RATE_READ=100r/s \\\n    BURST_READ=200 \\\n    RATE_WRITE=2r/s \\\n    BURST_WRITE=5 \\\n    RATE_LOGIN=30r/m \\\n    BURST_LOGIN=10 \\\n    PORT=8080\n\n# nginx 설정 파일 복사\nCOPY nginx/default.conf.template /etc/nginx/templates/default.conf.template\nCOPY nginx/snippets/ /etc/nginx/snippets/\n\n# real-ip 스크립트 복사\nCOPY --chmod=755 frontend/docker/15-real-ip.sh /docker-entrypoint.d/15-real-ip.sh\n\n# PORT 환경변수를 nginx listen 포트에 반영하는 스크립트\n# nginxinc/nginx-unprivileged 이미지는 /docker-entrypoint.d/*.sh 를 알파벳 순으로 실행한다.\n# 20-port.sh 는 15-real-ip.sh 이후에 실행되어 default.conf.template 의 listen 8080 을 PORT 값으로 교체한다.\nCOPY --chmod=755 /dev/stdin /docker-entrypoint.d/20-envport.sh <<'EOF'\n#!/bin/sh\nset -eu\nPORT=\"${PORT:-8080}\"\n# templates 디렉터리의 파일을 직접 수정한다 (envsubst 처리 전)\nsed -i \"s/listen 8080;/listen ${PORT};/\" /etc/nginx/templates/default.conf.template\necho \"20-envport.sh: nginx will listen on port ${PORT}\"\nEOF\n\n# 빌드된 React 정적 파일 복사\nCOPY --from=build /app/dist /usr/share/nginx/html\n\nEXPOSE 8080\n\nENV PORT=8080\n",
    "buildspec": "version: 0.2\nenv:\n  exported-variables:\n    - ECR_IMAGE_URI\n    - GCP_IMAGE_URI\nphases:\n  pre_build:\n    commands:\n      - mkdir -p /tmp/src && cd /tmp/src\n      - case \"$SOURCE_URI\" in */) aws s3 cp --recursive \"$SOURCE_URI\" . ;; *.zip) aws s3 cp \"$SOURCE_URI\" /tmp/src.zip && unzip -q /tmp/src.zip -d . ;; *) aws s3 cp \"$SOURCE_URI\" /tmp/src.tgz && tar -xzf /tmp/src.tgz -C . ;; esac\n      - if [ \"$(ls -A | wc -l)\" = \"1\" ] && [ -d \"$(ls -A)\" ]; then cd \"$(ls -A)\"; fi\n      - aws s3 cp \"${BUILD_FILES_URI}Dockerfile.pawploy\" ./Dockerfile.pawploy\n      - aws s3 cp \"${BUILD_FILES_URI}dockerignore\" /tmp/pawploy.dockerignore\n      - cat /tmp/pawploy.dockerignore >> .dockerignore\n      - echo \"$PWD\" > /tmp/build_dir\n      - aws ecr get-login-password --region \"$AWS_REGION\" | docker login --username AWS --password-stdin \"${ECR_REPO_URI%%/*}\"\n      - if [ -n \"$GCP_AR_REPO\" ]; then aws secretsmanager get-secret-value --secret-id \"$GCP_SA_KEY_SECRET\" --query SecretString --output text | docker login -u _json_key --password-stdin \"https://${GCP_AR_REPO%%/*}\"; fi\n  build:\n    commands:\n      - cd \"$(cat /tmp/build_dir)\"\n      - docker build --platform linux/amd64 -f Dockerfile.pawploy -t \"$ECR_REPO_URI:$IMAGE_TAG\" .\n  post_build:\n    commands:\n      - test \"$CODEBUILD_BUILD_SUCCEEDING\" = \"1\"\n      - docker push \"$ECR_REPO_URI:$IMAGE_TAG\"\n      - export ECR_IMAGE_URI=\"$(docker inspect --format='{{index .RepoDigests 0}}' \"$ECR_REPO_URI:$IMAGE_TAG\")\"\n      - if [ -n \"$GCP_AR_REPO\" ]; then docker tag \"$ECR_REPO_URI:$IMAGE_TAG\" \"$GCP_AR_REPO:$IMAGE_TAG\" && docker push \"$GCP_AR_REPO:$IMAGE_TAG\" && export GCP_IMAGE_URI=\"$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' \"$GCP_AR_REPO:$IMAGE_TAG\" | grep \"$GCP_AR_REPO\" | head -1)\"; fi\n      - echo \"ECR_IMAGE_URI=$ECR_IMAGE_URI GCP_IMAGE_URI=$GCP_IMAGE_URI\"\n"
   },
   "validation_notes": []

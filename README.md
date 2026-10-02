@@ -7,7 +7,7 @@ Amazon Bedrock AgentCore Runtime(서울)에 올라가고, Main Server가 `mode`�
 |---|---|---|---|
 | `analyze` | 05~08 분석·추천 + Dockerfile·buildspec 생성 (수정 요청 재분석 포함) | 이주호 (InfraFit 연결·인젝션 방어: 고준서) | ✅ 배포본 실제 호출, 평가 13/15 · 인젝션 5/5 |
 | `fix_build` | 11~13 빌드 실패 → Dockerfile 수정 (최대 3회) | 이주호 | ⚠️ 오프라인 테스트만 (CodeBuild 생기면 실제 로그로 확인) |
-| `gen_terraform` | 18~20 승인안 → Terraform 모듈 생성 | 이주호 (Worker 규격 맞춤: 고준서) | ✅ ec2·lambda·cloud_run 실제 생성 → `terraform validate` 통과 + Worker `iac.py` 위반 0건 |
+| `gen_terraform` | 18~20 승인안 → AWS·GCP Terraform 모듈 동시 생성 | 이주호 (Worker 규격 맞춤: 고준서) | ✅ ec2·lambda·cloud_run 실제 생성 → `terraform validate` 통과 + Worker `iac.py` 위반 0건 |
 | `fix_terraform` | 23~25 Terraform 실패 → 수정 (최대 3회) | 이주호 | ✅ 실제 validate 에러 수정 (로그에 없던 오타까지) → validate 통과 |
 
 ## 설계 원칙
@@ -26,7 +26,7 @@ AWS_PROFILE=peony .venv/Scripts/python scripts/demo.py           # 배포본 실
 .venv/Scripts/python scripts/demo.py --only 1,3                  # 일부 단계만
 ```
 
-0 오늘 커밋 → 1 샘플 앱 analyze (Lambda 추천·근거·1~5순위·비용·Dockerfile) → 2 simple-web-app analyze ("지원 안 됨") → 3 gen_terraform (Lambda 모듈) → 4 fix_terraform (깨뜨린 모듈 수정).
+0 오늘 커밋 → 1 샘플 앱 analyze (Lambda 추천·근거·1~5순위·비용·Dockerfile) → 2 simple-web-app analyze ("지원 안 됨") → 3 gen_terraform (AWS Lambda + GCP Cloud Run 모듈 동시) → 4 fix_terraform (깨뜨린 모듈 수정).
 녹화된 실제 결과: [examples/demo/](examples/demo/)
 
 ## 재시도는 누가 돌리나
@@ -114,8 +114,10 @@ result = json.loads(resp["response"].read())
 
 ### gen_terraform / fix_terraform (Terraform-worker 연동)
 
-AI가 만드는 것은 **Worker의 `modules/<아키텍처>/` 자리에 들어갈 모듈 하나**입니다. Worker 루트 `main.tf`(provider·필수 태그·backend·만료 예약)는 그대로 두고, 미리 만든 모듈 대신 이 모듈을 복사해서 `module "app"`으로 부르면 됩니다.
+AI가 만드는 것은 **Worker의 `modules/<아키텍처>/` 자리에 들어갈 클라우드별 모듈**입니다. `gen_terraform` 한 번에 **AWS 모듈 하나 + GCP 모듈 하나를 동시에** 만듭니다. Worker 루트 `main.tf`(provider·필수 태그·backend·만료 예약)는 그대로 두고, 미리 만든 모듈 대신 이 모듈을 복사해서 `module "app"`으로 부르면 됩니다.
 
+- 어떤 아키텍처로 만드나: 추천안과 같은 클라우드는 **추천 아키텍처**, 다른 클라우드는 analyze 후보 순위에서 **그 클라우드의 배포 가능한 첫 번째** (예: Lambda 추천 → `aws/` lambda + `gcp/` cloud_run, Cloud Run 추천 → `gcp/` cloud_run + `aws/` 순위 높은 lambda 또는 ec2). 사용자가 다른 순위를 고르면 `architectures: {"aws": "ec2"}` 로 지정 (준 클라우드만 만듦)
+- 두 클라우드는 병렬로 만들고 따로 검사합니다. 한쪽만 통과하면 `status: partial` (통과한 쪽만 저장)
 - 입력 변수는 정확히 6개: `name`, `image_uri`, `container_port`, `size`, `env`, `health_path` / 출력은 `endpoint`, `health_url`, `resource_id` (지금 모듈과 동일)
 - 규칙은 Worker README "AgentCore 가 만들 Terraform 모듈" 약속과 같음. Worker `tfworker/iac.py` 검사를 `agent/terraform.py::_check_worker_iac` 에 그대로 옮겼고(주석까지 검사), 여기에 더 엄격한 검사를 더함
 - 금지: `provider`(자동 제거)·`backend`·`cloud`·`module` 블록, `default_tags`·`default_labels`, provisioner(`local-exec`/`remote-exec`), `inline_policy`·`managed_policy_arns`, `access_token`, 같은 모듈 `.tftpl` 외 파일 읽기, 허용 밖 리소스·data 소스·IAM 정책, Worker가 안 넘기는 변수
@@ -123,13 +125,22 @@ AI가 만드는 것은 **Worker의 `modules/<아키텍처>/` 자리에 들어갈
 - 허용 리소스·data 소스·IAM 정책은 Worker `policy.py`·`iac.py` 와 동일 (`cloud_run` 은 앱 전용 `google_service_account` 포함). 견본 `agent/tf_reference/` 는 Worker `modules/` 복사본
 - Worker 와 어긋났는지 확인: `WORKER_REPO=<Terraform-worker 경로> python -m pytest tests/test_terraform_contract.py` (Worker 상수·모듈과 직접 비교)
 - 검사에 걸리면 같은 호출 안에서 위반 내용을 모델에 돌려 최대 2번 다시 생성
-- 저장: `projects/<project_id>/deploy/<deploy_id>/attempt-N/` (`main.tf`, 필요하면 `user_data.sh.tftpl`)
 
-`gen_terraform` 요청: `project_id`, `deploy_id`, `recommendation`(analyze 결과 객체) 또는 `recommendation_uri`
-→ 응답: `module_uri`, `files{이름: 내용}`, `resources[]`(초보자용 설명)
+**저장 위치 (Worker `render.module_uri` 규칙과 같음)**
+```
+s3://pawploy-agent-<계정>/projects/<project_id>/deploy/<deploy_id>/
+  attempt-1/aws/main.tf          (+ ec2 면 user_data.sh.tftpl)
+  attempt-1/gcp/main.tf
+  attempt-2/aws/main.tf          ← fix_terraform 이 AWS 를 고친 것
+  attempt-2/gcp/main.tf          ← 안 고친 GCP 는 attempt-1 에서 그대로 복사
+```
+Worker 는 `PAWPLOY_AGENT_BUCKET` 이 있으면 `terraform_uri` 없이도 이 폴더에서 **가장 큰 attempt-N** 을 고르고, 그 안의 `<cloud>/` 를 씁니다. 그래서 fix 때 안 고친 클라우드도 새 attempt 로 복사해 둡니다 (안 그러면 그 클라우드는 최신 attempt 에서 모듈을 못 찾음).
 
-`fix_terraform` 요청: `project_id`, `deploy_id`, `architecture`, `attempt`(1부터), `failed_stage`(validate/plan/policy/apply/health), `log`, `files{}` 또는 `module_uri`
-→ `status: ok` 면 `next_attempt`, `module_uri`, `cause`, `changes` / `give_up` 이면 3회 초과 또는 코드로 못 고치는 원인(`fixable: false`)
+`gen_terraform` 요청: `project_id`, `deploy_id`, `recommendation`(analyze 결과 객체) 또는 `recommendation_uri`, (선택) `architectures`
+→ 응답: `status`(ok/partial/error), `module_uri`(= `attempt-1/`), `targets[]` = `{cloud, architecture, status, module_uri, files{이름: 내용}, resources[](초보자용 설명), notes}` — Main 은 이걸로 Worker 작업의 `targets[{cloud, architecture, image_uri}]` 를 만듦
+
+`fix_terraform` 요청: `project_id`, `deploy_id`, `architecture`(실패한 클라우드의 것), `attempt`(그 클라우드의 시도 번호, 1부터), `failed_stage`(validate/plan/policy/apply/health), `log`, 그리고 `files{}` / `module_uri` / 둘 다 없으면 저장된 최신 attempt 에서 읽음
+→ `status: ok` 면 `next_attempt`(다음 시도 번호), `saved_attempt`(실제로 저장한 폴더 번호 = 최신+1), `module_uri`, `carried_over`(같이 복사한 클라우드), `cause`, `changes` / `give_up` 이면 3회 초과 또는 코드로 못 고치는 원인(`fixable: false`)
 
 ## CodeBuild (buildspec) 약속 — Main Server 담당
 
@@ -173,7 +184,7 @@ LLM 프롬프트에는 이것을 워크로드 수·리버스 프록시·엔드�
 
 ```bash
 python -m venv .venv && .venv/Scripts/pip install -r requirements.txt -r requirements-dev.txt
-.venv/Scripts/python -m pytest -q                 # 오프라인 테스트 85개 (모델·AWS 호출 없음)
+.venv/Scripts/python -m pytest -q                 # 오프라인 테스트 89개 (모델·AWS 호출 없음)
 WORKER_REPO=<Terraform-worker 체크아웃> .venv/Scripts/python -m pytest -q   # Worker 규칙과 직접 대조 (+23)
 AWS_PROFILE=peony .venv/Scripts/python -m agent.app   # 로컬 서버 → POST http://localhost:8080/invocations
 ```
@@ -204,7 +215,7 @@ AWS_PROFILE=peony .venv/Scripts/python -m agent.app   # 로컬 서버 → POST h
 |---|---|---|
 | Terraform-worker 샘플 앱 | 34~39초 | `aws_lambda` / 8080 / micro, 근거 4~5개, 1~5순위 ([live-analyze-response.json](examples/live-analyze-response.json)) |
 | simple-web-app (서비스 7개 + k8s) | 74~77초 (InfraFit 후) | `supported=false`, 비밀값 `DATABASE_URL`, `REDIS_URL` 분리, InfraFit 경고 (워크로드 5개·nginx 프록시) |
-| gen_terraform (lambda / ec2 / cloud_run) | 16~24초 | `terraform validate` 통과, Worker `iac.py` 위반 0건 |
+| gen_terraform (lambda / ec2 / cloud_run) | 16~24초 (AWS·GCP 동시 생성 18초) | `terraform validate` 통과, Worker `iac.py` 위반 0건 |
 | fix_terraform (오타 2개 넣은 lambda 모듈) | 15~16초 | 두 개 다 수정 → validate 통과 |
 | tests/fixtures/multi_service | 38초 | `supported=false` |
 
