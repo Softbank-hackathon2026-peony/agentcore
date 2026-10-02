@@ -1,0 +1,28 @@
+signatures:
+  - id: SIG-CA-REDIS
+    component: "ca:unspecified/redis/default"
+    role: cache
+    status: confirmed
+    when:
+      any:
+        - {dependency: redis}
+        - {dependency: ioredis}
+        - {dependency: "org.springframework.boot:spring-boot-starter-data-redis"}
+  - id: SIG-CA-SESSION-EXPRESS-MEMORY
+    component: "ca:local/process-memory/default"
+    role: session
+    status: candidate
+    when:
+      all:
+        - {dependency: express-session}
+        - any:
+            - {code: {glob: "**/*.js", regex: "session\\(\\s*\\{"}}
+            - {code: {glob: "**/*.ts", regex: "session\\(\\s*\\{"}}
+  - id: SIG-CA-SESSION-MAP
+    component: "ca:local/process-memory/default"
+    role: session
+    status: candidate
+    when:
+      any:
+        - {code: {glob: "**/*session*.ts", regex: "new Map\\s*[<(]"}}
+        - {code: {glob: "**/*session*.js", regex: "new Map\\s*[<(]"}}

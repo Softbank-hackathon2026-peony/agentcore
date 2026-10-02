@@ -1,0 +1,63 @@
+# 프레임워크가 코드 없이 자동으로 만드는 라우트(암묵 라우트). S1 엔드포인트에 status: candidate로 더한다.
+#
+# trigger: 규칙이 켜지는 조건(하나만)
+#   dependency: [의존성 이름...]  모듈(매니페스트 디렉터리)마다 목록 순서로 처음 있는 것. 근거는 의존성 줄
+#   call: {globs, regex, dependency}  코드의 호출(regex는 여는 괄호 `(`로 끝난다). 저장소에 그 의존성이 있어야 하고
+#                                     근거는 호출 줄
+# routes[]:
+#   method, path: path의 `{}` 자리는 override 값(없으면 default)으로 채운다
+#   override: 값이 오는 곳(하나만). 값을 찾으면 그 줄이 근거다
+#     keyword: 호출 인자 이름(`x=None`·`x: null`·`x: false`이면 라우트를 끈다, 문자열이 아닌 값이면 모른다)
+#     property: Spring 설정 키(application*.yml|yaml|properties, 완화 바인딩)
+#     code: {globs, regex}  모듈 아래 코드에서 regex 첫 묶음
+#   off_with: [호출 인자 이름]  그 인자가 꺼져 있으면 이 라우트도 없다(FastAPI 문서 화면은 openapi_url이 필요하다)
+#   only_with: [의존성 이름]  그중 하나가 있을 때만 이 라우트를 만든다
+# framework: 엔드포인트 framework 값. spring이면 모듈의 Spring 웹 스타터(spring-mvc·spring-webflux)로 바꾼다
+implicit_routes:
+  - id: IR-FASTAPI-DOCS
+    framework: fastapi
+    trigger: {call: {globs: ["**/*.py"], regex: "\\bFastAPI\\s*\\(", dependency: fastapi}}
+    routes:
+      - {method: GET, path: "{}", default: /openapi.json, override: {keyword: openapi_url}}
+      - {method: GET, path: "{}", default: /docs, override: {keyword: docs_url}, off_with: [openapi_url]}
+      - {method: GET, path: "{}", default: /redoc, override: {keyword: redoc_url}, off_with: [openapi_url]}
+  - id: IR-PROMETHEUS-FASTAPI
+    framework: fastapi
+    trigger: {call: {globs: ["**/*.py"], regex: "\\.expose\\s*\\(", dependency: prometheus-fastapi-instrumentator}}
+    routes:
+      - {method: GET, path: "{}", default: /metrics, override: {keyword: endpoint}}
+  - id: IR-SPRING-ACTUATOR
+    framework: spring
+    trigger: {dependency: ["org.springframework.boot:spring-boot-starter-actuator"]}
+    routes:
+      - {method: GET, path: "{}/health", default: /actuator, override: {property: management.endpoints.web.base-path}}
+  - id: IR-SPRINGDOC
+    framework: spring
+    trigger:
+      dependency:
+        - "org.springdoc:springdoc-openapi-starter-webmvc-ui"
+        - "org.springdoc:springdoc-openapi-starter-webflux-ui"
+        - "org.springdoc:springdoc-openapi-starter-webmvc-api"
+        - "org.springdoc:springdoc-openapi-starter-webflux-api"
+        - "org.springdoc:springdoc-openapi-ui"
+        - "org.springdoc:springdoc-openapi-webflux-ui"
+    routes:
+      - method: GET
+        path: "{}"
+        default: /swagger-ui.html
+        override: {property: springdoc.swagger-ui.path}
+        only_with:
+          - "org.springdoc:springdoc-openapi-starter-webmvc-ui"
+          - "org.springdoc:springdoc-openapi-starter-webflux-ui"
+          - "org.springdoc:springdoc-openapi-ui"
+          - "org.springdoc:springdoc-openapi-webflux-ui"
+      - {method: GET, path: "{}", default: /v3/api-docs, override: {property: springdoc.api-docs.path}}
+  - id: IR-FASTIFY-SWAGGER
+    framework: fastify
+    trigger: {dependency: ["@fastify/swagger-ui", "@fastify/swagger", "fastify-swagger"]}
+    routes:
+      - method: GET
+        path: "{}"
+        default: /documentation
+        override: {code: {globs: ["**/*.js", "**/*.ts", "**/*.mjs", "**/*.cjs"],
+                          regex: "\\broutePrefix\\s*:\\s*['\"`]([^'\"`]+)['\"`]"}}

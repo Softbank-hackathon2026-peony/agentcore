@@ -1,0 +1,30 @@
+# 컨테이너 이미지 분류. match는 레지스트리·태그·다이제스트를 뗀 마지막 이름 또는 `저장소/이름`에 대한 fnmatch 패턴이다.
+# role: reverse-proxy(리버스 프록시 워크로드), datastore·cache·queue(데이터 범위), infra(앱이 아닌 기반 서비스),
+#       dev-tool(개발용 도구, 무시).
+# component: 카탈로그 ID(선택). hosting_hint: 함께 쓰인 저장소의 호스팅 후보 카탈로그 ID(선택, 판단은 S2·S3).
+images:
+  # 관측(메트릭·로그·트레이스) 도구: 알려진 배포처의 이미지만 본다(사용자 이미지 `acme/data-exporter`는 앱이다).
+  # 저장소 이름이 들어간 익스포터(`percona/mongodb_exporter` 등)를 먼저 잡도록 맨 앞에 둔다
+  - {match: ["prom/*", "prometheuscommunity/*", "oliver006/redis_exporter", "percona/mongodb_exporter",
+             "*/postgres-exporter", "bitnami/*-exporter", "*/node-exporter", "grafana/*", "otel/*"], role: infra}
+  # 리버스 프록시
+  - {match: [nginx, nginx-unprivileged, openresty], role: reverse-proxy, component: "nw:proxy/nginx/default"}
+  - {match: [caddy, traefik, haproxy, envoy], role: reverse-proxy}
+  # 저장소
+  - {match: [postgres, postgresql, postgis, "timescaledb*", "pgvector/*", pgvector], role: datastore,
+     component: "ds:unspecified/postgresql/default"}
+  - {match: [mysql, "mysql/mysql-server"], role: datastore, component: "ds:unspecified/mysql/default"}
+  - {match: [mariadb], role: datastore}
+  - {match: [mongo, "mongodb*"], role: datastore, component: "ds:unspecified/mongodb/default"}
+  # 캐시·큐
+  - {match: [redis, "redis/redis-stack*", "redis-stack*", redis-cluster, redis-sentinel, valkey, valkey-cluster],
+     role: cache, component: "ca:unspecified/redis/default"}
+  - {match: [memcached], role: cache}
+  - {match: [rabbitmq], role: queue}
+  # 기반 서비스
+  - {match: ["temporalio/*"], role: infra}
+  - {match: [cloud-sql-proxy, cloudsql-proxy, gce-proxy], role: infra, hosting_hint: "ds:gcp/cloudsql-postgres/single"}
+  - {match: [minio, "minio/*"], role: infra}
+  # 개발 도구
+  - {match: [localstack, "localstack/*", mailhog, mailpit, adminer, pgadmin, dpage/pgadmin4, mongo-express,
+             redis-commander, redisinsight, phpmyadmin], role: dev-tool}

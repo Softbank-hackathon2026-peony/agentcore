@@ -1,0 +1,61 @@
+# GitHub Actions 배포 step 패턴(설계 §6 environments: ci-deploy).
+# match: run(셸 명령 정규식) 또는 uses(액션 이름 패턴, `@` 앞을 fnmatch로 비교).
+# compute: 카탈로그 ID, 또는 unmapped(이때 label 필수: current_components의 label).
+# target: 대상 워크로드를 찾는 방법(앞에서부터 처음 맞는 방법을 쓴다).
+#   source     `--source <dir>`, with.source → 그 디렉터리가 code_root인 워크로드
+#   image      `--image <image>`, with.image → 같은 이미지(또는 같은 이름) 워크로드
+#   job-build  같은 job의 docker build(-f·컨텍스트)·docker/build-push-action(file·context)
+#   workflow-build  같은 워크플로 모든 job의 docker build
+#   compose    `-f <compose 파일>`, 워크플로에 적힌 compose 파일 이름 → 그 compose 환경의 워크로드
+#   cwd        `--cwd`·`--config`·step·with의 working-directory, 없으면 저장소 루트(추측)
+#   manifest   kubectl `-f`·`-k` 경로, helm 차트 경로 → 그 아래 k8s 워크로드
+#   name       `--service <이름>`, with.service·with.container-name → 같은 이름 워크로드(추측)
+deploy:
+  - id: gcloud-run-deploy
+    match: {run: '\bgcloud\s+(?:beta\s+|alpha\s+)?run\s+deploy\b'}
+    compute: "cp:gcp/cloud-run/unspecified"
+    target: [source, image, job-build, name]
+  - id: deploy-cloudrun-action
+    match: {uses: "google-github-actions/deploy-cloudrun"}
+    compute: "cp:gcp/cloud-run/unspecified"
+    target: [source, image, job-build, name]
+  - id: aws-ecs-update-service
+    match: {run: '\baws\s+ecs\s+update-service\b'}
+    compute: "cp:aws/ecs/unspecified"
+    target: [job-build, workflow-build, name]
+  - id: amazon-ecs-deploy-task-definition
+    match: {uses: "aws-actions/amazon-ecs-deploy-task-definition"}
+    compute: "cp:aws/ecs/unspecified"
+    target: [job-build, workflow-build, name]
+  - id: aws-ssm-send-command
+    match: {run: '\baws\s+ssm\s+send-command\b'}
+    compute: "cp:aws/ec2/docker-compose"
+    target: [compose, workflow-build]
+  - id: fly-deploy
+    match: {run: '\b(?:fly|flyctl)\s+deploy\b'}
+    compute: "cp:fly/machines/default"
+    target: [cwd]
+  - id: flyctl-action
+    match: {uses: "superfly/flyctl-actions"}
+    compute: "cp:fly/machines/default"
+    target: [cwd]
+  - id: vercel-deploy
+    match: {run: '\bvercel\s+(?:deploy\b|--prod\b)'}
+    compute: "cp:vercel/functions/unspecified-plan"
+    target: [cwd]
+  - id: vercel-action
+    match: {uses: "amondnet/vercel-action"}
+    compute: "cp:vercel/functions/unspecified-plan"
+    target: [cwd]
+  - id: railway-up
+    match: {run: '\brailway\s+up\b'}
+    compute: "cp:railway/service/unspecified-plan"
+    target: [name, cwd]
+  - id: kubectl-apply
+    match: {run: '\bkubectl\s+apply\b'}
+    compute: "cp:k8s/deployment/unspecified-cluster"
+    target: [manifest]
+  - id: helm-upgrade
+    match: {run: '\bhelm\s+upgrade\b'}
+    compute: "cp:k8s/deployment/unspecified-cluster"
+    target: [manifest]

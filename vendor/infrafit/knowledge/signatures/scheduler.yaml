@@ -1,0 +1,24 @@
+signatures:
+  - id: SIG-SC-INPROC
+    component: "sc:local/in-process/default"
+    role: scheduler
+    status: candidate
+    when:
+      any:
+        - {dependency: node-cron}
+        - {dependency: cron}
+        - {dependency: apscheduler}
+        - {dependency: schedule}
+  - id: SIG-SC-K8S-CRONJOB
+    component: "sc:k8s/cronjob/default"
+    role: scheduler
+    status: confirmed
+    when:
+      any:
+        - {code: {glob: "**/*.yaml", regex: "^kind:\\s*CronJob"}}
+        - {code: {glob: "**/*.yml", regex: "^kind:\\s*CronJob"}}
+  - id: SIG-SC-VERCEL-CRON
+    component: "sc:vercel/cron/unspecified-plan"
+    role: scheduler
+    status: confirmed
+    when: {any: [{code: {glob: "vercel.json", regex: "\"crons\""}}]}

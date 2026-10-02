@@ -1,0 +1,140 @@
+# 앱이 호출하는 외부 서비스(설계 §6 external_services). 데이터 범위 시그니처와 따로 읽는다(kb.external).
+# 조건: dependency(의존성 이름), code(glob 목록 + 정규식), env(환경변수 이름 정규식, 대소문자 구분).
+# 상태: 의존성만 맞으면 candidate, 코드 사용이 맞거나 의존성과 환경변수가 함께 맞으면 confirmed.
+x-src: &src ["**/*.py", "**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx", "**/*.jsx",
+             "**/*.java", "**/*.kt", "**/*.go", "**/application*.yml", "**/application*.yaml",
+             "**/application*.properties"]
+services:
+  - id: ext:anthropic
+    label: Anthropic API
+    kind: llm-api
+    when:
+      any:
+        - {dependency: anthropic}
+        - {dependency: "@anthropic-ai/sdk"}
+        - {dependency: "com.anthropic:anthropic-java"}
+        - {code: {glob: *src, regex: 'api\.anthropic\.com'}}
+        - {env: '^ANTHROPIC_API_KEY$'}
+  - id: ext:openai
+    label: OpenAI API
+    kind: llm-api
+    when:
+      any:
+        - {dependency: openai}
+        - {dependency: "com.openai:openai-java"}
+        - {code: {glob: *src, regex: 'api\.openai\.com'}}
+        - {env: '^OPENAI_API_KEY$'}
+  - id: ext:google-gemini
+    label: Google Gemini API
+    kind: llm-api
+    when:
+      any:
+        - {dependency: google-genai}
+        - {dependency: google-generativeai}
+        - {dependency: "@google/generative-ai"}
+        - {dependency: "@google/genai"}
+        - {code: {glob: *src, regex: 'generativelanguage\.googleapis\.com'}}
+        - {env: '^(GEMINI_API_KEY|GOOGLE_GENAI_API_KEY|GOOGLE_GENERATIVE_AI_API_KEY)$'}
+  - id: ext:supabase-auth
+    label: Supabase Auth
+    kind: auth
+    when:
+      any:
+        - {code: {glob: *src, regex: '\.auth\.(getUser|signInWith\w*|signUp)\s*\('}}
+        - {code: {glob: *src, regex: 'supabase\.co/auth/v1/\.well-known/jwks\.json'}}
+        - {env: '^(SUPABASE_JWT_SECRET|SUPABASE_JWKS_URL)$'}
+  - id: ext:firebase
+    label: Firebase (Admin, FCM)
+    kind: push
+    when:
+      any:
+        - {dependency: firebase-admin}
+        - {dependency: "com.google.firebase:firebase-admin"}
+        - {code: {glob: *src, regex: 'fcm\.googleapis\.com|FirebaseMessaging|messaging\(\)\.send'}}
+        - {env: '^(FIREBASE_\w+|FCM_\w+)$'}
+  - id: ext:stripe
+    label: Stripe
+    kind: payments
+    when:
+      any:
+        - {dependency: stripe}
+        - {dependency: "com.stripe:stripe-java"}
+        - {code: {glob: *src, regex: 'api\.stripe\.com'}}
+        - {env: '^STRIPE_\w*(KEY|SECRET)\w*$'}
+  - id: ext:toss-payments
+    label: Toss Payments
+    kind: payments
+    when:
+      any:
+        - {dependency: "@tosspayments/payment-sdk"}
+        - {dependency: "@tosspayments/tosspayments-sdk"}
+        - {code: {glob: *src, regex: 'api\.tosspayments\.com'}}
+        - {env: '^TOSS_\w*(KEY|SECRET)\w*$'}
+  - id: ext:slack-webhook
+    label: Slack Incoming Webhook
+    kind: webhook
+    when:
+      any:
+        - {code: {glob: *src, regex: 'hooks\.slack\.com'}}
+        - {env: '^SLACK_\w*WEBHOOK\w*$'}
+  - id: ext:discord-webhook
+    label: Discord Webhook
+    kind: webhook
+    when:
+      any:
+        - {code: {glob: *src, regex: 'discord(app)?\.com/api/webhooks'}}
+        - {env: '^DISCORD_\w*WEBHOOK\w*$'}
+  - id: ext:sendgrid
+    label: SendGrid
+    kind: email
+    when:
+      any:
+        - {dependency: sendgrid}
+        - {dependency: "@sendgrid/mail"}
+        - {dependency: "com.sendgrid:sendgrid-java"}
+        - {code: {glob: *src, regex: 'api\.sendgrid\.com'}}
+        - {env: '^SENDGRID_API_KEY$'}
+  - id: ext:resend
+    label: Resend
+    kind: email
+    when:
+      any:
+        - {dependency: resend}
+        - {code: {glob: *src, regex: 'api\.resend\.com'}}
+        - {env: '^RESEND_API_KEY$'}
+  - id: ext:twilio
+    label: Twilio
+    kind: messaging
+    when:
+      any:
+        - {dependency: twilio}
+        - {dependency: "com.twilio.sdk:twilio"}
+        - {code: {glob: *src, regex: 'api\.twilio\.com'}}
+        - {env: '^TWILIO_(AUTH_TOKEN|ACCOUNT_SID|API_KEY\w*)$'}
+  - id: ext:google-maps
+    label: Google Maps Platform
+    kind: maps
+    when:
+      any:
+        - {dependency: googlemaps}
+        - {dependency: "@googlemaps/google-maps-services-js"}
+        - {dependency: "@googlemaps/js-api-loader"}
+        - {dependency: "com.google.maps:google-maps-services"}
+        - {code: {glob: *src, regex: 'maps\.googleapis\.com'}}
+        - {env: '^\w*GOOGLE_MAPS_API_KEY$'}
+  - id: ext:youtube-data
+    label: YouTube Data API
+    kind: video
+    when:
+      any:
+        - {code: {glob: *src, regex: 'googleapis\.com/youtube/v3|build\(\s*["'']youtube["'']'}}
+        - {env: '^YOUTUBE_API_KEY$'}
+  - id: ext:notion
+    label: Notion API
+    kind: other
+    when:
+      any:
+        - {dependency: notion-client}
+        - {dependency: "@notionhq/client"}
+        - {code: {glob: *src, regex: 'api\.notion\.com'}}
+        - {env: '^NOTION_(API_KEY|TOKEN|SECRET)$'}
