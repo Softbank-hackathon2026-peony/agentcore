@@ -1,0 +1,231 @@
+{
+  "status": "ok",
+  "mode": "analyze",
+  "project_id": "prj_live",
+  "analysis_id": "ana-20261002035547-6950",
+  "recommendation": {
+    "cloud": "aws",
+    "architecture": "lambda",
+    "container_port": 8080,
+    "size": "micro",
+    "health_path": "/",
+    "env": {},
+    "reason": "이 앱은 GET 요청 하나에 JSON을 돌려주는 아주 단순한 웹 API입니다. Dockerfile에 AWS Lambda Web Adapter가 이미 포함되어 있어 Lambda에서 바로 실행할 수 있도록 준비된 구조입니다. 요청이 올 때만 실행되므로 비용도 거의 들지 않습니다.",
+    "target": "aws_lambda",
+    "label": "AWS Lambda",
+    "summary": "Python 표준 라이브러리만으로 만든 초경량 HTTP JSON API 서버 (외부 의존성 없음, AWS Lambda Web Adapter 포함)",
+    "required_secrets": [],
+    "permissions": [
+      "CloudWatch Logs 쓰기 (실행 로그)"
+    ],
+    "cost": {
+      "assumptions": {
+        "test_hours": 1,
+        "monthly_requests": 100000,
+        "avg_request_seconds": 0.2
+      },
+      "currency": "USD",
+      "test_1h": null,
+      "monthly": null,
+      "note": "단가 확인 전"
+    },
+    "clues": [
+      {
+        "file": "Dockerfile",
+        "line": 6,
+        "finding": "COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0 /lambda-adapter /opt/extensions/lambda-adapter",
+        "plain": "쉽게 말하면: AWS Lambda에서 일반 웹앱을 그대로 실행할 수 있게 해주는 어댑터가 이미 설치되어 있어요.",
+        "tag": "Lambda Web Adapter"
+      },
+      {
+        "file": "app.py",
+        "line": 15,
+        "finding": "\"lambda\": bool(os.environ.get(\"AWS_LAMBDA_FUNCTION_NAME\"))",
+        "plain": "쉽게 말하면: 앱 자체가 Lambda 환경인지 감지하는 코드를 갖고 있어요. Lambda를 염두에 두고 만든 앱이에요.",
+        "tag": "Lambda 환경 감지"
+      },
+      {
+        "file": "app.py",
+        "line": 1,
+        "finding": "import json, os, socket, http.server — 외부 패키지 없음",
+        "plain": "쉽게 말하면: 파이썬 기본 라이브러리만 써서 매우 가볍고, 별도 설치 없이 바로 실행돼요.",
+        "tag": "초경량 앱"
+      },
+      {
+        "file": "app.py",
+        "line": 27,
+        "finding": "ThreadingHTTPServer((\"0.0.0.0\", PORT), Handler).serve_forever()",
+        "plain": "쉽게 말하면: 포트 8080에서 HTTP 요청을 받는 단순한 서버예요. 상태 저장이나 파일 쓰기가 없어요.",
+        "tag": "무상태 서버"
+      },
+      {
+        "file": "Dockerfile",
+        "line": 1,
+        "finding": "# EC2와 Lambda 둘 다에서 동작하는 테스트 이미지",
+        "plain": "쉽게 말하면: 개발자가 직접 Lambda와 EC2 양쪽을 고려해 만든 테스트용 이미지예요.",
+        "tag": "멀티 환경 지원"
+      }
+    ],
+    "candidates": [
+      {
+        "target": "aws_lambda",
+        "cloud": "aws",
+        "architecture": "lambda",
+        "label": "AWS Lambda",
+        "deployable": true,
+        "fit": 95,
+        "verdict": "추천",
+        "why": "Lambda Web Adapter가 이미 내장되어 있고, 무상태 단순 JSON API라 Lambda에 최적입니다. 요청 없을 때 비용이 0원이에요.",
+        "size_spec": "메모리 512MB",
+        "permissions": [
+          "CloudWatch Logs 쓰기 (실행 로그)"
+        ],
+        "cost": {
+          "assumptions": {
+            "test_hours": 1,
+            "monthly_requests": 100000,
+            "avg_request_seconds": 0.2
+          },
+          "currency": "USD",
+          "test_1h": null,
+          "monthly": null,
+          "note": "단가 확인 전"
+        },
+        "rank": 1
+      },
+      {
+        "target": "gcp_cloud_run",
+        "cloud": "gcp",
+        "architecture": "cloud_run",
+        "label": "Google Cloud Run",
+        "deployable": true,
+        "fit": 80,
+        "verdict": "적합",
+        "why": "컨테이너 그대로 올릴 수 있고 요청 기반 실행이라 비용 효율적이지만, 이미 Lambda 어댑터가 준비된 이 앱엔 Lambda가 더 자연스러워요.",
+        "size_spec": "메모리 512MiB",
+        "permissions": [
+          "Artifact Registry 이미지 읽기",
+          "공개 접속 허용"
+        ],
+        "cost": {
+          "assumptions": {
+            "test_hours": 1,
+            "monthly_requests": 100000,
+            "avg_request_seconds": 0.2
+          },
+          "currency": "USD",
+          "test_1h": null,
+          "monthly": null,
+          "note": "단가 확인 전"
+        },
+        "rank": 2
+      },
+      {
+        "target": "aws_ec2",
+        "cloud": "aws",
+        "architecture": "ec2",
+        "label": "AWS EC2",
+        "deployable": true,
+        "fit": 30,
+        "verdict": "과함",
+        "why": "단순 테스트용 API에 항상 켜진 서버를 쓰면 비용 낭비예요.",
+        "size_spec": "t3.micro",
+        "permissions": [
+          "ECR 이미지 읽기",
+          "외부 접속 80번 포트만 열림"
+        ],
+        "cost": {
+          "assumptions": {
+            "test_hours": 1,
+            "monthly_requests": 100000,
+            "avg_request_seconds": 0.2
+          },
+          "currency": "USD",
+          "test_1h": null,
+          "monthly": null,
+          "note": "단가 확인 전"
+        },
+        "rank": 3
+      },
+      {
+        "target": "aws_ecs_fargate",
+        "cloud": "aws",
+        "architecture": "ecs_fargate",
+        "label": "AWS ECS Fargate",
+        "deployable": false,
+        "fit": 25,
+        "verdict": "낭비",
+        "why": "로드밸런서 비용까지 추가되어 이 규모의 앱엔 과도한 인프라예요.",
+        "size_spec": "0.25 vCPU / 0.5GB",
+        "permissions": [
+          "ECR 이미지 읽기",
+          "로드밸런서 공개"
+        ],
+        "cost": {
+          "assumptions": {
+            "test_hours": 1,
+            "monthly_requests": 100000,
+            "avg_request_seconds": 0.2
+          },
+          "currency": "USD",
+          "test_1h": null,
+          "monthly": null,
+          "note": "단가 확인 전"
+        },
+        "rank": 4
+      },
+      {
+        "target": "gcp_compute_engine",
+        "cloud": "gcp",
+        "architecture": "compute_engine",
+        "label": "Google Compute Engine",
+        "deployable": false,
+        "fit": 20,
+        "verdict": "낭비",
+        "why": "항상 켜진 VM은 이 가벼운 앱에 완전히 과한 선택이에요.",
+        "size_spec": "e2-micro",
+        "permissions": [
+          "Artifact Registry 이미지 읽기",
+          "외부 접속 80번 포트"
+        ],
+        "cost": {
+          "assumptions": {
+            "test_hours": 1,
+            "monthly_requests": 100000,
+            "avg_request_seconds": 0.2
+          },
+          "currency": "USD",
+          "test_1h": null,
+          "monthly": null,
+          "note": "단가 확인 전"
+        },
+        "rank": 5
+      }
+    ],
+    "supported": true,
+    "warnings": [],
+    "dockerfile_notes": [
+      "기존 Dockerfile(line 2)의 python:3.12-slim을 그대로 사용하되, --platform=linux/amd64를 명시해 멀티 플랫폼 빌드 환경에서도 amd64 이미지가 확실히 생성되도록 했습니다.",
+      "Lambda Web Adapter(Dockerfile line 6)는 세 환경 모두를 지원하는 핵심 장치입니다. Lambda에서는 /opt/extensions/ 바이너리를 자동 실행해 HTTP 트래픽을 중계하고, EC2·Cloud Run에서는 해당 경로를 아무도 건드리지 않아 무해하게 무시됩니다.",
+      "requirements.txt 등 의존성 파일이 프로젝트에 없음을 list_files로 직접 확인했습니다. app.py(line 2~5)가 json·os·socket·http.server 등 표준 라이브러리만 사용하므로 pip install 단계가 불필요합니다.",
+      "app.py(line 27)의 ThreadingHTTPServer.serve_forever()는 그 자체로 운영용 블로킹 서버입니다. flask run --debug 같은 개발 전용 명령이 아니므로 CMD를 그대로 유지했습니다.",
+      "ENV PORT=8080은 app.py(line 7)의 os.environ.get('PORT', '8080') 기본값과 일치하며, Lambda Web Adapter가 포워딩할 포트도 8080으로 맞춰집니다. 런타임에 PORT 환경변수를 다른 값으로 주입하면 세 환경 모두에서 해당 포트로 자동 전환됩니다.",
+      ".env나 키 파일은 COPY하지 않았습니다. 비밀값이 필요해지면 환경변수(Lambda 환경변수, EC2 UserData/SSM, Cloud Run Secret Manager)로 주입하세요."
+    ],
+    "project_id": "prj_live",
+    "analysis_id": "ana-20261002035547-6950",
+    "commit_sha": "sample1",
+    "model_id": "global.anthropic.claude-sonnet-4-6",
+    "created_at": "2026-10-02T03:56:21Z"
+  },
+  "recommendation_uri": "s3://pawploy-agent-135808950984/projects/prj_live/analysis/ana-20261002035547-6950/recommendation.json",
+  "build_files": {
+    "attempt": 1,
+    "uri_prefix": "s3://pawploy-agent-135808950984/projects/prj_live/build/ana-20261002035547-6950/attempt-1/",
+    "dockerfile": "# ── 베이스 이미지 ──────────────────────────────────────────\n# python:3.12-slim (linux/amd64) — 기존 Dockerfile(line 2)과 동일\nFROM --platform=linux/amd64 python:3.12-slim\n\n# ── Lambda Web Adapter ────────────────────────────────────\n# Lambda 환경에서는 이 바이너리가 일반 HTTP 서버를 Lambda 핸들러로 변환한다.\n# EC2 / Cloud Run 에서는 /opt/extensions/ 경로를 아무도 실행하지 않으므로 무해하게 무시된다.\n# (기존 Dockerfile line 6 그대로 유지)\nCOPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0 \\\n     /lambda-adapter /opt/extensions/lambda-adapter\n\n# ── 앱 복사 ───────────────────────────────────────────────\n# requirements.txt 가 없으므로(파일 트리 확인) pip install 단계 생략\n# .env · 키 파일은 COPY 하지 않는다\nWORKDIR /app\nCOPY app.py .\n\n# ── 포트 설정 ─────────────────────────────────────────────\n# PORT 환경변수를 8080으로 기본 설정 (app.py line 7 에서 읽음)\n# Lambda Web Adapter 도 기본적으로 8080 포트를 바라본다\nENV PORT=8080\nEXPOSE 8080\n\n# ── 실행 명령 ─────────────────────────────────────────────\n# app.py 는 표준 라이브러리 ThreadingHTTPServer 를 직접 사용하므로\n# 별도 WSGI 서버 없이 python app.py 가 곧 운영용 실행 명령이다 (app.py line 27)\nCMD [\"python\", \"app.py\"]\n",
+    "buildspec": "version: 0.2\nenv:\n  exported-variables:\n    - ECR_IMAGE_URI\n    - GCP_IMAGE_URI\nphases:\n  pre_build:\n    commands:\n      - mkdir -p /tmp/src && cd /tmp/src\n      - case \"$SOURCE_URI\" in */) aws s3 cp --recursive \"$SOURCE_URI\" . ;; *.zip) aws s3 cp \"$SOURCE_URI\" /tmp/src.zip && unzip -q /tmp/src.zip -d . ;; *) aws s3 cp \"$SOURCE_URI\" /tmp/src.tgz && tar -xzf /tmp/src.tgz -C . ;; esac\n      - if [ \"$(ls -A | wc -l)\" = \"1\" ] && [ -d \"$(ls -A)\" ]; then cd \"$(ls -A)\"; fi\n      - aws s3 cp \"${BUILD_FILES_URI}Dockerfile.pawploy\" ./Dockerfile.pawploy\n      - aws s3 cp \"${BUILD_FILES_URI}dockerignore\" /tmp/pawploy.dockerignore\n      - cat /tmp/pawploy.dockerignore >> .dockerignore\n      - echo \"$PWD\" > /tmp/build_dir\n      - aws ecr get-login-password --region \"$AWS_REGION\" | docker login --username AWS --password-stdin \"${ECR_REPO_URI%%/*}\"\n      - if [ -n \"$GCP_AR_REPO\" ]; then aws secretsmanager get-secret-value --secret-id \"$GCP_SA_KEY_SECRET\" --query SecretString --output text | docker login -u _json_key --password-stdin \"https://${GCP_AR_REPO%%/*}\"; fi\n  build:\n    commands:\n      - cd \"$(cat /tmp/build_dir)\"\n      - docker build --platform linux/amd64 -f Dockerfile.pawploy -t \"$ECR_REPO_URI:$IMAGE_TAG\" .\n  post_build:\n    commands:\n      - test \"$CODEBUILD_BUILD_SUCCEEDING\" = \"1\"\n      - docker push \"$ECR_REPO_URI:$IMAGE_TAG\"\n      - export ECR_IMAGE_URI=\"$(docker inspect --format='{{index .RepoDigests 0}}' \"$ECR_REPO_URI:$IMAGE_TAG\")\"\n      - if [ -n \"$GCP_AR_REPO\" ]; then docker tag \"$ECR_REPO_URI:$IMAGE_TAG\" \"$GCP_AR_REPO:$IMAGE_TAG\" && docker push \"$GCP_AR_REPO:$IMAGE_TAG\" && export GCP_IMAGE_URI=\"$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' \"$GCP_AR_REPO:$IMAGE_TAG\" | grep \"$GCP_AR_REPO\" | head -1)\"; fi\n      - echo \"ECR_IMAGE_URI=$ECR_IMAGE_URI GCP_IMAGE_URI=$GCP_IMAGE_URI\"\n"
+  },
+  "validation_notes": [
+    "환경변수 제외: PORT"
+  ]
+}

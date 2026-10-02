@@ -1,0 +1,7 @@
+{
+  "mode": "analyze",
+  "project_id": "prj_demo",
+  "source_uri": "s3://pawploy-artifacts/projects/prj_demo/source/abc123/",
+  "commit_sha": "abc123",
+  "analysis_id": "ana-20261002-0001"
+}

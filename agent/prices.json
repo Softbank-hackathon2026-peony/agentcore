@@ -1,0 +1,28 @@
+{
+  "_comment": "단가는 공식 가격표에서 확인한 값만 넣는다. 출처 URL과 확인일 필수. 모르면 null.",
+  "aws_lambda": {
+    "micro": {"hourly": null, "per_request_second": null, "per_request": null, "source": null, "checked": null},
+    "small": {"hourly": null, "per_request_second": null, "per_request": null, "source": null, "checked": null},
+    "medium": {"hourly": null, "per_request_second": null, "per_request": null, "source": null, "checked": null}
+  },
+  "aws_ec2": {
+    "micro": {"hourly": null, "source": null, "checked": null},
+    "small": {"hourly": null, "source": null, "checked": null},
+    "medium": {"hourly": null, "source": null, "checked": null}
+  },
+  "gcp_cloud_run": {
+    "micro": {"hourly": null, "per_request_second": null, "per_request": null, "source": null, "checked": null},
+    "small": {"hourly": null, "per_request_second": null, "per_request": null, "source": null, "checked": null},
+    "medium": {"hourly": null, "per_request_second": null, "per_request": null, "source": null, "checked": null}
+  },
+  "aws_ecs_fargate": {
+    "micro": {"hourly": null, "source": null, "checked": null},
+    "small": {"hourly": null, "source": null, "checked": null},
+    "medium": {"hourly": null, "source": null, "checked": null}
+  },
+  "gcp_compute_engine": {
+    "micro": {"hourly": null, "source": null, "checked": null},
+    "small": {"hourly": null, "source": null, "checked": null},
+    "medium": {"hourly": null, "source": null, "checked": null}
+  }
+}

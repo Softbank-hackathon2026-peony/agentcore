@@ -1,0 +1,28 @@
+version: 0.2
+env:
+  exported-variables:
+    - ECR_IMAGE_URI
+    - GCP_IMAGE_URI
+phases:
+  pre_build:
+    commands:
+      - mkdir -p /tmp/src && cd /tmp/src
+      - case "$SOURCE_URI" in */) aws s3 cp --recursive "$SOURCE_URI" . ;; *.zip) aws s3 cp "$SOURCE_URI" /tmp/src.zip && unzip -q /tmp/src.zip -d . ;; *) aws s3 cp "$SOURCE_URI" /tmp/src.tgz && tar -xzf /tmp/src.tgz -C . ;; esac
+      - if [ "$(ls -A | wc -l)" = "1" ] && [ -d "$(ls -A)" ]; then cd "$(ls -A)"; fi
+      - aws s3 cp "${BUILD_FILES_URI}Dockerfile.pawploy" ./Dockerfile.pawploy
+      - aws s3 cp "${BUILD_FILES_URI}dockerignore" /tmp/pawploy.dockerignore
+      - cat /tmp/pawploy.dockerignore >> .dockerignore
+      - echo "$PWD" > /tmp/build_dir
+      - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "${ECR_REPO_URI%%/*}"
+      - if [ -n "$GCP_AR_REPO" ]; then aws secretsmanager get-secret-value --secret-id "$GCP_SA_KEY_SECRET" --query SecretString --output text | docker login -u _json_key --password-stdin "https://${GCP_AR_REPO%%/*}"; fi
+  build:
+    commands:
+      - cd "$(cat /tmp/build_dir)"
+      - docker build --platform linux/amd64 -f Dockerfile.pawploy -t "$ECR_REPO_URI:$IMAGE_TAG" .
+  post_build:
+    commands:
+      - test "$CODEBUILD_BUILD_SUCCEEDING" = "1"
+      - docker push "$ECR_REPO_URI:$IMAGE_TAG"
+      - export ECR_IMAGE_URI="$(docker inspect --format='{{index .RepoDigests 0}}' "$ECR_REPO_URI:$IMAGE_TAG")"
+      - if [ -n "$GCP_AR_REPO" ]; then docker tag "$ECR_REPO_URI:$IMAGE_TAG" "$GCP_AR_REPO:$IMAGE_TAG" && docker push "$GCP_AR_REPO:$IMAGE_TAG" && export GCP_IMAGE_URI="$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' "$GCP_AR_REPO:$IMAGE_TAG" | grep "$GCP_AR_REPO" | head -1)"; fi
+      - echo "ECR_IMAGE_URI=$ECR_IMAGE_URI GCP_IMAGE_URI=$GCP_IMAGE_URI"

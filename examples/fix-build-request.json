@@ -1,0 +1,10 @@
+{
+  "mode": "fix_build",
+  "project_id": "prj_demo",
+  "analysis_id": "ana-20261002-0001",
+  "source_uri": "s3://pawploy-artifacts/projects/prj_demo/source/abc123/",
+  "attempt": 1,
+  "failed_phase": "BUILD",
+  "dockerfile": "FROM python:3.12-slim\n...",
+  "build_log": "#7 ERROR: failed to solve: process \"/bin/sh -c pip install -r requirements.txt\" did not complete successfully: exit code: 1"
+}

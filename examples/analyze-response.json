@@ -1,0 +1,214 @@
+{
+  "status": "ok",
+  "mode": "analyze",
+  "project_id": "prj_demo",
+  "analysis_id": "ana-20261002-0001",
+  "recommendation": {
+    "cloud": "aws",
+    "architecture": "lambda",
+    "container_port": 8080,
+    "size": "small",
+    "health_path": "/",
+    "env": {
+      "APP_MODE": "test"
+    },
+    "reason": "요청이 가끔 오는 가벼운 서버라 Lambda가 맞아요.",
+    "target": "aws_lambda",
+    "label": "AWS Lambda",
+    "summary": "PORT 환경변수로 뜨는 파이썬 웹서버",
+    "required_secrets": [
+      "OPENAI_API_KEY"
+    ],
+    "permissions": [
+      "CloudWatch Logs 쓰기 (실행 로그)"
+    ],
+    "cost": {
+      "assumptions": {
+        "test_hours": 1,
+        "monthly_requests": 100000,
+        "avg_request_seconds": 0.2
+      },
+      "currency": "USD",
+      "test_1h": null,
+      "monthly": null,
+      "note": "단가 확인 전"
+    },
+    "clues": [
+      {
+        "file": "app.py",
+        "line": 7,
+        "finding": "PORT 기본값 8080",
+        "plain": "8080 포트로 받아요",
+        "tag": "포트"
+      },
+      {
+        "file": "app.py",
+        "line": null,
+        "finding": "범위 밖 줄",
+        "plain": "-",
+        "tag": "줄"
+      }
+    ],
+    "candidates": [
+      {
+        "target": "aws_lambda",
+        "cloud": "aws",
+        "architecture": "lambda",
+        "label": "AWS Lambda",
+        "deployable": true,
+        "fit": 90,
+        "verdict": "추천",
+        "why": "짧은 요청",
+        "size_spec": "메모리 1024MB",
+        "permissions": [
+          "CloudWatch Logs 쓰기 (실행 로그)"
+        ],
+        "cost": {
+          "assumptions": {
+            "test_hours": 1,
+            "monthly_requests": 100000,
+            "avg_request_seconds": 0.2
+          },
+          "currency": "USD",
+          "test_1h": null,
+          "monthly": null,
+          "note": "단가 확인 전"
+        },
+        "rank": 1
+      },
+      {
+        "target": "aws_ec2",
+        "cloud": "aws",
+        "architecture": "ec2",
+        "label": "AWS EC2",
+        "deployable": true,
+        "fit": 40,
+        "verdict": "낭비",
+        "why": "항상 켜둘 필요 없음",
+        "size_spec": "t3.small",
+        "permissions": [
+          "ECR 이미지 읽기",
+          "외부 접속 80번 포트만 열림"
+        ],
+        "cost": {
+          "assumptions": {
+            "test_hours": 1,
+            "monthly_requests": 100000,
+            "avg_request_seconds": 0.2
+          },
+          "currency": "USD",
+          "test_1h": null,
+          "monthly": null,
+          "note": "단가 확인 전"
+        },
+        "rank": 2
+      },
+      {
+        "target": "gcp_cloud_run",
+        "cloud": "gcp",
+        "architecture": "cloud_run",
+        "label": "Google Cloud Run",
+        "deployable": true,
+        "fit": null,
+        "verdict": "적합",
+        "why": "모델이 평가하지 않음",
+        "size_spec": "메모리 1GiB",
+        "permissions": [
+          "Artifact Registry 이미지 읽기",
+          "공개 접속 허용"
+        ],
+        "cost": {
+          "assumptions": {
+            "test_hours": 1,
+            "monthly_requests": 100000,
+            "avg_request_seconds": 0.2
+          },
+          "currency": "USD",
+          "test_1h": null,
+          "monthly": null,
+          "note": "단가 확인 전"
+        },
+        "rank": 3
+      },
+      {
+        "target": "aws_ecs_fargate",
+        "cloud": "aws",
+        "architecture": "ecs_fargate",
+        "label": "AWS ECS Fargate",
+        "deployable": false,
+        "fit": null,
+        "verdict": "부적합",
+        "why": "모델이 평가하지 않음",
+        "size_spec": "0.5 vCPU / 1GB",
+        "permissions": [
+          "ECR 이미지 읽기",
+          "로드밸런서 공개"
+        ],
+        "cost": {
+          "assumptions": {
+            "test_hours": 1,
+            "monthly_requests": 100000,
+            "avg_request_seconds": 0.2
+          },
+          "currency": "USD",
+          "test_1h": null,
+          "monthly": null,
+          "note": "단가 확인 전"
+        },
+        "rank": 4
+      },
+      {
+        "target": "gcp_compute_engine",
+        "cloud": "gcp",
+        "architecture": "compute_engine",
+        "label": "Google Compute Engine",
+        "deployable": false,
+        "fit": null,
+        "verdict": "부적합",
+        "why": "모델이 평가하지 않음",
+        "size_spec": "e2-small",
+        "permissions": [
+          "Artifact Registry 이미지 읽기",
+          "외부 접속 80번 포트"
+        ],
+        "cost": {
+          "assumptions": {
+            "test_hours": 1,
+            "monthly_requests": 100000,
+            "avg_request_seconds": 0.2
+          },
+          "currency": "USD",
+          "test_1h": null,
+          "monthly": null,
+          "note": "단가 확인 전"
+        },
+        "rank": 5
+      }
+    ],
+    "supported": true,
+    "warnings": [],
+    "dockerfile_notes": [
+      "샘플 기반",
+      "Lambda Web Adapter 줄을 추가함 (EC2·Cloud Run에서는 무시됨)",
+      "ENV PORT=8080 로 맞춤",
+      "EXPOSE 8080 로 맞춤"
+    ],
+    "project_id": "prj_demo",
+    "analysis_id": "ana-20261002-0001",
+    "commit_sha": "abc123",
+    "model_id": "global.anthropic.claude-sonnet-4-6",
+    "created_at": "2026-10-01T20:52:20Z"
+  },
+  "recommendation_uri": "s3://pawploy-artifacts/projects/prj_demo/analysis/ana-20261002-0001/recommendation.json",
+  "build_files": {
+    "attempt": 1,
+    "uri_prefix": "s3://pawploy-artifacts/projects/prj_demo/build/ana-20261002-0001/attempt-1/",
+    "dockerfile": "FROM python:3.12-slim\nCOPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0 /lambda-adapter /opt/extensions/lambda-adapter\nWORKDIR /app\nCOPY app.py .\nENV PORT=8080\nEXPOSE 8080\nCMD [\"python\", \"app.py\"]\n",
+    "buildspec": "version: 0.2\nenv:\n  exported-variables:\n    - ECR_IMAGE_URI\n    - GCP_IMAGE_URI\nphases:\n  pre_build:\n    commands:\n      - mkdir -p /tmp/src && cd /tmp/src\n      - case \"$SOURCE_URI\" in */) aws s3 cp --recursive \"$SOURCE_URI\" . ;; *.zip) aws s3 cp \"$SOURCE_URI\" /tmp/src.zip && unzip -q /tmp/src.zip -d . ;; *) aws s3 cp \"$SOURCE_URI\" /tmp/src.tgz && tar -xzf /tmp/src.tgz -C . ;; esac\n      - if [ \"$(ls -A | wc -l)\" = \"1\" ] && [ -d \"$(ls -A)\" ]; then cd \"$(ls -A)\"; fi\n      - aws s3 cp \"${BUILD_FILES_URI}Dockerfile.pawploy\" ./Dockerfile.pawploy\n      - aws s3 cp \"${BUILD_FILES_URI}dockerignore\" /tmp/pawploy.dockerignore\n      - cat /tmp/pawploy.dockerignore >> .dockerignore\n      - echo \"$PWD\" > /tmp/build_dir\n      - aws ecr get-login-password --region \"$AWS_REGION\" | docker login --username AWS --password-stdin \"${ECR_REPO_URI%%/*}\"\n      - if [ -n \"$GCP_AR_REPO\" ]; then aws secretsmanager get-secret-value --secret-id \"$GCP_SA_KEY_SECRET\" --query SecretString --output text | docker login -u _json_key --password-stdin \"https://${GCP_AR_REPO%%/*}\"; fi\n  build:\n    commands:\n      - cd \"$(cat /tmp/build_dir)\"\n      - docker build --platform linux/amd64 -f Dockerfile.pawploy -t \"$ECR_REPO_URI:$IMAGE_TAG\" .\n  post_build:\n    commands:\n      - test \"$CODEBUILD_BUILD_SUCCEEDING\" = \"1\"\n      - docker push \"$ECR_REPO_URI:$IMAGE_TAG\"\n      - export ECR_IMAGE_URI=\"$(docker inspect --format='{{index .RepoDigests 0}}' \"$ECR_REPO_URI:$IMAGE_TAG\")\"\n      - if [ -n \"$GCP_AR_REPO\" ]; then docker tag \"$ECR_REPO_URI:$IMAGE_TAG\" \"$GCP_AR_REPO:$IMAGE_TAG\" && docker push \"$GCP_AR_REPO:$IMAGE_TAG\" && export GCP_IMAGE_URI=\"$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' \"$GCP_AR_REPO:$IMAGE_TAG\" | grep \"$GCP_AR_REPO\" | head -1)\"; fi\n      - echo \"ECR_IMAGE_URI=$ECR_IMAGE_URI GCP_IMAGE_URI=$GCP_IMAGE_URI\"\n"
+  },
+  "validation_notes": [
+    "환경변수 제외: PORT",
+    "존재하지 않는 파일을 근거로 들어서 제외: ghost.py",
+    "근거 줄 번호가 범위를 벗어나서 지움: app.py:999"
+  ]
+}
