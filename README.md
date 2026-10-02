@@ -147,20 +147,35 @@ Worker 는 `PAWPLOY_AGENT_BUCKET` 이 있으면 `terraform_uri` 없이도 이 �
 `fix_terraform` 요청: `project_id`, `deploy_id`, `architecture`(실패한 클라우드의 것), `attempt`(그 클라우드의 시도 번호, 1부터), `failed_stage`(validate/plan/policy/apply/health), `log`, 그리고 `files{}` / `module_uri` / 둘 다 없으면 저장된 최신 attempt 에서 읽음
 → `status: ok` 면 `next_attempt`(다음 시도 번호), `saved_attempt`(실제로 저장한 폴더 번호 = 최신+1), `module_uri`, `carried_over`(같이 복사한 클라우드), `cause`, `changes` / `give_up` 이면 3회 초과 또는 코드로 못 고치는 원인(`fixable: false`)
 
-## CodeBuild (buildspec) 약속 — Main Server 담당
+## 이미지 빌드 (CodeBuild → ECR / Artifact Registry)
 
-컨테이너 1개: [examples/buildspec.yml](examples/buildspec.yml), 여러 개: [examples/buildspec-images.yml](examples/buildspec-images.yml) (응답 `build_files.buildspec` 이 그 앱에 맞는 것). `start_build` 때 넘길 환경변수 (둘 다 같음, GCP 두 개는 컨테이너 1개만):
+하나의 Dockerfile 로 한 번 빌드해서 **AWS 는 ECR, GCP 는 Artifact Registry** 에 같은 이미지를 올립니다.
+
+| 만든 것 | 이름 | 비고 |
+|---|---|---|
+| CodeBuild 프로젝트 | `pawploy-build` | buildspec = `agent/buildfiles.py` 고정 템플릿 (컨테이너 1개 [examples/buildspec.yml](examples/buildspec.yml), 여러 개 [examples/buildspec-images.yml](examples/buildspec-images.yml) — 응답 `build_files.buildspec` 이 그 앱에 맞는 것), amd64·privileged, 20분 제한 |
+| ECR 저장소 | `pawploy-apps` | 푸시 때 스캔, 최근 50개 보관 |
+| IAM 역할 | `pawploy-codebuild` | 소스 버킷(`pawploy-agent-*`, `fawploy-source-*`) 읽기, `pawploy-apps` 푸시, GCP 키 읽기, 로그 |
+| GCP AR | `asia-northeast3-docker.pkg.dev/softbankhackathon2026-peony/pawploy/pawploy-apps` | 이미 있는 저장소 `pawploy`. 키는 워커 키 `pawploy/gcp-worker-key` (저장소 단위 작성자 권한 추가됨) |
+
+만들기·갱신: `AWS_PROFILE=peony python scripts/setup_build.py [--gcp-ar-repo <AR 주소> --gcp-key-secret <Secrets Manager 이름>]`
+(GCP 옵션을 주면 모든 빌드가 ECR + AR 양쪽에 올림. 키는 AR **쓰기** 권한 `roles/artifactregistry.writer` 가 있어야 함)
+
+Main Server 는 `start_build(projectName="pawploy-build")` 에 세 개만 넘기면 됩니다 (`scripts/build.py` 가 같은 호출):
 
 | 이름 | 예 |
 |---|---|
 | `SOURCE_URI` | analyze 에 넣은 것과 같은 소스 |
-| `BUILD_FILES_URI` | 응답의 `build_files.uri_prefix` |
-| `ECR_REPO_URI` | `135808950984.dkr.ecr.ap-northeast-2.amazonaws.com/pawploy-apps` |
+| `BUILD_FILES_URI` | 응답의 `build_files.uri_prefix` (fix_build 후엔 새 attempt 폴더) |
 | `IMAGE_TAG` | `<project_id>-<sha 앞 12자리>` |
-| `GCP_AR_REPO` (선택) | `asia-northeast3-docker.pkg.dev/<프로젝트>/<저장소>` — 비우면 GCP push 생략 |
-| `GCP_SA_KEY_SECRET` (선택) | GCP 서비스계정 키가 든 Secrets Manager 이름 |
 
-결과는 exported variables `ECR_IMAGE_URI`, `GCP_IMAGE_URI`(@sha256 digest 고정).
+`ECR_REPO_URI`·`GCP_AR_REPO`·`GCP_SA_KEY_SECRET` 은 프로젝트 기본값으로 들어 있음 (필요하면 override).
+결과는 exported variables `ECR_IMAGE_URI`, `GCP_IMAGE_URI`(@sha256 digest 고정) → Worker `targets[].image_uri`.
+빌드 실패 시 `scripts/build.py` 가 로그 마지막 부분을 출력 → 그대로 `fix_build` 의 `build_log` 로.
+
+지금 설정: `setup_build.py --gcp-ar-repo asia-northeast3-docker.pkg.dev/softbankhackathon2026-peony/pawploy/pawploy-apps --gcp-key-secret pawploy/gcp-worker-key`
+
+실제 확인: `prj_test` 샘플 앱 빌드 → ECR + Artifact Registry 둘 다 푸시 성공 (47초), `ECR_IMAGE_URI`·`GCP_IMAGE_URI` 둘 다 digest 고정으로 나옴.
 이미지는 Lambda Web Adapter 포함 · `linux/amd64` · `$PORT` 로 받으므로 EC2·Lambda·Cloud Run 공용입니다.
 
 여러 컨테이너 (`buildspec-images.yml`, `env.shell: bash`):
