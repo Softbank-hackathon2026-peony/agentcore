@@ -6,6 +6,7 @@ Worker 루트 main.tf 가 provider(필수 태그·리전), backend(state), 만�
 - 입력 변수 6개(name, image_uri, container_port, size, env, health_path)와
 - 출력 3개(endpoint, health_url, resource_id)는 반드시 지금 모듈과 같아야 하고
 - provider / backend / provisioner / 외부 모듈 / 임의 파일 읽기는 금지한다.
+Worker 의 IaC 정적 검사(tfworker/iac.py)와 같은 규칙을 `_check_worker_iac` 에 그대로 옮겨 두었다.
 여기서 하는 검사는 1차 방어선이고, 최종 방어선은 Worker의 plan 정책 검사다.
 """
 import re
@@ -20,19 +21,47 @@ from .storage import Store
 REF_DIR = Path(__file__).with_name("tf_reference")
 REFERENCES = {"ec2": ["ec2.tf", "user_data.sh.tftpl"], "lambda": ["lambda.tf"], "cloud_run": ["cloud_run.tf"]}
 
-# Worker tfworker/policy.py 의 ALLOWED_TYPES 와 같게 유지 (cloud_run 은 Worker에 추가 요청 필요)
+# ---- Worker 규격 (Terraform-worker feat/multi-cloud-a-plan 의 tfworker/policy.py · iac.py 와 같게 유지) ----
+# policy.ALLOWED_TYPES
 ALLOWED_RESOURCES = {
     "ec2": {"aws_security_group", "aws_iam_role", "aws_iam_role_policy_attachment",
             "aws_iam_instance_profile", "aws_instance"},
     "lambda": {"aws_iam_role", "aws_iam_role_policy_attachment", "aws_lambda_function",
                "aws_lambda_function_url", "aws_lambda_permission"},
-    "cloud_run": {"google_cloud_run_v2_service", "google_cloud_run_v2_service_iam_member"},
+    "cloud_run": {"google_service_account", "google_cloud_run_v2_service",
+                  "google_cloud_run_v2_service_iam_member"},
 }
-ALLOWED_DATA = {"aws_ssm_parameter", "aws_vpc", "aws_subnets", "aws_caller_identity", "aws_region",
-                "aws_partition", "aws_iam_policy_document", "aws_ami", "google_project", "google_client_config"}
+CLOUD_OF = {"ec2": "aws", "lambda": "aws", "cloud_run": "gcp"}
+# iac.ALLOWED_DATA
+ALLOWED_DATA = {
+    "aws": {"aws_vpc", "aws_subnets", "aws_subnet", "aws_ssm_parameter", "aws_ami", "aws_availability_zones",
+            "aws_region", "aws_partition", "aws_iam_policy_document"},
+    "gcp": {"google_client_config"},
+}
+# iac.PROVIDER_SOURCES
+PROVIDER_SOURCES = {"aws": "hashicorp/aws", "gcp": "hashicorp/google"}
+# policy.ALLOWED_POLICY_ARNS
+ALLOWED_POLICY_ARNS = {
+    "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
+    "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+}
+# iac.FORBIDDEN. Worker 는 주석까지 포함한 원문을 검사하므로 여기서도 원문에 적용한다
+FORBIDDEN = [
+    (r"\bprovisioner\b", "provisioner"),
+    (r"\blocal-exec\b|\bremote-exec\b", "local-exec / remote-exec"),
+    (r'\bprovider\s+"', "provider 블록 (Worker가 루트에서 정함)"),
+    (r'\bbackend\s+"|\bcloud\s*\{', "backend / cloud 블록 (state 위치는 Worker가 정함)"),
+    (r'\bmodule\s+"', "다른 module 호출 (외부 코드 다운로드 가능)"),
+    (r"\bdefault_tags\b|\bdefault_labels\b", "default_tags / default_labels (필수 태그를 덮어쓸 수 있음)"),
+    (r"\binline_policy\b|\bmanaged_policy_arns\b", "IAM 인라인 정책 (허용한 관리형 정책만 붙일 수 있음)"),
+    (r"\baccess_token\b", "access_token (Worker의 GCP 토큰을 앱으로 흘릴 수 있음)"),
+]
+SSM_BLOCK_RE = re.compile(r'data\s+"aws_ssm_parameter"\s+"[\w-]+"\s*\{(.*?)\n\}', re.DOTALL)
 ALLOWED_INSTANCE_TYPES = {"t3.micro", "t3.small", "t3.medium"}
 MAX_LAMBDA_MEMORY_MB = 2048
 MAX_LAMBDA_TIMEOUT_SEC = 60
+MAX_CLOUD_RUN_MEMORY_MI = 2048    # policy.MAX_CLOUD_RUN_MEMORY_MI
+MAX_CLOUD_RUN_INSTANCES = 1       # policy.MAX_CLOUD_RUN_INSTANCES
 REQUIRED_VARS = ("name", "image_uri", "container_port", "size", "env", "health_path")
 REQUIRED_OUTPUTS = ("endpoint", "health_url", "resource_id")
 FILE_NAME_RE = re.compile(r"^(main\.tf|[a-z0-9_\-][a-z0-9_.\-]*\.tftpl)$")
@@ -73,37 +102,18 @@ def check_files(files: list[TfFile], architecture: str) -> tuple[list[TfFile], l
 
 
 def _check_tf(text: str, arch: str, file_names: set[str]) -> list[str]:
-    e = []
+    e = _check_worker_iac(text, arch)
     body = _strip_comments(text)
-    if re.search(r'\bbackend\s+"', body):
-        e.append("backend 블록은 쓸 수 없습니다 (state 위치는 Worker가 정함)")
-    if re.search(r"\bprovisioner\s+\"|local-exec|remote-exec", body):
-        e.append("provisioner(local-exec/remote-exec)는 쓸 수 없습니다")
-    if re.search(r'^\s*module\s+"', body, re.M):
-        e.append("모듈 안에서 다른 module 을 부를 수 없습니다")
-    for m in re.finditer(r'\b(file|filebase64|templatefile|fileset)\s*\(\s*("[^"]*"|[^,)]*)', body):
+    # Worker 와 같이 주석까지 검사한다. Worker 보다 엄격하게 같은 모듈의 .tftpl 만 허용
+    for m in re.finditer(r'\b(file\w*|templatefile)\s*\(\s*("[^"]*"|[^,)]*)', text):
         arg = m.group(2)
         ok = m.group(1) == "templatefile" and re.fullmatch(r'"\$\{path\.module\}/([a-z0-9_\-][a-z0-9_.\-]*\.tftpl)"', arg)
         if not ok or ok.group(1) not in file_names:
             e.append(f"파일 읽기는 같은 모듈의 .tftpl 템플릿만 가능합니다: {m.group(0)[:60]}")
-    allowed = ALLOWED_RESOURCES[arch]
-    for rtype in re.findall(r'^\s*resource\s+"([^"]+)"', body, re.M):
-        if rtype not in allowed:
-            e.append(f"허용하지 않는 리소스 종류: {rtype} (가능: {sorted(allowed)})")
-    for dtype in re.findall(r'^\s*data\s+"([^"]+)"', body, re.M):
-        if dtype not in ALLOWED_DATA:
-            e.append(f"허용하지 않는 data 소스: {dtype}")
     declared_vars = set(re.findall(r'^\s*variable\s+"([^"]+)"', body, re.M))
-    for v in REQUIRED_VARS:
-        if v not in declared_vars:
-            e.append(f"입력 변수 {v} 가 없습니다 (Worker가 넘겨주는 값)")
     extra = declared_vars - set(REQUIRED_VARS)
     if extra:
         e.append(f"Worker가 넘겨주지 않는 변수는 쓸 수 없습니다: {sorted(extra)} (locals 로 바꾸세요)")
-    outputs = set(re.findall(r'^\s*output\s+"([^"]+)"', body, re.M))
-    for o in REQUIRED_OUTPUTS:
-        if o not in outputs:
-            e.append(f"출력 {o} 가 없습니다")
     for it in re.findall(r'"([a-z][a-z0-9]*\.[a-z0-9]+)"', body):
         if re.fullmatch(r"(t|m|c|r|g|p|x|i|z|d|inf|trn)\d[a-z]*\.\w+", it) and it not in ALLOWED_INSTANCE_TYPES:
             e.append(f"허용하지 않는 인스턴스 타입: {it}")
@@ -113,8 +123,47 @@ def _check_tf(text: str, arch: str, file_names: set[str]) -> list[str]:
     for m in re.finditer(r"\btimeout\s*=\s*(\d+)", body):
         if arch == "lambda" and int(m.group(1)) > MAX_LAMBDA_TIMEOUT_SEC:
             e.append(f"Lambda 타임아웃 {m.group(1)}초가 상한 {MAX_LAMBDA_TIMEOUT_SEC}초 초과")
+    if arch == "cloud_run":
+        for m in re.finditer(r"\bmax_instance_count\s*=\s*(\d+)", body):
+            if not 0 < int(m.group(1)) <= MAX_CLOUD_RUN_INSTANCES:
+                e.append(f"Cloud Run 최대 인스턴스 수 {m.group(1)} 는 허용하지 않음 (1~{MAX_CLOUD_RUN_INSTANCES})")
+        for m in re.finditer(r'"(\d+)(Gi|Mi)"', body):
+            mi = int(m.group(1)) * (1024 if m.group(2) == "Gi" else 1)
+            if mi > MAX_CLOUD_RUN_MEMORY_MI:
+                e.append(f"Cloud Run 메모리 {m.group(0)} 가 상한 {MAX_CLOUD_RUN_MEMORY_MI}Mi 초과")
     if "<<" not in body and _brace_balance(body) != 0:
         e.append("중괄호 { } 짝이 맞지 않습니다")
+    return e
+
+
+def _check_worker_iac(text: str, arch: str) -> list[str]:
+    """Worker tfworker/iac.py check_code 와 같은 검사. 여기서 통과해야 Worker 21단계에서 거부되지 않는다."""
+    cloud = CLOUD_OF[arch]
+    e = [f"금지된 문법: {why} — 주석에도 쓰지 마세요" for pattern, why in FORBIDDEN if re.search(pattern, text)]
+    for src in re.findall(r'\bsource\s*=\s*"([^"]+)"', text):
+        if src != PROVIDER_SOURCES[cloud]:
+            e.append(f"허용하지 않는 provider source: {src} (가능: {PROVIDER_SOURCES[cloud]})")
+    allowed = ALLOWED_RESOURCES[arch]
+    for rtype in sorted(set(re.findall(r'\bresource\s+"([A-Za-z0-9_]+)"', text)) - allowed):
+        e.append(f"허용하지 않는 리소스 종류: {rtype} (가능: {sorted(allowed)})")
+    for dtype in sorted(set(re.findall(r'\bdata\s+"([A-Za-z0-9_]+)"', text)) - ALLOWED_DATA[cloud]):
+        e.append(f"허용하지 않는 data 소스: {dtype} (가능: {sorted(ALLOWED_DATA[cloud])})")
+    for body in SSM_BLOCK_RE.findall(text):
+        if not re.search(r'\bname\s*=\s*"/aws/service/', body):
+            e.append("aws_ssm_parameter 는 AWS 공개 파라미터(/aws/service/...)만 읽을 수 있음")
+    for name in REQUIRED_VARS:
+        if not re.search(rf'\bvariable\s+"{name}"', text):
+            e.append(f"입력 변수 {name} 가 없습니다 (Worker가 넘겨주는 값)")
+    for name in REQUIRED_OUTPUTS:
+        if not re.search(rf'\boutput\s+"{name}"', text):
+            e.append(f"출력 {name} 가 없습니다")
+    for arn in re.findall(r'\bpolicy_arn\s*=\s*"([^"]+)"', text):
+        if arn not in ALLOWED_POLICY_ARNS:
+            e.append(f"허용하지 않는 IAM 정책: {arn} (가능: {sorted(ALLOWED_POLICY_ARNS)})")
+    if arch == "ec2" and not re.search(r'\bcpu_credits\s*=\s*"standard"', text):
+        e.append('EC2 는 credit_specification { cpu_credits = "standard" } 를 유지해야 함 (추가 과금 방지)')
+    if arch == "cloud_run" and not re.search(r"\bdeletion_protection\s*=\s*false\b", text):
+        e.append("Cloud Run 은 deletion_protection = false 여야 함 (켜져 있으면 1시간 뒤 destroy 가 실패)")
     return e
 
 
