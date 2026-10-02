@@ -320,6 +320,351 @@ def _lint_deploy(entries: list[dict] | None = None) -> list[str]:
     return issues
 
 
+RESEARCH_DIR = kb.KB_DIR.parent / "docs" / "research"
+CLOUDS = {"aws", "gcp", "azure", "local"}
+TARGETS = {"aws_lambda", "gcp_cloud_run", "aws_ecs_fargate", "aws_ec2", "gcp_compute_engine"}
+OPS_BURDEN = {"low", "medium", "high"}
+DS_ENGINES = {"postgres", "redis", "sqlite"}
+# 능력 키(계획 2 MVP 고정 형식) → 값 검사
+CAPABILITY_KEYS = {
+    "CP.max_request_seconds": lambda v: isinstance(v, int) and not isinstance(v, bool) and v > 0,
+    "CP.websocket": lambda v: isinstance(v, bool),
+    "CP.cpu_after_response": lambda v: isinstance(v, bool),
+    "CP.cpu_after_response_config": lambda v: isinstance(v, str) and bool(v),
+    "CP.persistent_local_disk": lambda v: isinstance(v, bool),
+    "CP.scale_to_zero": lambda v: isinstance(v, bool),
+    "CP.single_instance_config": lambda v: isinstance(v, str) and bool(v),
+    "CP.always_on": lambda v: isinstance(v, bool),
+    "DS.engine": lambda v: v in DS_ENGINES,
+    "COST.monthly_floor_usd": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0,
+}
+# 조사 문서 줄에 붙은 이 표시가 있으면 그 줄은 근거로 쓸 수 없다(README §3)
+BAD_MARKERS = ("⚠️근거없음", "⚠️출처부적격", "⚠️출처확인필요")
+# 적격(A) 발행처 호스트(README §3, source-audit.md §1). 능력 값에 쓰는 것만 둔다.
+ELIGIBLE_HOSTS = ("docs.aws.amazon.com", "aws.amazon.com", "pricing.us-east-1.amazonaws.com",
+                  "cloud.google.com", "docs.cloud.google.com", "www.sqlite.org", "docs.docker.com")
+# [PL] = 문서 머리말에 적은 AWS Price List 오퍼 파일
+PRICE_LIST_PREFIX = "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/"
+DIMENSION_ROW = re.compile(r"^\|\s*([A-G][0-9]+)\s*\|", re.M)
+# schemas/infrafit.schema.json $defs.RuleId
+RULE_ID = re.compile(r"^(CMP|CAP|TIM|CMB|OVR|HYG|COST)-[A-Z]+-[0-9]{3}$")
+WHEN_OPS = {"equals", "in"}
+REQUIRE_OPS = {"equals", "gte", "exists"}
+
+
+def _doc_lines(doc: str, research_dir, cache: dict) -> list[str] | None:
+    if doc not in cache:
+        path = research_dir / doc
+        ok = (isinstance(doc, str) and doc.startswith("capabilities/") and doc.endswith(".md")
+              and ".." not in doc and path.is_file())
+        cache[doc] = path.read_text(encoding="utf-8").splitlines() if ok else None
+    return cache[doc]
+
+
+def _lint_source(name: str, src, research_dir, cache: dict) -> list[str]:
+    """source {doc, line, url, quote}: 필드 필수, 인용 문구가 doc:line에 그대로 있고, url도 그 줄에 있고, 표시 없음."""
+    if not isinstance(src, dict):
+        return [f"{name}: source 없음"]
+    missing = [k for k in ("doc", "line", "url", "quote") if not src.get(k)]
+    if missing:
+        return [f"{name}: source에 {', '.join(missing)} 없음"]
+    lines = _doc_lines(src["doc"], research_dir, cache)
+    if lines is None:
+        return [f"{name}: 조사 문서 없음 {src['doc']} (docs/research/capabilities/*.md 이어야 함)"]
+    line = src["line"]
+    if not isinstance(line, int) or isinstance(line, bool) or not 1 <= line <= len(lines):
+        return [f"{name}: 줄 번호가 범위 밖 {src['doc']}:{line}"]
+    text = lines[line - 1]
+    issues: list[str] = []
+    if str(src["quote"]) not in text:
+        issues.append(f"{name}: 인용 문구가 {src['doc']}:{line}에 없음")
+    if marker := next((m for m in BAD_MARKERS if m in text), None):
+        issues.append(f"{name}: {src['doc']}:{line}에 {marker} 표시")
+    url = str(src["url"])
+    host = url.split("://", 1)[-1].split("/", 1)[0]
+    if not url.startswith("https://") or host not in ELIGIBLE_HOSTS:
+        issues.append(f"{name}: 적격 발행처가 아닌 url {url}")
+    on_line = url in text or url.rstrip("/") in text
+    via_price_list = ("[PL]" in text and url.startswith(PRICE_LIST_PREFIX)
+                      and any(PRICE_LIST_PREFIX in ln for ln in lines))
+    if not (on_line or via_price_list):
+        issues.append(f"{name}: url이 {src['doc']}:{line}의 인용이 아님 {url}")
+    return issues
+
+
+def _lint_capabilities(entries: list[dict] | None = None, catalog: dict | None = None,
+                       research_dir=None) -> list[str]:
+    """능력 값: 형식, 카탈로그 소속, 키·값 형식, source 필수와 인용 문구 위치."""
+    issues: list[str] = []
+    catalog = kb.catalog() if catalog is None else catalog
+    research_dir = RESEARCH_DIR if research_dir is None else research_dir
+    entries = kb._load("capabilities.yaml").get("components") or [] if entries is None else entries
+    cache: dict = {}
+    seen: set[str] = set()
+    for i, c in enumerate(entries):
+        if not isinstance(c, dict):
+            issues.append(f"capability {i}: 항목이 매핑이 아님")
+            continue
+        cid = str(c.get("id", f"capability {i}"))
+        if cid in seen:
+            issues.append(f"capabilities: 중복 ID {cid}")
+        seen.add(cid)
+        if cid not in catalog:
+            issues.append(f"{cid}: catalog에 없는 구성 요소")
+        elif catalog[cid].get("recommendable") is False:
+            issues.append(f"{cid}: recommendable: false 구성 요소에 능력 값")
+        family = cid.split(":")[0]
+        if c.get("family") != family:
+            issues.append(f"{cid}: family가 ID 접두어와 다름")
+        if c.get("cloud") not in CLOUDS:
+            issues.append(f"{cid}: 잘못된 cloud {c.get('cloud')}")
+        if family == "cp":
+            if c.get("target") not in TARGETS:
+                issues.append(f"{cid}: 잘못된 target {c.get('target')}")
+        elif "target" in c:
+            issues.append(f"{cid}: 컴퓨트가 아닌데 target 있음")
+        if "ops_burden" in c:
+            ob = c.get("ops_burden_source")
+            if c["ops_burden"] not in OPS_BURDEN:
+                issues.append(f"{cid}: 잘못된 ops_burden {c['ops_burden']}")
+            if not isinstance(ob, dict) or not ob.get("reason"):
+                issues.append(f"{cid}: ops_burden에 ops_burden_source.reason 없음")
+            else:
+                issues += _lint_source(f"{cid}#ops_burden", {k: v for k, v in ob.items() if k != "reason"},
+                                       research_dir, cache)
+        caps = c.get("capabilities")
+        if not isinstance(caps, dict):
+            issues.append(f"{cid}: capabilities가 매핑이 아님")
+            continue
+        for key, entry in caps.items():
+            name = f"{cid}#{key}"
+            if key not in CAPABILITY_KEYS:
+                issues.append(f"{name}: 알 수 없는 능력 키")
+                continue
+            if not isinstance(entry, dict) or "value" not in entry:
+                issues.append(f"{name}: value 없음")
+                continue
+            if not CAPABILITY_KEYS[key](entry["value"]):
+                issues.append(f"{name}: 잘못된 값 {entry['value']!r}")
+            issues += _lint_source(name, entry.get("source"), research_dir, cache)
+    return issues
+
+
+def _dimension_ids(research_dir=None) -> set[str]:
+    path = (RESEARCH_DIR if research_dir is None else research_dir) / "dimensions.md"
+    return set(DIMENSION_ROW.findall(path.read_text(encoding="utf-8")))
+
+
+def _lint_require(name: str, cond) -> list[str]:
+    if not isinstance(cond, dict):
+        return [f"{name}: require가 매핑이 아님"]
+    if set(cond) in ({"any"}, {"all"}):
+        children = cond[next(iter(cond))]
+        if not isinstance(children, list) or not children:
+            return [f"{name}: require any/all이 비었음"]
+        return [i for child in children for i in _lint_require(name, child)]
+    issues: list[str] = []
+    if cond.get("capability") not in CAPABILITY_KEYS:
+        issues.append(f"{name}: 알 수 없는 능력 키 {cond.get('capability')}")
+    ops = set(cond) - {"capability"}
+    if len(ops) != 1 or not ops <= REQUIRE_OPS:
+        issues.append(f"{name}: require 연산자는 {sorted(REQUIRE_OPS)} 중 하나")
+    elif "gte" in ops and (not isinstance(cond["gte"], (int, float)) or isinstance(cond["gte"], bool)):
+        issues.append(f"{name}: gte는 숫자여야 함")
+    return issues
+
+
+def _lint_rules(entries: list[dict] | None = None, research_dir=None) -> list[str]:
+    """규칙: id, when의 차원 ID, require의 능력 키, otherwise ∈ {infeasible, config}, config일 때 config_from."""
+    issues: list[str] = []
+    dims = _dimension_ids(research_dir)
+    seen: set[str] = set()
+    for i, r in enumerate(kb.rules() if entries is None else entries):
+        if not isinstance(r, dict):
+            issues.append(f"rule {i}: 항목이 매핑이 아님")
+            continue
+        rid = str(r.get("id", f"rule {i}"))
+        if not RULE_ID.match(rid):
+            issues.append(f"{rid}: 규칙 ID가 스키마 RuleId 형식이 아님")
+        if rid in seen:
+            issues.append(f"rules: 중복 ID {rid}")
+        seen.add(rid)
+        when = r.get("when")
+        if not isinstance(when, dict) or when.get("dimension") not in dims:
+            issues.append(f"{rid}: when.dimension이 dimensions.md의 차원 ID가 아님 "
+                          f"{when.get('dimension') if isinstance(when, dict) else when}")
+        elif len(set(when) - {"dimension"}) != 1 or not set(when) - {"dimension"} <= WHEN_OPS:
+            issues.append(f"{rid}: when 연산자는 {sorted(WHEN_OPS)} 중 하나")
+        elif "in" in when and (not isinstance(when["in"], list) or not when["in"]):
+            issues.append(f"{rid}: when.in은 비지 않은 목록이어야 함")
+        issues += _lint_require(rid, r.get("require"))
+        otherwise = r.get("otherwise")
+        if otherwise not in ("infeasible", "config"):
+            issues.append(f"{rid}: otherwise는 infeasible 또는 config")
+        cfg = r.get("config_from")
+        if otherwise == "config" and cfg not in CAPABILITY_KEYS:
+            issues.append(f"{rid}: otherwise가 config인데 config_from이 능력 키가 아님 {cfg}")
+        if otherwise == "infeasible" and cfg is not None:
+            issues.append(f"{rid}: otherwise가 infeasible이면 config_from은 null")
+        if not r.get("message"):
+            issues.append(f"{rid}: message 없음")
+    return issues
+
+
+
+def _lint_rule_vocabulary(entries: list[dict] | None = None, detectors: dict | None = None) -> list[str]:
+    """규칙 when의 차원은 S2가 내는 차원이고, 비교 값은 그 차원의 어휘(profile_detectors.yaml values)에 있다."""
+    issues: list[str] = []
+    dims = (kb.profile_detectors() if detectors is None else detectors).get("dimensions") or {}
+    for i, r in enumerate(kb.rules() if entries is None else entries):
+        when = r.get("when") if isinstance(r, dict) else None
+        if not isinstance(when, dict):
+            continue
+        rid = str(r.get("id", f"rule {i}"))
+        dim = when.get("dimension")
+        spec = dims.get(dim)
+        if not isinstance(spec, dict):
+            issues.append(f"{rid}: when.dimension {dim}은 profile_detectors.yaml에 정의되지 않은 차원(S2가 내지 않음)")
+            continue
+        vocab = spec.get("values") or []
+        values = [when["equals"]] if "equals" in when else list(when.get("in") or [])
+        for v in values:
+            if v not in vocab:
+                issues.append(f"{rid}: when 값 {v!r}이 {dim} 어휘 {vocab}에 없음")
+    return issues
+
+WORKLOAD_KINDS = {"web", "worker", "scheduled", "realtime", "static-frontend", "migration-job", "reverse-proxy"}
+DIM_SHAPES = {"set", "ordered", "flag", "kinds"}
+DIM_ID = re.compile(r"^[A-G][0-9]+$")
+PROFILE_SCOPES = {"handler", "request-path", "workload"}
+SCOPE_ID = re.compile(r"^w-[a-z0-9._-]+$")
+
+
+def _lint_dim_ref(name: str, entry: dict, dims: dict) -> list[str]:
+    """탐지 항목의 dimension이 정의돼 있고, kinds 차원은 kind, 나머지는 어휘 안의 value를 가진다."""
+    dim = entry.get("dimension")
+    if dim not in dims or not isinstance(dims[dim], dict):
+        return [f"{name}: 정의되지 않은 dimension {dim}"]
+    spec = dims[dim]
+    if spec.get("shape") == "kinds":
+        if entry.get("value") is not None:
+            return [f"{name}: kinds 차원 {dim}에는 value 대신 kind"]
+        if not isinstance(entry.get("kind"), str) or not entry["kind"]:
+            # external 항목은 서비스 ID를 종류로 쓴다
+            return [] if "kinds" in entry else [f"{name}: kind 없음"]
+        return []
+    if entry.get("kind") is not None:
+        return [f"{name}: {dim}은 kinds 차원이 아님(kind 불가)"]
+    if entry.get("value") not in spec.get("values", []):
+        return [f"{name}: {dim} 어휘에 없는 value {entry.get('value')!r}"]
+    return []
+
+
+def _lint_profile_detectors(cfg: dict | None = None) -> list[str]:
+    """S2 프로필 탐지 지식: 차원 정의(모양·어휘·기본값), 가정, 인벤토리 대응, 코드 탐지기(정규식·범위·값)."""
+    cfg = kb.profile_detectors() if cfg is None else cfg
+    issues: list[str] = []
+    p = "profile_detectors"
+    if not isinstance(cfg.get("app_kinds"), list) or not set(cfg["app_kinds"]) <= WORKLOAD_KINDS:
+        issues.append(f"{p}: app_kinds는 워크로드 kind 목록")
+    if not isinstance(cfg.get("app_scope"), str) or not SCOPE_ID.match(cfg["app_scope"]):
+        issues.append(f"{p}: app_scope는 w- 범위 ID")
+    if not isinstance(cfg.get("import_depth"), int) or cfg["import_depth"] < 0:
+        issues.append(f"{p}: import_depth는 0 이상 정수")
+    if not _str_list(cfg.get("source_globs")):
+        issues.append(f"{p}: source_globs 없음")
+    dims = cfg.get("dimensions")
+    if not isinstance(dims, dict) or not dims:
+        return issues + [f"{p}: dimensions 없음"]
+    for dim, spec in dims.items():
+        name = f"{p} {dim}"
+        if not DIM_ID.match(str(dim)):
+            issues.append(f"{name}: 잘못된 차원 ID")
+        if not isinstance(spec, dict) or spec.get("shape") not in DIM_SHAPES:
+            issues.append(f"{name}: shape는 {sorted(DIM_SHAPES)} 중 하나")
+            continue
+        vocab = spec.get("values")
+        if not _str_list(vocab) or len(set(vocab)) != len(vocab):
+            issues.append(f"{name}: values는 겹치지 않는 문자열 목록")
+            continue
+        if spec["shape"] in ("flag", "kinds") and vocab != ["없음", "있음"]:
+            issues.append(f"{name}: flag·kinds 차원의 values는 [없음, 있음]")
+        applies = spec.get("applies_to", [])
+        if not isinstance(applies, list) or not set(applies) <= WORKLOAD_KINDS:
+            issues.append(f"{name}: applies_to는 워크로드 kind 목록")
+        for kind, v in (spec.get("from_kind") or {}).items():
+            if kind not in WORKLOAD_KINDS or v not in vocab:
+                issues.append(f"{name}: from_kind {kind}: {v!r}")
+        default = spec.get("default")
+        if spec["shape"] == "set":
+            if default is not None:
+                issues.append(f"{name}: set 차원은 default 없음(워크로드 kind에서 정함)")
+            continue
+        if not isinstance(default, dict) or default.get("value") not in vocab:
+            issues.append(f"{name}: default.value가 어휘에 없음")
+        elif default.get("source") not in ("detector", "assumption"):
+            issues.append(f"{name}: default.source는 detector 또는 assumption")
+        elif default["source"] == "assumption" and not default.get("reason"):
+            issues.append(f"{name}: 가정 기본값에는 reason 필요")
+    seen_keys: set[str] = set()
+    for i, a in enumerate(cfg.get("assumptions") or []):
+        key = a.get("key") if isinstance(a, dict) else None
+        if not isinstance(key, str) or not DIM_ID.match(key):
+            issues.append(f"{p} assumption {i}: key는 차원 ID")
+            continue
+        if key in seen_keys or key in dims:
+            issues.append(f"{p} assumption {key}: 중복(차원 정의나 다른 가정과 겹침)")
+        seen_keys.add(key)
+        if not a.get("value") or not a.get("reason"):
+            issues.append(f"{p} assumption {key}: value와 reason 필요")
+    for i, c in enumerate(cfg.get("components") or []):
+        name = f"{p} component {i}"
+        if not isinstance(c.get("component"), str) or ":" not in c["component"]:
+            issues.append(f"{name}: component 패턴 없음")
+        elif not any(fnmatchcase(cid, c["component"]) for cid in kb.catalog()):
+            issues.append(f"{name}: 카탈로그에 맞는 구성 요소가 없음 {c['component']}")
+        if c.get("role") is not None and c["role"] not in ROLES:
+            issues.append(f"{name}: 잘못된 role {c['role']}")
+        issues += _lint_dim_ref(name, c, dims)
+    for i, u in enumerate(cfg.get("unmapped") or []):
+        name = f"{p} unmapped {i}"
+        if not u.get("label"):
+            issues.append(f"{name}: label 없음")
+        issues += _lint_dim_ref(name, u, dims)
+    for i, e in enumerate(cfg.get("endpoints") or []):
+        name = f"{p} endpoint {i}"
+        if not isinstance(e.get("method"), str) or not e["method"]:
+            issues.append(f"{name}: method 없음")
+        issues += _lint_dim_ref(name, e, dims)
+    for i, x in enumerate(cfg.get("external") or []):
+        name = f"{p} external {i}"
+        if not _str_list(x.get("kinds")) or not set(x["kinds"]) <= EXTERNAL_KINDS:
+            issues.append(f"{name}: kinds는 외부 서비스 kind 목록")
+        if dims.get(x.get("dimension"), {}).get("shape") != "kinds":
+            issues.append(f"{name}: dimension은 kinds 차원이어야 함(종류 = 외부 서비스 ID)")
+    seen_ids: set[str] = set()
+    for i, d in enumerate(cfg.get("code") or []):
+        did = str(d.get("id", f"code {i}"))
+        name = f"{p} {did}"
+        if did in seen_ids:
+            issues.append(f"{p}: 중복 ID {did}")
+        seen_ids.add(did)
+        if d.get("scope") not in PROFILE_SCOPES:
+            issues.append(f"{name}: scope는 {sorted(PROFILE_SCOPES)} 중 하나")
+        if not _str_list(d.get("glob")):
+            issues.append(f"{name}: glob 목록 없음")
+        issue = _regex_issue(name, d.get("regex"))
+        if issue:
+            issues.append(issue)
+        if d.get("unless") is not None:
+            issue = _regex_issue(f"{name} unless", d["unless"])
+            if issue:
+                issues.append(issue)
+        issues += _lint_dim_ref(name, d, dims)
+    return issues
+
+
 def lint() -> list[str]:
     return (_lint_catalog() + _lint_signatures() + _lint_unmapped_signatures() + _lint_defaults() + _lint_images()
-            + _lint_implicit_routes() + _lint_external() + _lint_deploy())
+            + _lint_implicit_routes() + _lint_external() + _lint_deploy() + _lint_capabilities() + _lint_rules()
+            + _lint_rule_vocabulary() + _lint_profile_detectors())

@@ -917,7 +917,11 @@
       "type": "object",
       "properties": {
         "monthly_baseline_usd": {
-          "type": "number"
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "월 최소 비용 합. 배정된 구성 요소 중 하나라도 비용을 모르면 null(0이나 부분합을 쓰지 않는다)."
         },
         "peak_hourly_usd": {
           "type": "number"
@@ -950,6 +954,13 @@
               "monthly_usd"
             ]
           }
+        },
+        "unknown_cost_components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ComponentId"
+          },
+          "description": "비용(COST.monthly_floor_usd)을 모르는 구성 요소. 비어 있지 않으면 monthly_baseline_usd 는 null."
         },
         "price_snapshot": {
           "type": "string",

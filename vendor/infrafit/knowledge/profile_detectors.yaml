@@ -1,0 +1,214 @@
+# S2 프로필 탐지 지식(설계 §7, 계획 2 작업 2). 결정적 탐지기만: LLM 없음.
+# 값 어휘는 docs/research/dimensions.md의 표를 그대로 쓴다.
+
+# 앱 워크로드(차원을 정하는 범위). static-frontend·migration-job·reverse-proxy는 앱 요구를 정하지 않는다.
+app_kinds: [web, worker, scheduled, realtime]
+# 앱 워크로드 집계 범위 ID(워크로드 ID와 겹치면 뒤에 `.all`을 붙인다)
+app_scope: w-app
+# 요청 경로 탐지(scope: request-path)가 핸들러 파일에서 따라가는 로컬 import 깊이
+import_depth: 2
+# 워크로드 코드로 보는 파일
+source_globs: ["**/*.py", "**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx", "**/*.jsx",
+               "**/*.java", "**/*.kt"]
+
+# 차원 정의. shape: set(값 목록, 합집합) | ordered(values 순서의 최댓값) | flag(없음/있음) |
+# kinds({value: 없음|있음, kinds: [...]}, 종류 합집합). applies_to: 이 워크로드 종류에만 값을 낸다.
+# default: 탐지 근거가 없을 때. source: assumption이면 assumptions[]에 reason과 함께 기록한다.
+dimensions:
+  A1:
+    shape: set
+    values: ["웹", "워커", "정기 작업", "실시간 연결"]
+    from_kind: {web: "웹", worker: "워커", scheduled: "정기 작업", realtime: "실시간 연결"}
+  A2:
+    shape: ordered
+    values: ["1초 미만", "수십 초", "수 분", "그 이상"]
+    applies_to: [web, realtime]
+    default:
+      value: "1초 미만"
+      source: assumption
+      reason: "요청 경로(핸들러와 그 로컬 import)에서 LLM 호출·무거운 동기 작업 시그니처를 찾지 못했다. 처리 시간은 코드로 잴 수 없어 짧은 요청으로 가정한다"
+  A3:
+    shape: ordered
+    values: ["짧은 HTTP", "스트리밍(SSE)", "장시간 양방향(웹소켓)"]
+    applies_to: [web, realtime]
+    default: {value: "짧은 HTTP", source: detector}
+  A4:
+    shape: flag
+    values: ["없음", "있음"]
+    default: {value: "없음", source: detector}
+  B1:
+    shape: kinds
+    values: ["없음", "있음"]
+    default: {value: "없음", source: detector}
+  B2:
+    shape: kinds
+    values: ["없음", "있음"]
+    default: {value: "없음", source: detector}
+  B3:
+    shape: flag
+    values: ["없음", "있음"]
+    default: {value: "없음", source: detector}
+  E2:
+    shape: kinds
+    values: ["없음", "있음"]
+    default: {value: "없음", source: detector}
+
+# 코드로 알 수 없는 값: 앱 집계 범위에 가정으로 둔다(origin: domain-default)
+assumptions:
+  - key: D2
+    value: "낮음"
+    reason: "평시 동시 접속은 코드에 없다. 사용자 집단·트래픽 자료가 없어 소규모(낮음)로 가정한다"
+  - key: G3
+    value: "높음"
+    reason: "예산 민감도는 코드에 없다. 고정비가 큰 구성을 피하도록 예산 민감(높음)으로 가정한다"
+
+# 인벤토리 범위의 구성 요소 → 차원(component는 fnmatch 패턴, role이 있으면 그 역할의 범위만)
+components:
+  - {component: "ca:local/process-memory/*", role: session, dimension: B1, kind: in-memory-session}
+  - {component: "ca:local/process-memory/*", role: cache, dimension: B1, kind: in-memory-cache}
+  - {component: "rt:lib/socketio/no-adapter", dimension: B1, kind: websocket-rooms}
+  - {component: "rt:lib/socketio/*", dimension: A3, value: "장시간 양방향(웹소켓)"}
+  - {component: "ds:local/sqlite/*", dimension: B2, kind: sqlite}
+  - {component: "fs:local/container-disk/*", dimension: B2, kind: local-files}
+  - {component: "sc:local/in-process/*", dimension: B3, value: "있음"}
+
+# 인벤토리 unmapped label → 차원(근거 파일의 워크로드에 붙인다)
+unmapped:
+  - {label: spring-stomp-simple-broker, dimension: B1, kind: websocket-broker}
+
+# 엔드포인트 method → 차원
+endpoints:
+  - {method: WEBSOCKET, dimension: A3, value: "장시간 양방향(웹소켓)"}
+  - {method: WEBSOCKET, dimension: A1, value: "실시간 연결"}
+
+# 외부 서비스 kind → 차원(종류 목록에는 외부 서비스 ID를 쓴다)
+external:
+  - {kinds: [llm-api, payments, messaging], dimension: E2}
+
+# 코드 탐지기. scope: handler(엔드포인트 핸들러 파일) | request-path(핸들러 + 로컬 import, import_depth까지) |
+# workload(워크로드에 속한 코드 파일 전부). value(ordered·flag) 또는 kind(kinds) 하나.
+# unless: 같은 파일에 이 정규식이 있으면 그 파일의 일치는 버린다. 테스트·보조 경로는 보지 않는다.
+code:
+  # A2: 요청 경로의 LLM 호출
+  - id: PD-A2-LLM-PY
+    dimension: A2
+    value: "수십 초"
+    scope: request-path
+    glob: ["**/*.py"]
+    regex: '^\s*(?:import\s+(?:openai|anthropic|google\.generativeai)\b|from\s+(?:openai|anthropic|google\.genai|google\.generativeai|langchain_openai|langchain_anthropic)\b|from\s+google\s+import\s+(?:genai|generativeai)\b)|\.(?:chat\.completions|messages|responses)\.create\(|\.generate_content(?:_stream)?\('
+  - id: PD-A2-LLM-JS
+    dimension: A2
+    value: "수십 초"
+    scope: request-path
+    glob: ["**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx", "**/*.jsx"]
+    regex: '(?:from\s+|require\(\s*)["''](?:openai|@anthropic-ai/sdk|@google/genai|@google/generative-ai|@ai-sdk/[\w-]+)["'']'
+  - id: PD-A2-LLM-JVM
+    dimension: A2
+    value: "수십 초"
+    scope: request-path
+    glob: ["**/*.java", "**/*.kt"]
+    regex: '^\s*import\s+(?:com\.openai|com\.anthropic|com\.google\.genai|org\.springframework\.ai)\.'
+  - id: PD-A2-LLM-URL
+    dimension: A2
+    value: "수십 초"
+    scope: request-path
+    glob: ["**/*.py", "**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx", "**/*.jsx", "**/*.java", "**/*.kt"]
+    regex: 'api\.openai\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com'
+  # A2: 요청 경로의 무거운 동기 작업(엑셀·PDF 생성, 브라우저 구동, 영상 변환)
+  - id: PD-A2-LONG-JS
+    dimension: A2
+    value: "수십 초"
+    scope: request-path
+    glob: ["**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx", "**/*.jsx"]
+    regex: 'new\s+ExcelJS\.Workbook\(|\bXLSX\.write(?:File)?\(|\bpuppeteer\.launch\(|\bchromium\.launch\(|new\s+PDFDocument\(|\bffmpeg\('
+  - id: PD-A2-LONG-PY
+    dimension: A2
+    value: "수십 초"
+    scope: request-path
+    glob: ["**/*.py"]
+    regex: '\bopenpyxl\.Workbook\(|\bxlsxwriter\.Workbook\(|\.to_excel\(|\.write_pdf\(|\bpdfkit\.from_(?:url|string|file)\(|\b(?:sync|async)_playwright\(|\bffmpeg\.'
+  - id: PD-A2-LONG-JVM
+    dimension: A2
+    value: "수십 초"
+    scope: request-path
+    glob: ["**/*.java", "**/*.kt"]
+    regex: '\b(?:XSSFWorkbook|SXSSFWorkbook|HSSFWorkbook)\('
+  # A3: SSE 응답
+  - id: PD-A3-SSE
+    dimension: A3
+    value: "스트리밍(SSE)"
+    scope: request-path
+    glob: ["**/*.py", "**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx", "**/*.jsx", "**/*.java", "**/*.kt"]
+    regex: 'text/event-stream|\bEventSourceResponse\(|\bSseEmitter\b|\bServerSentEvent\b|TEXT_EVENT_STREAM'
+  # A4: 응답 후 작업
+  - id: PD-A4-FASTAPI-BG
+    dimension: A4
+    value: "있음"
+    scope: workload
+    glob: ["**/*.py"]
+    regex: '\bBackgroundTasks\b|\bbackground_tasks\.add_task\('
+  - id: PD-A4-PY-TASK
+    dimension: A4
+    value: "있음"
+    scope: workload
+    glob: ["**/*.py"]
+    regex: '\basyncio\.(?:create_task|ensure_future)\(|\bloop\.create_task\(|\bthreading\.Thread\(|^\s*from\s+threading\s+import\s+.*\bThread\b'
+  - id: PD-A4-SPRING-ASYNC
+    dimension: A4
+    value: "있음"
+    scope: workload
+    glob: ["**/*.java", "**/*.kt"]
+    regex: '^\s*@Async\b|\bCompletableFuture\.runAsync\('
+  # Node: 응답 전에 await하지 않는 Promise(문장 첫머리 호출), 응답 뒤 실행 API
+  - id: PD-A4-NODE-UNAWAITED
+    dimension: A4
+    value: "있음"
+    scope: handler
+    glob: ["**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx", "**/*.jsx"]
+    regex: '^\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.sendMail\(|^\s*void\s+[A-Za-z_$][\w$.]*\(|^\s*(?!await\b|return\b)[A-Za-z_$][\w$.]*\(.*\)\.(?:then|catch)\(|\bsetImmediate\(|\bwaitUntil\(|import\s*\{[^}]*\bafter\b[^}]*\}\s*from\s*["'']next/server["'']'
+  # B1: 프로세스 메모리 상태
+  - id: PD-B1-RATELIMIT-EXPRESS
+    dimension: B1
+    kind: in-memory-rate-limit
+    scope: workload
+    glob: ["**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts"]
+    regex: '\brateLimit\(\s*\{'
+    unless: '\bstore\s*:'
+  - id: PD-B1-RATELIMIT-SLOWAPI
+    dimension: B1
+    kind: in-memory-rate-limit
+    scope: workload
+    glob: ["**/*.py"]
+    regex: '\bLimiter\(\s*key_func'
+    unless: '\bstorage_uri\s*='
+  - id: PD-B1-MEMORYSTORE
+    dimension: B1
+    kind: in-memory-session
+    scope: workload
+    glob: ["**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts"]
+    regex: 'new\s+(?:session\.)?MemoryStore\('
+  - id: PD-B1-MEMCACHE
+    dimension: B1
+    kind: in-memory-cache
+    scope: workload
+    glob: ["**/*.py", "**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts"]
+    regex: '\bTTLCache\(|new\s+NodeCache\(|new\s+LRUCache\('
+  # B3: 앱 프로세스 안의 스케줄러
+  - id: PD-B3-SPRING-SCHEDULED
+    dimension: B3
+    value: "있음"
+    scope: workload
+    glob: ["**/*.java", "**/*.kt"]
+    regex: '^\s*@Scheduled\b'
+  - id: PD-B3-PY-SCHEDULER
+    dimension: B3
+    value: "있음"
+    scope: workload
+    glob: ["**/*.py"]
+    regex: '\b(?:BackgroundScheduler|AsyncIOScheduler|BlockingScheduler)\(|\bschedule\.every\('
+  - id: PD-B3-NODE-CRON
+    dimension: B3
+    value: "있음"
+    scope: workload
+    glob: ["**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts"]
+    regex: '\bcron\.schedule\(|new\s+CronJob\(|\bschedule\.scheduleJob\(|^\s*@Cron\('
