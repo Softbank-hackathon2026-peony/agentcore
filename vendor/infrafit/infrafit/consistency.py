@@ -108,9 +108,46 @@ def check_s1(inventory: dict, repo_root: Path | None) -> list[str]:
         for h in p["hops"]:
             if h["component"] not in SPECIAL_COMPONENTS and h["component"] not in catalog:
                 issues.append(f"request path {p['id']}: not in catalog {h['component']}")
+    issues += _check_deploy_units(inventory.get("deploy_units"), workloads,
+                                  {d["id"] for d in inventory["datastores"]})
     if repo_root is not None:
         issues += _check_evidence_files(inventory, repo_root)
     return sorted(set(issues))
+
+
+def _check_deploy_units(units: dict | None, workloads: set[str], datastores: set[str]) -> list[str]:
+    """deploy_units 참조 무결성: 이미지·워크로드·저장소 범위·depends_on·entry가 가리키는 것이 있어야 한다."""
+    if not units:
+        return []
+    issues: list[str] = []
+    image_ids = [i["id"] for i in units["images"]]
+    names = [c["id"] for c in units["containers"]] + [d["id"] for d in units["datastores"]]
+    for dup in sorted({i for i in image_ids if image_ids.count(i) > 1}):
+        issues.append(f"deploy_units: duplicate image id {dup}")
+    for dup in sorted({n for n in names if names.count(n) > 1}):
+        issues.append(f"deploy_units: duplicate container id {dup}")
+    for c in units["containers"]:
+        if "image" in c and c["image"] not in image_ids:
+            issues.append(f"deploy_units container {c['id']}: unknown image {c['image']}")
+        if "image" in c and "registry_image" in c:
+            issues.append(f"deploy_units container {c['id']}: both image and registry_image")
+        if "workload" in c and c["workload"] not in workloads:
+            issues.append(f"deploy_units container {c['id']}: unknown workload {c['workload']}")
+        for dep in c["depends_on"]:
+            if dep not in names:
+                issues.append(f"deploy_units container {c['id']}: unknown depends_on {dep}")
+        for key in c["env"]:
+            if key not in c["env_names"]:
+                issues.append(f"deploy_units container {c['id']}: env {key} not in env_names")
+    for d in units["datastores"]:
+        if "datastore" in d and d["datastore"] not in datastores:
+            issues.append(f"deploy_units datastore {d['id']}: unknown datastore {d['datastore']}")
+        if "build_image" in d and d["build_image"] not in image_ids:
+            issues.append(f"deploy_units datastore {d['id']}: unknown image {d['build_image']}")
+    entry = units.get("entry")
+    if entry and entry["container"] not in [c["id"] for c in units["containers"]]:
+        issues.append(f"deploy_units entry: unknown container {entry['container']}")
+    return issues
 
 
 def _vocab_issue(spec: dict, value) -> bool:

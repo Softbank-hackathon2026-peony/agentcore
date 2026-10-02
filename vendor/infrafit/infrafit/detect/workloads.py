@@ -202,6 +202,14 @@ def _from_k8s(snap: Snapshot, artifacts: list[ParsedArtifact]) -> list[WorkloadI
     return list(seen.values())
 
 
+def compose_kind(name: str, cmd: str, cls: dict | None) -> str:
+    """compose 앱 서비스의 워크로드 종류: 리버스 프록시 이미지면 reverse-proxy, 이름·명령에 `migrat`가 있으면
+    migration-job, 워커 규칙(is_worker)에 맞으면 worker, 아니면 web."""
+    if cls:
+        return "reverse-proxy"
+    return "migration-job" if "migrat" in f"{name} {cmd}".lower() else "worker" if is_worker(name, cmd) else "web"
+
+
 def _from_compose(snap: Snapshot, artifacts: list[ParsedArtifact]) -> list[WorkloadInfo]:
     out: list[WorkloadInfo] = []
     for art, name, svc in compose_services(artifacts):
@@ -211,11 +219,7 @@ def _from_compose(snap: Snapshot, artifacts: list[ParsedArtifact]) -> list[Workl
             continue
         build = compose_build(art.path, svc)
         cmd = compose_command(art.path, svc, artifacts)
-        text = f"{name} {cmd}".lower()
-        if cls:
-            wkind = "reverse-proxy"
-        else:
-            wkind = "migration-job" if "migrat" in text else "worker" if is_worker(name, cmd) else "web"
+        wkind = compose_kind(name, cmd, cls)
         out.append(WorkloadInfo(
             id=f"w-{slug(name)}", kind=wkind, name=name,
             entrypoint=evidence(snap, art.path, service_line(snap, art.path, name)),
@@ -321,7 +325,7 @@ def _app_dockerfiles(workloads: list[WorkloadInfo], artifacts: list[ParsedArtifa
             and (base_class(df) or {}).get("role") != "reverse-proxy"]
 
 
-def _dockerfile_workload_name(path: str) -> str:
+def dockerfile_workload_name(path: str) -> str:
     """`<x>.Dockerfile`·`Dockerfile.<x>`이면 x, 아니면 Dockerfile 디렉터리 이름(저장소 루트는 root)."""
     name = PurePosixPath(path).name
     if name.endswith(".Dockerfile") and len(name) > len(".Dockerfile"):
@@ -361,7 +365,7 @@ def _repo_has(snap: Snapshot, path: str) -> bool:
     return snap.exists(p) or any(f.startswith(p + "/") for f in snap.files)
 
 
-def _recovered_context(snap: Snapshot, df: ParsedArtifact) -> str:
+def recovered_context(snap: Snapshot, df: ParsedArtifact) -> str:
     """Dockerfile만으로 찾은 워크로드의 빌드 컨텍스트: COPY·ADD 원본이 모두 저장소 루트 기준으로는 있고
     Dockerfile 디렉터리 기준으로는 없으면 저장소 루트(""), 아니면 Dockerfile 디렉터리."""
     d = parent_dir(df.path)
@@ -376,11 +380,11 @@ def _from_dockerfiles(snap: Snapshot, workloads: list[WorkloadInfo],
                       artifacts: list[ParsedArtifact]) -> list[WorkloadInfo]:
     """앱 워크로드를 못 찾았을 때: 연결되지 않은 앱 Dockerfile마다 후보 워크로드 하나.
     code_root는 빌드 컨텍스트 후보 규칙(1b F3)처럼 Dockerfile 디렉터리로 두되, COPY·ADD 원본으로 보아 저장소
-    루트가 컨텍스트이면 루트로 둔다(_recovered_context)."""
+    루트가 컨텍스트이면 루트로 둔다(recovered_context)."""
     ids = {w.id for w in workloads}
     out: list[WorkloadInfo] = []
     for df in _app_dockerfiles(workloads, artifacts):
-        name = _dockerfile_workload_name(df.path)
+        name = dockerfile_workload_name(df.path)
         command = _image_command(df.path, artifacts)
         wid = f"w-{slug(name)}"
         if wid in ids:
@@ -391,7 +395,7 @@ def _from_dockerfiles(snap: Snapshot, workloads: list[WorkloadInfo],
         fact = next((f for key in ("cmd", "entrypoint") for f in df.settings if f["key"] == key), None)
         entry = (fact or {}).get("evidence") or evidence(snap, df.path)
         d = parent_dir(df.path)
-        context = _recovered_context(snap, df)
+        context = recovered_context(snap, df)
         out.append(WorkloadInfo(id=wid, kind="worker" if is_worker(name, command) else "web", name=name,
                                 entrypoint=entry, status="candidate", source="dockerfile", app_dir=d,
                                 command=command, code_root=context, dockerfile=df.path,

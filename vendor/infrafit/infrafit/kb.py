@@ -59,6 +59,13 @@ def images() -> tuple[dict, ...]:
 
 
 @lru_cache(maxsize=1)
+def secrets() -> dict:
+    """비밀값 판정 규칙(knowledge/secrets.yaml): {key: [정규식], value: [정규식]}."""
+    data = _load("secrets.yaml")
+    return {"key": tuple(data.get("key") or ()), "value": tuple(data.get("value") or ())}
+
+
+@lru_cache(maxsize=1)
 def implicit_routes() -> tuple[dict, ...]:
     return tuple(_load("implicit_routes.yaml").get("implicit_routes") or ())
 

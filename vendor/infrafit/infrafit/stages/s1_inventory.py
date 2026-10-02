@@ -7,6 +7,7 @@ from infrafit.detect.artifacts import kustomize_identity, parse_artifacts
 from infrafit.detect.components import find_unmapped, image_unmapped, map_components
 from infrafit.detect.defaults import apply_defaults
 from infrafit.detect.deploy import detect_deploy_targets
+from infrafit.detect.deploy_units import detect_deploy_units
 from infrafit.detect.environments import detect_environments
 from infrafit.detect.endpoints import extract_endpoints
 from infrafit.detect.external import find_external_services
@@ -50,6 +51,8 @@ def run_s1(ctx: RunContext, snap: Snapshot) -> dict:
         "request_paths": build_paths(snap, workloads, artifacts, compute, environments, (servers, routes)),
         "environments": [e.to_dict(snap) for e in sorted(environments + deploy_envs, key=lambda e: e.name)],
         "existing_artifacts": [a.to_dict() for a in artifacts],
+        # 같이 떠야 하는 컨테이너 묶음(다중 컨테이너 계약 §1): agentcore·빌드·Terraform이 이 형식을 읽는다
+        "deploy_units": detect_deploy_units(snap, artifacts, workloads, datastores),
         "unmapped": (find_unmapped(snap, manifests) + image_unmapped(services) + deploy_unmapped
                      + unmapped_signature_labels(snap, manifests, kb.unmapped_signatures())),
     }

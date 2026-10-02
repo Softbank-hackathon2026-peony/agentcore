@@ -12,7 +12,7 @@ ROLES = {"primary-db", "cache", "session", "queue", "scheduler", "realtime", "fi
 STATUSES = {"confirmed", "candidate"}
 ARTIFACTS = {"dockerfile", "k8s", "terraform", "hop"}
 IMAGE_ROLES = {"reverse-proxy", "datastore", "cache", "queue", "infra", "dev-tool"}
-IMAGE_KEYS = {"match", "role", "component", "hosting_hint"}
+IMAGE_KEYS = {"match", "role", "component", "hosting_hint", "port"}
 # 이미지 role → component가 가져야 하는 family(infra·dev-tool은 정하지 않는다)
 IMAGE_ROLE_FAMILIES = {"datastore": "ds", "cache": "ca", "queue": "qu", "reverse-proxy": "nw"}
 
@@ -148,9 +148,28 @@ def _lint_images(entries: list[dict] | None = None) -> list[str]:
         for key in ("component", "hosting_hint"):
             if key in e and e[key] not in catalog:
                 issues.append(f"{name}: {key}가 catalog에 없음 {e[key]}")
+        if "port" in e and (not isinstance(e["port"], int) or isinstance(e["port"], bool)
+                            or not 0 < e["port"] < 65536):
+            issues.append(f"{name}: port는 1~65535 정수여야 함 {e['port']!r}")
         family = IMAGE_ROLE_FAMILIES.get(e.get("role"))
         if family and isinstance(e.get("component"), str) and e["component"].split(":")[0] != family:
             issues.append(f"{name}: role {e['role']}의 component family는 {family}여야 함 {e['component']}")
+    return issues
+
+
+def _lint_secrets(data: dict | None = None) -> list[str]:
+    issues: list[str] = []
+    data = kb.secrets() if data is None else data
+    for part in ("key", "value"):
+        patterns = data.get(part)
+        if not patterns:
+            issues.append(f"secrets: {part} 정규식 목록이 비었음")
+            continue
+        for rx in patterns:
+            try:
+                re.compile(rx)
+            except (re.error, TypeError) as e:
+                issues.append(f"secrets: {part} 정규식 오류 {rx!r}: {e}")
     return issues
 
 
@@ -670,5 +689,6 @@ def _lint_profile_detectors(cfg: dict | None = None) -> list[str]:
 
 def lint() -> list[str]:
     return (_lint_catalog() + _lint_signatures() + _lint_unmapped_signatures() + _lint_defaults() + _lint_images()
+            + _lint_secrets()
             + _lint_implicit_routes() + _lint_external() + _lint_deploy() + _lint_capabilities() + _lint_rules()
             + _lint_rule_vocabulary() + _lint_profile_detectors())
