@@ -108,16 +108,18 @@ AI가 만드는 것은 **Worker의 `modules/<아키텍처>/` 자리에 들어갈
 결과는 exported variables `ECR_IMAGE_URI`, `GCP_IMAGE_URI`(@sha256 digest 고정).
 이미지는 Lambda Web Adapter 포함 · `linux/amd64` · `$PORT` 로 받으므로 EC2·Lambda·Cloud Run 공용입니다.
 
-## InfraFit 인벤토리 연동
+## InfraFit 인벤토리·추천 연동
 
-`analyze` 스캔 단계에서 [InfraFit](vendor/infrafit/SOURCE) S0+S1(규칙 기반, LLM 없음)을 함께 돌려 `scan.inventory` 로 넘깁니다.
-LLM 프롬프트에는 이것을 워크로드 수·리버스 프록시·엔드포인트·데이터 저장소·외부 서비스·기존 배포 환경의 우선 근거로 쓰라고 적었습니다.
+`analyze` 스캔 단계에서 [InfraFit](vendor/infrafit/SOURCE) S0~S4(S1 인벤토리, S2 프로필, S3 적합성, S4 추천; 규칙 기반, LLM 없음)를 함께 돌려 `scan.inventory` 로 넘깁니다.
+LLM 프롬프트에는 target 을 `recommendation` 1순위 대상으로 따르고(다르면 이유를 warnings 에), 탈락 이유를 candidates 의 why 에 반영하고, candidate(확정 아님) 사실은 단정하지 말고, required_secrets 는 `external_services.secrets` 와 `env_names` 를 모두 보고 정하라고 적었습니다. `analyze` 검사 로직은 그대로입니다.
 
-- 내용 (`status: ok` 일 때 `summary`, 8KB 이하): `workloads`, `endpoints`(총 개수·워크로드별 개수·앞 25개 `METHOD route @file:line`·노출), `datastores`, `external_services`, `environments`, `compute`(현재 컴퓨트 컴포넌트), `request_paths`(홉 + 명시된 timeout/body 설정), `unmapped`. 넘치면 긴 목록부터 줄이고 `truncated` 에 표시. 모든 file:line 은 inventory.json 근거 그대로.
-- 경고: 앱 워크로드 2개 이상, 리버스 프록시, 비밀값이 필요한 외부 서비스 → `warnings` 에 `InfraFit:` 로 추가. `supported`·추천 대상 판단은 바꾸지 않음.
+- 내용 (`status: ok` 일 때 `summary`, 전체 10KB 이하): `workloads`, `endpoints`(총 개수·워크로드별 개수·앞 25개 `METHOD route @file:line`·노출), `datastores`, `external_services`, `environments`, `compute`(현재 컴퓨트 컴포넌트), `request_paths`(홉 + 명시된 timeout/body 설정), `unmapped`. 넘치면 긴 목록부터 줄이고 `truncated` 에 표시. 모든 file:line 은 inventory.json 근거 그대로.
+- `summary.recommendation` (4KB 이하, recommendation.json + fit.json + profile.json): `recommended`·`top`(상위 5개) — 각 `target`(capabilities.yaml 의 컴퓨트 구성 요소 `target` = 배포 대상 id), `deployable`, `assignment`(범위별 구성 요소 id), `monthly_baseline_usd`(모르는 비용이 있으면 null), `unknown_count`; `rejected` — 탈락 컴퓨트별 이유 최대 3개(`rule`, `dimension`·`dimension_value`, `capability`·`capability_value`, `source.url`·짧은 `quote`); `app_scope` 와 `dimensions`(A1~A4, B1~B3, E2 값·근거 file:line, 가정이면 `assumed: true` + `why`); 후보가 없으면 `no_feasible: true`.
+- S1 은 됐는데 S2~S4 가 실패·시간 초과하면 S1 요약만 두고 `stage_error: {stage, message}` 를 붙입니다(`status` 는 `ok`).
+- 경고: 앱 워크로드 2개 이상, 리버스 프록시, 비밀값이 필요한 외부 서비스, 추천 대상과 주요 탈락 이유(또는 추천 단계 실패) → `warnings` 에 `InfraFit:` 로 추가. 코드가 `supported`·추천 대상을 직접 바꾸지는 않음.
 - 실행: 소스를 임시 폴더에 풀고(비밀 파일 제외, `.env.example` 류는 값 지우고 이름만) 별도 프로세스로 실행. 시간 제한 `PAWPLOY_INVENTORY_TIMEOUT`(기본 60초, 0이면 끔). 실패·시간 초과여도 analyze 는 계속되고 `inventory` 는 `{"status": "error"|"timeout", "message": ...}`. `fix_build` 는 인벤토리를 돌리지 않음(`skipped`).
 - 소스: `vendor/infrafit/` 에 복사본(vendoring). 갱신은 `python scripts/sync_infrafit.py <InfraFit 저장소 경로>` (커밋·날짜는 `vendor/infrafit/SOURCE`). 의존성 `crossplane`, `python-hcl2`(+`lark`, `regex`) 추가, `jsonschema`·`pyyaml` 은 기존에 이미 포함. kustomize 바이너리는 없어도 됨(overlay 는 미해석으로 기록).
-- 크기·시간: 배포 zip 약 +0.6MB (vendor 0.13MB + 새 의존성 약 0.5MB, 압축 기준). 실제 저장소에서 인벤토리 0.2~0.4초.
+- 크기·시간: 배포 zip 약 +0.6MB (vendor 0.13MB + 새 의존성 약 0.5MB, 압축 기준). 실제 저장소에서 S0~S4 0.2~1.5초, 요약 3~10KB.
 
 ## 평가 (analyze)
 

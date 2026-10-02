@@ -104,9 +104,12 @@ class StrandsBrain:
         scan_view = {k: v for k, v in scan.items() if k != "tree"}
         prompt = (
             "아래는 코드로 스캔한 프로젝트 요약이다. 필요한 파일을 도구로 직접 읽고 배포 대상을 추천하라.\n\n"
-            "스캔 결과의 `inventory`(status=ok일 때)는 규칙 기반 정밀 분석(InfraFit S1)이고 근거가 실제 file:line 이다. "
-            "워크로드 수, 리버스 프록시, 엔드포인트, 데이터 저장소, 외부 서비스, 기존 배포 환경은 inventory 를 우선 믿어라. "
-            "clues 에 inventory 의 근거(file:line)를 그대로 써도 된다.\n\n"
+            "스캔 결과의 `inventory`(status=ok일 때)는 규칙 기반 정밀 분석(InfraFit S1~S4)이며 근거가 실제 file:line 이고, "
+            "추천(`inventory.summary.recommendation`)은 공식 출처가 붙은 능력 값과 명시 규칙으로 판정한 것이다. "
+            "target 은 inventory.recommendation 의 1순위 대상(recommended.target)을 따르고, 다르게 고르면 그 이유를 warnings 에 써라. "
+            "탈락 이유(rejected)는 candidates 의 why 에 반영하라. "
+            "candidate(확정 아님) 사실은 단정하지 말라. "
+            "required_secrets 는 inventory 의 external_services.secrets 와 스캔의 env_names 를 모두 보고 정하라.\n\n"
             f"## 스캔 결과\n{json.dumps(scan_view, ensure_ascii=False, indent=1)}\n\n"
             f"## 파일 트리\n" + "\n".join(scan["tree"])
         )
