@@ -78,8 +78,11 @@ result = json.loads(resp["response"].read())
 AI가 만드는 것은 **Worker의 `modules/<아키텍처>/` 자리에 들어갈 모듈 하나**입니다. Worker 루트 `main.tf`(provider·필수 태그·backend·만료 예약)는 그대로 두고, 미리 만든 모듈 대신 이 모듈을 복사해서 `module "app"`으로 부르면 됩니다.
 
 - 입력 변수는 정확히 6개: `name`, `image_uri`, `container_port`, `size`, `env`, `health_path` / 출력은 `endpoint`, `health_url`, `resource_id` (지금 모듈과 동일)
-- 금지: `provider`(자동 제거), `backend`, provisioner(`local-exec`/`remote-exec`), 다른 `module`, `file()`·외부 경로 읽기, 허용 밖 리소스·data 소스, Worker가 안 넘기는 변수
-- 허용 리소스는 Worker `tfworker/policy.py`와 동일 + `cloud_run`: `google_cloud_run_v2_service`, `google_cloud_run_v2_service_iam_member` (**Worker 정책에 추가 필요**)
+- 규칙은 Worker README "AgentCore 가 만들 Terraform 모듈" 약속과 같음. Worker `tfworker/iac.py` 검사를 `agent/terraform.py::_check_worker_iac` 에 그대로 옮겼고(주석까지 검사), 여기에 더 엄격한 검사를 더함
+- 금지: `provider`(자동 제거)·`backend`·`cloud`·`module` 블록, `default_tags`·`default_labels`, provisioner(`local-exec`/`remote-exec`), `inline_policy`·`managed_policy_arns`, `access_token`, 같은 모듈 `.tftpl` 외 파일 읽기, 허용 밖 리소스·data 소스·IAM 정책, Worker가 안 넘기는 변수
+- 필수: `aws_ssm_parameter` 는 `/aws/service/...` 만, EC2 `cpu_credits = "standard"`, Cloud Run `deletion_protection = false`·최대 인스턴스 1·메모리 2Gi 이하
+- 허용 리소스·data 소스·IAM 정책은 Worker `policy.py`·`iac.py` 와 동일 (`cloud_run` 은 앱 전용 `google_service_account` 포함). 견본 `agent/tf_reference/` 는 Worker `modules/` 복사본
+- Worker 와 어긋났는지 확인: `WORKER_REPO=<Terraform-worker 경로> python -m pytest tests/test_terraform_contract.py` (Worker 상수·모듈과 직접 비교)
 - 검사에 걸리면 같은 호출 안에서 위반 내용을 모델에 돌려 최대 2번 다시 생성
 - 저장: `projects/<project_id>/deploy/<deploy_id>/attempt-N/` (`main.tf`, 필요하면 `user_data.sh.tftpl`)
 
@@ -163,4 +166,4 @@ AWS_PROFILE=peony .venv/Scripts/python -m agent.app   # 로컬 서버 → POST h
 - [x] `prices.json` 단가 (AWS Price List API, GCP 공식 가격표, 2026-10-02 확인, 정가·무료 티어 미반영)
 - [ ] 실제 CodeBuild 빌드 실패 로그로 `fix_build` 확인
 - [ ] Main Server 연동 (S3 경로 규칙, 호출)
-- [ ] Worker: 미리 만든 모듈 대신 `module_uri`의 AI 모듈 사용 + `cloud_run` 정책·google provider 추가 (신의진·정아진)
+- [x] Worker 모듈 규격(`feat/multi-cloud-a-plan`)에 맞춰 견본·검사 갱신

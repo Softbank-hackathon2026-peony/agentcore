@@ -8,3 +8,4 @@ work/
 .agentcore/
 evals/.cache/
 evals/results/
+.tools/
