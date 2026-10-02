@@ -126,7 +126,7 @@ AWS_PROFILE=peony .venv/Scripts/python -m agent.app   # 로컬 서버 → POST h
 
 ## 남은 일
 
-- [ ] `prices.json` 단가 채우기 (공식 가격표, 출처·확인일)
+- [x] `prices.json` 단가 (AWS Price List API, GCP 공식 가격표, 2026-10-02 확인, 정가·무료 티어 미반영)
 - [ ] 실제 CodeBuild 빌드 실패 로그로 `fix_build` 확인
 - [ ] Main Server 연동 (S3 경로 규칙, 호출)
 - [ ] `gen_terraform`, `fix_terraform` (고준서)

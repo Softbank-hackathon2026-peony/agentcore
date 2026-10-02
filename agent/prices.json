@@ -1,28 +1,100 @@
 {
   "_comment": "단가는 공식 가격표에서 확인한 값만 넣는다. 출처 URL과 확인일 필수. 모르면 null.",
   "aws_lambda": {
-    "micro": {"hourly": null, "per_request_second": null, "per_request": null, "source": null, "checked": null},
-    "small": {"hourly": null, "per_request_second": null, "per_request": null, "source": null, "checked": null},
-    "medium": {"hourly": null, "per_request_second": null, "per_request": null, "source": null, "checked": null}
+    "micro": {
+      "hourly": null,
+      "per_request_second": 8.33335e-06,
+      "per_request": 2e-07,
+      "source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/ap-northeast-2/index.json",
+      "checked": "2026-10-02"
+    },
+    "small": {
+      "hourly": null,
+      "per_request_second": 1.66667e-05,
+      "per_request": 2e-07,
+      "source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/ap-northeast-2/index.json",
+      "checked": "2026-10-02"
+    },
+    "medium": {
+      "hourly": null,
+      "per_request_second": 3.33334e-05,
+      "per_request": 2e-07,
+      "source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/ap-northeast-2/index.json",
+      "checked": "2026-10-02"
+    }
   },
   "aws_ec2": {
-    "micro": {"hourly": null, "source": null, "checked": null},
-    "small": {"hourly": null, "source": null, "checked": null},
-    "medium": {"hourly": null, "source": null, "checked": null}
+    "micro": {
+      "hourly": 0.013,
+      "source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "checked": "2026-10-02"
+    },
+    "small": {
+      "hourly": 0.026,
+      "source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "checked": "2026-10-02"
+    },
+    "medium": {
+      "hourly": 0.052,
+      "source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "checked": "2026-10-02"
+    }
   },
   "gcp_cloud_run": {
-    "micro": {"hourly": null, "per_request_second": null, "per_request": null, "source": null, "checked": null},
-    "small": {"hourly": null, "per_request_second": null, "per_request": null, "source": null, "checked": null},
-    "medium": {"hourly": null, "per_request_second": null, "per_request": null, "source": null, "checked": null}
+    "micro": {
+      "hourly": null,
+      "per_request_second": 3.535e-05,
+      "per_request": 4e-07,
+      "source": "https://cloud.google.com/run/pricing (Seoul asia-northeast3 = Tier 2: https://docs.cloud.google.com/run/docs/locations)",
+      "checked": "2026-10-02"
+    },
+    "small": {
+      "hourly": null,
+      "per_request_second": 3.71e-05,
+      "per_request": 4e-07,
+      "source": "https://cloud.google.com/run/pricing (Seoul asia-northeast3 = Tier 2: https://docs.cloud.google.com/run/docs/locations)",
+      "checked": "2026-10-02"
+    },
+    "medium": {
+      "hourly": null,
+      "per_request_second": 4.06e-05,
+      "per_request": 4e-07,
+      "source": "https://cloud.google.com/run/pricing (Seoul asia-northeast3 = Tier 2: https://docs.cloud.google.com/run/docs/locations)",
+      "checked": "2026-10-02"
+    }
   },
   "aws_ecs_fargate": {
-    "micro": {"hourly": null, "source": null, "checked": null},
-    "small": {"hourly": null, "source": null, "checked": null},
-    "medium": {"hourly": null, "source": null, "checked": null}
+    "micro": {
+      "hourly": 0.014195,
+      "source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonECS/current/ap-northeast-2/index.json",
+      "checked": "2026-10-02"
+    },
+    "small": {
+      "hourly": 0.02839,
+      "source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonECS/current/ap-northeast-2/index.json",
+      "checked": "2026-10-02"
+    },
+    "medium": {
+      "hourly": 0.05678,
+      "source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonECS/current/ap-northeast-2/index.json",
+      "checked": "2026-10-02"
+    }
   },
   "gcp_compute_engine": {
-    "micro": {"hourly": null, "source": null, "checked": null},
-    "small": {"hourly": null, "source": null, "checked": null},
-    "medium": {"hourly": null, "source": null, "checked": null}
+    "micro": {
+      "hourly": 0.010745715,
+      "source": "https://cloud.google.com/products/compute/pricing/general-purpose#e2-machine-types (E2 shared-core, Seoul asia-northeast3, Default)",
+      "checked": "2026-10-02"
+    },
+    "small": {
+      "hourly": 0.02149143,
+      "source": "https://cloud.google.com/products/compute/pricing/general-purpose#e2-machine-types (E2 shared-core, Seoul asia-northeast3, Default)",
+      "checked": "2026-10-02"
+    },
+    "medium": {
+      "hourly": 0.04298286,
+      "source": "https://cloud.google.com/products/compute/pricing/general-purpose#e2-machine-types (E2 shared-core, Seoul asia-northeast3, Default)",
+      "checked": "2026-10-02"
+    }
   }
 }

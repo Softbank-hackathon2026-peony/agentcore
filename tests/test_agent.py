@@ -93,7 +93,7 @@ def test_analyze_ok_and_worker_fields(tmp_path):
     assert rec["clues"][1]["line"] is None                     # 범위 밖 줄 번호 제거
     assert rec["candidates"][0]["target"] == "aws_lambda" and rec["candidates"][0]["rank"] == 1
     assert len(rec["candidates"]) == 5                         # 1~5순위
-    assert rec["cost"]["note"] == "단가 확인 전"               # 단가 없으면 숫자를 지어내지 않음
+    assert rec["cost"]["monthly"] is not None and rec["cost"]["source"]   # 단가는 출처와 함께
     # 저장 경로
     saved = json.loads((tmp_path / f"projects/prj_demo/analysis/{out['analysis_id']}/recommendation.json").read_text("utf-8"))
     assert saved["architecture"] == "lambda"
@@ -163,6 +163,13 @@ def test_fix_build_not_fixable(tmp_path):
     brain = FakeBrain(fix=DockerfileFix(fixable=False, cause="ECR 로그인 권한 없음"))
     out = handle(fix_payload(), brain=brain, store=LocalStore(str(tmp_path)))
     assert out["status"] == "give_up" and out["fixable"] is False
+
+
+def test_cost_missing_price_is_null(monkeypatch):
+    from agent import cost
+    monkeypatch.setitem(cost._PRICES, "aws_ec2", {"small": {"hourly": None}})
+    e = cost.estimate("aws_ec2", "small")
+    assert e["monthly"] is None and e["note"] == "단가 확인 전"   # 단가 없으면 숫자를 지어내지 않음
 
 
 def test_buildspec_is_fixed_template():
