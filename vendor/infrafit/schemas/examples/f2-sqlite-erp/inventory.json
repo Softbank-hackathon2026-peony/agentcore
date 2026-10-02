@@ -90,6 +90,49 @@
       ]
     }
   ],
+  "deploy_units": {
+    "containers": [
+      {
+        "depends_on": [],
+        "env": {},
+        "env_names": [],
+        "evidence": {
+          "line": 1,
+          "path": "requirements.txt",
+          "snippet": "flask==3.0.3"
+        },
+        "id": "web",
+        "image": "web",
+        "one_shot": false,
+        "ports": [],
+        "workload": "w-web"
+      }
+    ],
+    "datastores": [],
+    "entry": null,
+    "images": [
+      {
+        "context": "",
+        "dockerfile": "Dockerfile",
+        "evidence": {
+          "line": 1,
+          "path": "Dockerfile",
+          "snippet": "FROM python:3.12-slim"
+        },
+        "id": "web"
+      }
+    ],
+    "source": {
+      "kind": "code",
+      "path": "requirements.txt"
+    },
+    "unresolved": [
+      {
+        "field": "containers.web.ports",
+        "why": "듣는 포트를 정하는 설정이 없다"
+      }
+    ]
+  },
   "endpoints": [
     {
       "framework": "flask",

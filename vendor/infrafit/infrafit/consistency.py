@@ -108,9 +108,52 @@ def check_s1(inventory: dict, repo_root: Path | None) -> list[str]:
         for h in p["hops"]:
             if h["component"] not in SPECIAL_COMPONENTS and h["component"] not in catalog:
                 issues.append(f"request path {p['id']}: not in catalog {h['component']}")
+    for w in inventory["workloads"]:
+        sc = w.get("scaling")
+        if sc and sc["min"] > sc["max"]:
+            issues.append(f"workload {w['id']}: scaling min {sc['min']} > max {sc['max']}")
+        if sc and sc["autoscale"] and sc["min"] == sc["max"]:
+            issues.append(f"workload {w['id']}: scaling autoscale with min == max")
+    issues += _check_deploy_units(inventory.get("deploy_units"), workloads,
+                                  {d["id"] for d in inventory["datastores"]})
     if repo_root is not None:
         issues += _check_evidence_files(inventory, repo_root)
     return sorted(set(issues))
+
+
+def _check_deploy_units(units: dict | None, workloads: set[str], datastores: set[str]) -> list[str]:
+    """deploy_units 참조 무결성: 이미지·워크로드·저장소 범위·depends_on·entry가 가리키는 것이 있어야 한다."""
+    if not units:
+        return []
+    issues: list[str] = []
+    image_ids = [i["id"] for i in units["images"]]
+    names = [c["id"] for c in units["containers"]] + [d["id"] for d in units["datastores"]]
+    for dup in sorted({i for i in image_ids if image_ids.count(i) > 1}):
+        issues.append(f"deploy_units: duplicate image id {dup}")
+    for dup in sorted({n for n in names if names.count(n) > 1}):
+        issues.append(f"deploy_units: duplicate container id {dup}")
+    for c in units["containers"]:
+        if "image" in c and c["image"] not in image_ids:
+            issues.append(f"deploy_units container {c['id']}: unknown image {c['image']}")
+        if "image" in c and "registry_image" in c:
+            issues.append(f"deploy_units container {c['id']}: both image and registry_image")
+        if "workload" in c and c["workload"] not in workloads:
+            issues.append(f"deploy_units container {c['id']}: unknown workload {c['workload']}")
+        for dep in c["depends_on"]:
+            if dep not in names:
+                issues.append(f"deploy_units container {c['id']}: unknown depends_on {dep}")
+        for key in c["env"]:
+            if key not in c["env_names"]:
+                issues.append(f"deploy_units container {c['id']}: env {key} not in env_names")
+    for d in units["datastores"]:
+        if "datastore" in d and d["datastore"] not in datastores:
+            issues.append(f"deploy_units datastore {d['id']}: unknown datastore {d['datastore']}")
+        if "build_image" in d and d["build_image"] not in image_ids:
+            issues.append(f"deploy_units datastore {d['id']}: unknown image {d['build_image']}")
+    entry = units.get("entry")
+    if entry and entry["container"] not in [c["id"] for c in units["containers"]]:
+        issues.append(f"deploy_units entry: unknown container {entry['container']}")
+    return issues
 
 
 def _vocab_issue(spec: dict, value) -> bool:
@@ -149,6 +192,13 @@ def check_s2(profile: dict, inventory: dict, repo_root: Path | None) -> list[str
             issues.append(f"{where}: value outside vocabulary {r['value']!r}")
         if r["source"] == "assumption" and r.get("assumption_key") not in keys:
             issues.append(f"{where}: assumption_key not in assumptions {r.get('assumption_key')}")
+    batch = profile.get("batch_only")
+    if batch:
+        for w in batch["workloads"]:
+            if w not in workloads:
+                issues.append(f"batch_only: unknown workload {w}")
+        if batch["value"] != bool(batch["workloads"]):
+            issues.append("batch_only: value must be true exactly when workloads is non-empty")
     if profile.get("llm_used") is not False:
         issues.append("profile: llm_used must be false (no inference in this stage)")
     if repo_root is not None:
@@ -214,6 +264,15 @@ def check_s4(rec: dict, fit: dict, inventory: dict, profile: dict | None,
             cell = cells.get((scope, comp))
             if cell is not None and cell["result"] == "infeasible":
                 issues.append(f"candidate {cand['id']}: infeasible assignment {scope} × {comp}")
+        placement = cand.get("placement") or []
+        for p in placement:
+            if cand["assignment"].get(p["scope"]) != p["component"]:
+                issues.append(f"candidate {cand['id']}: placement {p['scope']} × {p['component']} not in assignment")
+        compute_scopes = {s for s, c in cand["assignment"].items() if c.startswith("cp:")}
+        if "placement" in cand and compute_scopes != {p["scope"] for p in placement}:
+            issues.append(f"candidate {cand['id']}: placement does not cover compute scopes")
+        if cand.get("topology") in ("vm-compose", "kubernetes") and len({p["component"] for p in placement}) > 1:
+            issues.append(f"candidate {cand['id']}: {cand['topology']} places workloads on several compute components")
         known_tf = {t["id"] for t in rec["transforms"]}
         for t in cand["transforms"]:
             if t not in known_tf:
@@ -223,6 +282,8 @@ def check_s4(rec: dict, fit: dict, inventory: dict, profile: dict | None,
             issues.append("recommended is null although candidates exist")
     elif rec["recommended"] not in ids:
         issues.append(f"recommended {rec['recommended']} is not a candidate")
+    if ((profile or {}).get("batch_only") or {}).get("value") and (ids or rec["outcome"] != "not_deployable"):
+        issues.append("profile.batch_only is true but recommendation is not not_deployable without candidates")
     return sorted(set(issues))
 
 

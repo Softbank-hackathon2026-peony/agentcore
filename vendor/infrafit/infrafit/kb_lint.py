@@ -12,7 +12,7 @@ ROLES = {"primary-db", "cache", "session", "queue", "scheduler", "realtime", "fi
 STATUSES = {"confirmed", "candidate"}
 ARTIFACTS = {"dockerfile", "k8s", "terraform", "hop"}
 IMAGE_ROLES = {"reverse-proxy", "datastore", "cache", "queue", "infra", "dev-tool"}
-IMAGE_KEYS = {"match", "role", "component", "hosting_hint"}
+IMAGE_KEYS = {"match", "role", "component", "hosting_hint", "port"}
 # 이미지 role → component가 가져야 하는 family(infra·dev-tool은 정하지 않는다)
 IMAGE_ROLE_FAMILIES = {"datastore": "ds", "cache": "ca", "queue": "qu", "reverse-proxy": "nw"}
 
@@ -148,9 +148,28 @@ def _lint_images(entries: list[dict] | None = None) -> list[str]:
         for key in ("component", "hosting_hint"):
             if key in e and e[key] not in catalog:
                 issues.append(f"{name}: {key}가 catalog에 없음 {e[key]}")
+        if "port" in e and (not isinstance(e["port"], int) or isinstance(e["port"], bool)
+                            or not 0 < e["port"] < 65536):
+            issues.append(f"{name}: port는 1~65535 정수여야 함 {e['port']!r}")
         family = IMAGE_ROLE_FAMILIES.get(e.get("role"))
         if family and isinstance(e.get("component"), str) and e["component"].split(":")[0] != family:
             issues.append(f"{name}: role {e['role']}의 component family는 {family}여야 함 {e['component']}")
+    return issues
+
+
+def _lint_secrets(data: dict | None = None) -> list[str]:
+    issues: list[str] = []
+    data = kb.secrets() if data is None else data
+    for part in ("key", "value"):
+        patterns = data.get(part)
+        if not patterns:
+            issues.append(f"secrets: {part} 정규식 목록이 비었음")
+            continue
+        for rx in patterns:
+            try:
+                re.compile(rx)
+            except (re.error, TypeError) as e:
+                issues.append(f"secrets: {part} 정규식 오류 {rx!r}: {e}")
     return issues
 
 
@@ -322,7 +341,7 @@ def _lint_deploy(entries: list[dict] | None = None) -> list[str]:
 
 RESEARCH_DIR = kb.KB_DIR.parent / "docs" / "research"
 CLOUDS = {"aws", "gcp", "azure", "local"}
-TARGETS = {"aws_lambda", "gcp_cloud_run", "aws_ecs_fargate", "aws_ec2", "gcp_compute_engine"}
+TARGETS = {"aws_lambda", "gcp_cloud_run", "aws_ecs_fargate", "aws_ec2", "gcp_compute_engine", "gcp_gke", "aws_eks"}
 OPS_BURDEN = {"low", "medium", "high"}
 DS_ENGINES = {"postgres", "redis", "sqlite"}
 # 능력 키(계획 2 MVP 고정 형식) → 값 검사
@@ -336,16 +355,38 @@ CAPABILITY_KEYS = {
     "CP.single_instance_config": lambda v: isinstance(v, str) and bool(v),
     "CP.always_on": lambda v: isinstance(v, bool),
     "CP.always_on_config": lambda v: isinstance(v, str) and bool(v),
+    # 요청 시간 상한(CP.max_request_seconds)을 늘리는 설정 이름(예: GKE BackendConfig timeoutSec)
+    "CP.max_request_seconds_config": lambda v: isinstance(v, str) and bool(v),
+    # 인스턴스(레플리카)를 여러 개로 늘릴 수 있는가 / 한 클러스터·환경에 여러 워크로드를 두는가
+    "CP.horizontal_scaling": lambda v: isinstance(v, bool),
+    "CP.multi_workload": lambda v: isinstance(v, bool),
+    # 요청과 컨테이너 사이에 요청 시간을 강제하는 플랫폼 계층(LB·프런트엔드)이 있는가. false면 A2 시간 규칙을 통과한다
+    "CP.platform_request_timeout": lambda v: isinstance(v, bool),
+    # 요청이 없을 때도 서버 프로세스(리버스 프록시 등)가 떠 있으며 여러 요청을 받는가
+    "CP.runs_long_lived_server": lambda v: isinstance(v, bool),
     "DS.engine": lambda v: v in DS_ENGINES,
+    # compute VM 안에서 함께 돈다(VM compute와만 짝지음)
+    "DS.colocated_vm": lambda v: isinstance(v, bool),
+    # 데이터가 어디에 어떻게 남는지(설명 문자열)
+    "DS.durability": lambda v: isinstance(v, str) and bool(v),
+    # 백업을 사용자가 설정해야 할 때 그 설정(requires_config)
+    "DS.backup_config": lambda v: isinstance(v, str) and bool(v),
     "COST.monthly_floor_usd": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0,
     # 인스턴스를 고정(1개 상시)했을 때 서울 리전 월 비용. scale-to-zero 플랫폼에서 고정 설정이 필요한 후보에 쓴다
     "COST.monthly_pinned_usd": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0,
+    # 레플리카 1개를 더할 때의 서울 리전 월 비용(바닥 비용에 1개가 들어 있음)
+    "COST.per_replica_usd": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0,
 }
 # 조사 문서 줄에 붙은 이 표시가 있으면 그 줄은 근거로 쓸 수 없다(README §3)
 BAD_MARKERS = ("⚠️근거없음", "⚠️출처부적격", "⚠️출처확인필요")
 # 적격(A) 발행처 호스트(README §3, source-audit.md §1). 능력 값에 쓰는 것만 둔다.
 ELIGIBLE_HOSTS = ("docs.aws.amazon.com", "aws.amazon.com", "pricing.us-east-1.amazonaws.com",
-                  "cloud.google.com", "docs.cloud.google.com", "www.sqlite.org", "docs.docker.com")
+                  "cloud.google.com", "docs.cloud.google.com", "www.sqlite.org", "docs.docker.com",
+                  "hub.docker.com", "kubernetes.io")
+# capabilities/ 밖에서 근거로 쓸 수 있는 조사 문서(docs/research/ 바로 아래)
+TOP_RESEARCH_DOCS = ("post-response-work.md",)
+# source.basis: official(기본, 공급자 인용이 값을 직접 말함) | derived(인용한 사실에서 한 단계로 이끈 값, 정의상/유도)
+BASES = ("official", "derived")
 # [PL] = 문서 머리말에 적은 AWS Price List 오퍼 파일
 PRICE_LIST_PREFIX = "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/"
 DIMENSION_ROW = re.compile(r"^\|\s*([A-G][0-9]+)\s*\|", re.M)
@@ -358,8 +399,8 @@ REQUIRE_OPS = {"equals", "gte", "exists"}
 def _doc_lines(doc: str, research_dir, cache: dict) -> list[str] | None:
     if doc not in cache:
         path = research_dir / doc
-        ok = (isinstance(doc, str) and doc.startswith("capabilities/") and doc.endswith(".md")
-              and ".." not in doc and path.is_file())
+        ok = (isinstance(doc, str) and (doc.startswith("capabilities/") or doc in TOP_RESEARCH_DOCS)
+              and doc.endswith(".md") and ".." not in doc and path.is_file())
         cache[doc] = path.read_text(encoding="utf-8").splitlines() if ok else None
     return cache[doc]
 
@@ -373,7 +414,7 @@ def _lint_source(name: str, src, research_dir, cache: dict) -> list[str]:
         return [f"{name}: source에 {', '.join(missing)} 없음"]
     lines = _doc_lines(src["doc"], research_dir, cache)
     if lines is None:
-        return [f"{name}: 조사 문서 없음 {src['doc']} (docs/research/capabilities/*.md 이어야 함)"]
+        return [f"{name}: 조사 문서 없음 {src['doc']} (docs/research/capabilities/*.md 또는 {', '.join(TOP_RESEARCH_DOCS)})"]
     line = src["line"]
     if not isinstance(line, int) or isinstance(line, bool) or not 1 <= line <= len(lines):
         return [f"{name}: 줄 번호가 범위 밖 {src['doc']}:{line}"]
@@ -393,6 +434,25 @@ def _lint_source(name: str, src, research_dir, cache: dict) -> list[str]:
     if not (on_line or via_price_list):
         issues.append(f"{name}: url이 {src['doc']}:{line}의 인용이 아님 {url}")
     return issues
+
+
+def _lint_value_source(name: str, src, research_dir, cache: dict) -> list[str]:
+    """능력 값의 source. basis: official(기본)은 {doc, line, url, quote}, derived는 {basis, from: {doc, line, url, quote},
+    reasoning}: 전제(from)의 인용이 doc:line에 있어야 하고(공식 값과 같은 검사), 한 단계 유도를 적은 reasoning이 있어야 한다."""
+    if not isinstance(src, dict):
+        return [f"{name}: source 없음"]
+    basis = src.get("basis", "official")
+    if basis not in BASES:
+        return [f"{name}: source.basis는 {list(BASES)} 중 하나"]
+    if basis == "official":
+        return _lint_source(name, {k: v for k, v in src.items() if k != "basis"}, research_dir, cache)
+    issues: list[str] = []
+    extra = set(src) - {"basis", "from", "reasoning"}
+    if extra:
+        issues.append(f"{name}: 유도 값의 source에는 basis·from·reasoning만 둔다 ({', '.join(sorted(extra))})")
+    if not isinstance(src.get("reasoning"), str) or not src["reasoning"].strip():
+        issues.append(f"{name}: 유도 값에 reasoning 없음")
+    return issues + _lint_source(f"{name} 전제", src.get("from"), research_dir, cache)
 
 
 def _lint_capabilities(entries: list[dict] | None = None, catalog: dict | None = None,
@@ -449,7 +509,11 @@ def _lint_capabilities(entries: list[dict] | None = None, catalog: dict | None =
                 continue
             if not CAPABILITY_KEYS[key](entry["value"]):
                 issues.append(f"{name}: 잘못된 값 {entry['value']!r}")
-            issues += _lint_source(name, entry.get("source"), research_dir, cache)
+            issues += _lint_value_source(name, entry.get("source"), research_dir, cache)
+        # 요청 시간 상한 값이 있으면 그 상한을 강제하는 계층이 있다. 없으면 A2 규칙(any)이 실패 대신 모름이 된다
+        prt = caps.get("CP.platform_request_timeout")
+        if "CP.max_request_seconds" in caps and not (isinstance(prt, dict) and prt.get("value") is True):
+            issues.append(f"{cid}: CP.max_request_seconds가 있으면 CP.platform_request_timeout: true도 둔다")
     return issues
 
 
@@ -477,6 +541,24 @@ def _lint_require(name: str, cond) -> list[str]:
     return issues
 
 
+def _when_leaves(when) -> list[dict] | None:
+    """when 조건의 잎(차원 비교) 목록. {all|any: [...]}는 펼친다. 형식이 틀리면 None."""
+    if not isinstance(when, dict):
+        return None
+    if set(when) in ({"all"}, {"any"}):
+        children = when[next(iter(when))]
+        if not isinstance(children, list) or not children:
+            return None
+        out: list[dict] = []
+        for child in children:
+            leaves = _when_leaves(child)
+            if leaves is None:
+                return None
+            out += leaves
+        return out
+    return [when]
+
+
 def _lint_rules(entries: list[dict] | None = None, research_dir=None) -> list[str]:
     """규칙: id, when의 차원 ID, require의 능력 키, otherwise ∈ {infeasible, config}, config일 때 config_from."""
     issues: list[str] = []
@@ -493,14 +575,23 @@ def _lint_rules(entries: list[dict] | None = None, research_dir=None) -> list[st
             issues.append(f"rules: 중복 ID {rid}")
         seen.add(rid)
         when = r.get("when")
-        if not isinstance(when, dict) or when.get("dimension") not in dims:
-            issues.append(f"{rid}: when.dimension이 dimensions.md의 차원 ID가 아님 "
-                          f"{when.get('dimension') if isinstance(when, dict) else when}")
-        elif len(set(when) - {"dimension"}) != 1 or not set(when) - {"dimension"} <= WHEN_OPS:
-            issues.append(f"{rid}: when 연산자는 {sorted(WHEN_OPS)} 중 하나")
-        elif "in" in when and (not isinstance(when["in"], list) or not when["in"]):
-            issues.append(f"{rid}: when.in은 비지 않은 목록이어야 함")
-        issues += _lint_require(rid, r.get("require"))
+        conds = _when_leaves(when)
+        if conds is None:
+            issues.append(f"{rid}: when이 매핑이 아니거나 all/any가 비었음")
+        for leaf in conds or []:
+            if leaf.get("dimension") not in dims:
+                issues.append(f"{rid}: when.dimension이 dimensions.md의 차원 ID가 아님 {leaf.get('dimension')}")
+            elif len(set(leaf) - {"dimension"}) != 1 or not set(leaf) - {"dimension"} <= WHEN_OPS:
+                issues.append(f"{rid}: when 연산자는 {sorted(WHEN_OPS)} 중 하나")
+            elif "in" in leaf and (not isinstance(leaf["in"], list) or not leaf["in"]):
+                issues.append(f"{rid}: when.in은 비지 않은 목록이어야 함")
+        if r.get("require") is None:
+            # 요구끼리 부딪치는 규칙: 능력 없이 when 조건 둘 이상(all)이 모두 맞으면 infeasible
+            if not (isinstance(when, dict) and "all" in when and len(conds or []) >= 2
+                    and r.get("otherwise") == "infeasible"):
+                issues.append(f"{rid}: require가 없으면 when은 all(조건 둘 이상)이고 otherwise는 infeasible")
+        else:
+            issues += _lint_require(rid, r.get("require"))
         otherwise = r.get("otherwise")
         if otherwise not in ("infeasible", "config"):
             issues.append(f"{rid}: otherwise는 infeasible 또는 config")
@@ -524,16 +615,17 @@ def _lint_rule_vocabulary(entries: list[dict] | None = None, detectors: dict | N
         if not isinstance(when, dict):
             continue
         rid = str(r.get("id", f"rule {i}"))
-        dim = when.get("dimension")
-        spec = dims.get(dim)
-        if not isinstance(spec, dict):
-            issues.append(f"{rid}: when.dimension {dim}은 profile_detectors.yaml에 정의되지 않은 차원(S2가 내지 않음)")
-            continue
-        vocab = spec.get("values") or []
-        values = [when["equals"]] if "equals" in when else list(when.get("in") or [])
-        for v in values:
-            if v not in vocab:
-                issues.append(f"{rid}: when 값 {v!r}이 {dim} 어휘 {vocab}에 없음")
+        for leaf in _when_leaves(when) or []:
+            dim = leaf.get("dimension")
+            spec = dims.get(dim)
+            if not isinstance(spec, dict):
+                issues.append(f"{rid}: when.dimension {dim}은 profile_detectors.yaml에 정의되지 않은 차원(S2가 내지 않음)")
+                continue
+            vocab = spec.get("values") or []
+            values = [leaf["equals"]] if "equals" in leaf else list(leaf.get("in") or [])
+            for v in values:
+                if v not in vocab:
+                    issues.append(f"{rid}: when 값 {v!r}이 {dim} 어휘 {vocab}에 없음")
     return issues
 
 WORKLOAD_KINDS = {"web", "worker", "scheduled", "realtime", "batch", "static-frontend", "migration-job",
@@ -660,6 +752,9 @@ def _lint_profile_detectors(cfg: dict | None = None) -> list[str]:
         issue = _regex_issue(name, d.get("regex"))
         if issue:
             issues.append(issue)
+        if "call_site_outside_file" in d and (not isinstance(d["call_site_outside_file"], bool)
+                                              or d.get("scope") != "workload"):
+            issues.append(f"{name}: call_site_outside_file는 workload 범위 탐지기의 불리언")
         if d.get("unless") is not None:
             issue = _regex_issue(f"{name} unless", d["unless"])
             if issue:
@@ -670,5 +765,6 @@ def _lint_profile_detectors(cfg: dict | None = None) -> list[str]:
 
 def lint() -> list[str]:
     return (_lint_catalog() + _lint_signatures() + _lint_unmapped_signatures() + _lint_defaults() + _lint_images()
+            + _lint_secrets()
             + _lint_implicit_routes() + _lint_external() + _lint_deploy() + _lint_capabilities() + _lint_rules()
             + _lint_rule_vocabulary() + _lint_profile_detectors())

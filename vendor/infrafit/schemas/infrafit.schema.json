@@ -48,6 +48,18 @@
         "checked_at": {
           "type": "string",
           "format": "date"
+        },
+        "basis": {
+          "type": "string",
+          "enum": [
+            "official",
+            "derived"
+          ],
+          "description": "official: 공급자 인용이 값을 직접 말함. derived: 인용(전제)에서 한 단계로 이끈 값(정의상/유도)"
+        },
+        "reasoning": {
+          "type": "string",
+          "description": "basis=derived일 때 전제에서 값을 이끈 한 문장"
         }
       },
       "additionalProperties": false,
@@ -227,6 +239,42 @@
         },
         "status": {
           "$ref": "#/$defs/FactStatus"
+        },
+        "scaling": {
+          "type": "object",
+          "description": "확장 요구(레플리카·HPA·KEDA·compose deploy.replicas). 환경마다 정한 min·max의 최댓값. evidence가 비면 레플리카 설정 없음(min=max=1). load_tests는 부하 테스트 스크립트(웹·실시간 워크로드에만)",
+          "properties": {
+            "min": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "max": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "autoscale": {
+              "type": "boolean"
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              }
+            },
+            "load_tests": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "min",
+            "max",
+            "autoscale",
+            "evidence"
+          ]
         }
       },
       "additionalProperties": false,
@@ -501,6 +549,9 @@
           "items": {
             "$ref": "#/$defs/ExternalService"
           }
+        },
+        "deploy_units": {
+          "$ref": "#/$defs/DeployUnits"
         }
       },
       "additionalProperties": false,
@@ -514,7 +565,268 @@
         "request_paths",
         "endpoints",
         "environments",
-        "external_services"
+        "external_services",
+        "deploy_units"
+      ]
+    },
+    "DeployUnits": {
+      "type": "object",
+      "description": "프로젝트가 스스로 정의한 같이 떠야 하는 컨테이너 묶음(docs/superpowers/specs/2026-10-03-multi-container-contract.md §1). 출처 우선순위 compose → k8s → 코드",
+      "properties": {
+        "source": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "compose",
+                    "k8s",
+                    "code"
+                  ]
+                },
+                "path": {
+                  "type": "string",
+                  "description": "compose 기본 파일, 첫 k8s 매니페스트, 코드 워크로드 진입점 파일"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "path"
+              ]
+            }
+          ]
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "description": "빌드(컨텍스트+Dockerfile+target)마다 하나. 같은 빌드를 쓰는 컨테이너가 공유한다",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "context": {
+                "type": "string",
+                "description": "저장소 경로(루트는 빈 문자열)"
+              },
+              "dockerfile": {
+                "type": "string",
+                "description": "저장소에 있는 Dockerfile. 없으면 빼고 unresolved에 적는다"
+              },
+              "target": {
+                "type": "string",
+                "description": "compose build.target(다단계 빌드 단계)"
+              },
+              "evidence": {
+                "$ref": "#/$defs/Evidence"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "context",
+              "evidence"
+            ]
+          }
+        },
+        "containers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "원래 서비스 이름 그대로(컨테이너끼리 이 이름으로 접속한다)"
+              },
+              "workload": {
+                "$ref": "#/$defs/ScopeId"
+              },
+              "image": {
+                "type": "string",
+                "description": "images[].id"
+              },
+              "registry_image": {
+                "type": "string",
+                "description": "빌드 없이 받는 레지스트리 이미지"
+              },
+              "command": {
+                "type": "string",
+                "description": "적힌 대로의 실행 명령(compose command, k8s args). 목록은 셸 규칙으로 잇는다"
+              },
+              "entrypoint": {
+                "type": "string",
+                "description": "이미지 ENTRYPOINT를 바꾸는 명령(compose entrypoint, k8s command)"
+              },
+              "ports": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                "description": "컨테이너가 듣는 포트(호스트 포트가 아니다)"
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "비밀이 아닌 값만. 비밀값·호스트에서 받는 값은 env_names에만 있다"
+              },
+              "env_names": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "이 컨테이너가 받는 환경변수 이름 전부(비밀값 포함)"
+              },
+              "depends_on": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "containers·datastores id"
+              },
+              "one_shot": {
+                "type": "boolean",
+                "description": "restart: \"no\" 이거나 service_completed_successfully로 기다리는 컨테이너, k8s Job"
+              },
+              "evidence": {
+                "$ref": "#/$defs/Evidence"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "ports",
+              "env",
+              "env_names",
+              "depends_on",
+              "one_shot",
+              "evidence"
+            ]
+          }
+        },
+        "datastores": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "datastore": {
+                "$ref": "#/$defs/ScopeId",
+                "description": "inventory datastores id"
+              },
+              "image": {
+                "type": "string",
+                "description": "레지스트리 이미지"
+              },
+              "build_image": {
+                "type": "string",
+                "description": "저장소에서 빌드하는 저장소 이미지면 images[].id"
+              },
+              "ports": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                "description": "컨테이너가 듣는 포트(호스트 포트가 아니다)"
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "비밀이 아닌 값만. 비밀값·호스트에서 받는 값은 env_names에만 있다"
+              },
+              "env_names": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "이 컨테이너가 받는 환경변수 이름 전부(비밀값 포함)"
+              },
+              "evidence": {
+                "$ref": "#/$defs/Evidence"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "ports",
+              "env",
+              "env_names",
+              "evidence"
+            ]
+          }
+        },
+        "entry": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "container": {
+                  "type": "string"
+                },
+                "port": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                "why": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "container",
+                "port",
+                "why"
+              ]
+            }
+          ]
+        },
+        "unresolved": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string"
+              },
+              "why": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "field",
+              "why"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "images",
+        "containers",
+        "datastores",
+        "entry",
+        "unresolved"
       ]
     },
     "DimensionValue": {
@@ -674,6 +986,36 @@
           "items": {
             "$ref": "#/$defs/Resolution"
           }
+        },
+        "batch_only": {
+          "type": "object",
+          "description": "앱 워크로드가 모두 batch(실행하고 끝나는 CLI·배치)이고 정적 프런트엔드도 없으면 value=true: 상시 배포 대상이 아니라 사람이 실행하는 도구(S4 not_deployable 근거)",
+          "properties": {
+            "value": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "workloads": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ScopeId"
+              }
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "value",
+            "workloads",
+            "evidence"
+          ]
         }
       },
       "additionalProperties": false,
@@ -788,6 +1130,38 @@
           "type": "array",
           "items": {
             "type": "string"
+          }
+        },
+        "derived_passes": {
+          "type": "array",
+          "description": "유도 값(정의상/유도)으로 통과한 규칙의 설명",
+          "items": {
+            "type": "object",
+            "properties": {
+              "rule": {
+                "$ref": "#/$defs/RuleId"
+              },
+              "capability_key": {
+                "type": "string"
+              },
+              "actual": {
+                "$ref": "#/$defs/Value"
+              },
+              "source": {
+                "$ref": "#/$defs/Source"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "rule",
+              "capability_key",
+              "actual",
+              "source",
+              "message"
+            ]
           }
         },
         "is_current": {
@@ -1055,6 +1429,87 @@
             "$ref": "#/$defs/ScopeId"
           },
           "description": "현재 구성 요소(BaaS 등)를 바꾸지 않고 그대로 배정한 데이터 범위"
+        },
+        "topology": {
+          "type": "string",
+          "enum": [
+            "vm-compose",
+            "services",
+            "kubernetes"
+          ],
+          "description": "배포 형태: vm-compose(워크로드 전부 VM 한 대 + docker compose), services(워크로드마다 서비스형 플랫폼), kubernetes(클러스터 하나에 워크로드 전부)"
+        },
+        "placement": {
+          "type": "array",
+          "description": "워크로드(compute 범위)마다 배치: 구성 요소, AgentCore 대상, 최소 레플리카(scaling.min, 없으면 1)",
+          "items": {
+            "type": "object",
+            "properties": {
+              "scope": {
+                "$ref": "#/$defs/ScopeId"
+              },
+              "component": {
+                "$ref": "#/$defs/ComponentId"
+              },
+              "target": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "min_replicas": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "scope",
+              "component",
+              "target",
+              "min_replicas"
+            ]
+          }
+        },
+        "derived_facts": {
+          "type": "array",
+          "description": "이 후보의 판정이 기댄 유도 값(정의상/유도): 범위·구성 요소·규칙과 reasoning",
+          "items": {
+            "type": "object",
+            "properties": {
+              "scope": {
+                "$ref": "#/$defs/ScopeId"
+              },
+              "component": {
+                "$ref": "#/$defs/ComponentId"
+              },
+              "rule": {
+                "$ref": "#/$defs/RuleId"
+              },
+              "capability_key": {
+                "type": "string"
+              },
+              "actual": {
+                "$ref": "#/$defs/Value"
+              },
+              "source": {
+                "$ref": "#/$defs/Source"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "scope",
+              "component",
+              "rule",
+              "capability_key",
+              "actual",
+              "source",
+              "message"
+            ]
+          }
         }
       },
       "additionalProperties": false,

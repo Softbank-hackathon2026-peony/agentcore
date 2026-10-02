@@ -74,9 +74,11 @@ def _kustomize_environments(artifacts: list[ParsedArtifact]) -> list[Environment
 
 def compose_env(value) -> dict[str, str | None] | None:
     """compose `environment`(목록 또는 맵) → 변수 이름 → 값. 둘 다 아니면 None.
-    값 없는 `KEY`(목록)·`KEY:`(맵)는 실행하는 호스트의 값을 받는데 그 값은 알 수 없으므로 None(없음)으로 둔다."""
+    값 없는 `KEY`(목록)·`KEY:`(맵)는 실행하는 호스트의 값을 받는데 그 값은 알 수 없으므로 None(없음)으로 둔다.
+    YAML 불리언은 compose가 넘기는 표기(`true`·`false`)로 둔다."""
     if isinstance(value, dict):
-        return {str(k): None if v is None else str(v) for k, v in value.items()}
+        return {str(k): None if v is None else str(v).lower() if isinstance(v, bool) else str(v)
+                for k, v in value.items()}
     if isinstance(value, list):
         out: dict[str, str | None] = {}
         for item in value:
@@ -148,7 +150,7 @@ def _merge(files: list[ParsedArtifact]) -> tuple[dict[str, dict], dict[str, dict
     return services, origins
 
 
-def _compose_environments(artifacts: list[ParsedArtifact]) -> list[Environment]:
+def compose_environments(artifacts: list[ParsedArtifact]) -> list[Environment]:
     """디렉터리마다: 기본 파일(+같은 계열 override) 환경 하나, 변형 파일마다 기본 파일 + 변형 파일 환경 하나
     (`docker compose -f base -f variant`와 같이 override는 넣지 않는다). 변형 파일은 파싱에 성공하고 서비스가
     하나 이상 있어야 환경을 만든다. `.devcontainer/` 아래 compose는 환경이 아니다."""
@@ -186,7 +188,7 @@ def _service_dockerfile(env: Environment, svc: dict) -> str | None:
     return build[1] if build else None
 
 
-def _match_services(env: Environment, workloads: list[WorkloadInfo], artifacts: list[ParsedArtifact]) -> None:
+def match_services(env: Environment, workloads: list[WorkloadInfo], artifacts: list[ParsedArtifact]) -> None:
     """서비스 ↔ 워크로드: 이름이 같으면 대응하고, 남은 것끼리는 같은 Dockerfile이나 같은 이미지 이름으로
     서로 유일한 후보일 때만 대응한다."""
     names = set(env.services)
@@ -217,9 +219,9 @@ def _match_services(env: Environment, workloads: list[WorkloadInfo], artifacts: 
 def detect_environments(artifacts: list[ParsedArtifact], workloads: list[WorkloadInfo]) -> list[Environment]:
     kustomize = _kustomize_environments(artifacts)
     taken = {e.name for e in kustomize}
-    compose = _compose_environments(artifacts)
+    compose = compose_environments(artifacts)
     for env in compose:
-        _match_services(env, workloads, artifacts)
+        match_services(env, workloads, artifacts)
     # 대응한 워크로드가 없는 compose(데이터베이스만 띄우는 구성 등)는 환경이 아니다
     compose = [e for e in compose if e.members]
     for env in compose:
@@ -298,7 +300,7 @@ def env_command(env: Environment | None, w: WorkloadInfo, artifacts: list[Parsed
     return cmd or w.command
 
 
-def _compose_key_line(snap: Snapshot, rel: str, service: str, key: str) -> int | None:
+def compose_key_line(snap: Snapshot, rel: str, service: str, key: str) -> int | None:
     """compose 파일에서 services.<service>.<key> 키가 있는 줄."""
     try:
         root = yaml.compose(snap.read(rel))
@@ -325,7 +327,7 @@ def env_command_evidence(snap: Snapshot, env: Environment | None, w: WorkloadInf
         name = env.members.get(w.id)
         if svc is not None and isinstance(svc.get("command"), (str, list)) and svc.get("command"):
             rel = env.origins.get(name, {}).get("command", env.source)
-            return [evidence(snap, rel, _compose_key_line(snap, rel, name, "command"))]
+            return [evidence(snap, rel, compose_key_line(snap, rel, name, "command"))]
         build = compose_build(env.source, svc) if svc is not None else None
         evs = _dockerfile_command_evidence(dockerfile_at(build[1] if build else None, artifacts))
         if evs:
