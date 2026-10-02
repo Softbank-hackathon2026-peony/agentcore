@@ -255,6 +255,10 @@ def _recommendation_warnings(inv: dict) -> list[str]:
         head = f"InfraFit: 추천 대상 {rec.get('target') or '?'} ({compute}, {cost_s})"
         if not rec.get("deployable"):
             head += " — 지금 Worker가 배포할 수 없는 대상"
+    elif reco.get("outcome") == "static_only":
+        head = "InfraFit: 정적 사이트만 있어 컴퓨트를 고를 필요가 없습니다 (" + reco.get("outcome_detail", "")[:150] + ")"
+    elif reco.get("outcome") == "not_deployable":
+        head = "InfraFit: 배포할 서버·정적 사이트가 없습니다 (" + reco.get("outcome_detail", "")[:150] + ")"
     else:
         head = "InfraFit: 조건을 모두 만족하는 컴퓨트 후보가 없습니다"
     rejected = reco.get("rejected") or []

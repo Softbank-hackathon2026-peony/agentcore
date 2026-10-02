@@ -2,16 +2,22 @@
 
 조합 = 컴퓨트 1 × 데이터 범위마다 같은 클라우드의 관리형 대응.
 SQLite는 영속 로컬 디스크가 있는 컴퓨트에서만 그대로 두고, 아니면 변형 "SQLite→관리형 Postgres"를 적용한다.
-순위: 실현 불가 제외 → unknown 수(모르는 판정 + 모르는 비용) → 월 최소 비용 합 → 운영 부담 → 설정 요구 수.
+BaaS 저장소(Supabase·Firestore 등)는 바꾸지 않고 현재 구성 요소를 그대로 배정한다(external_scopes).
+순위: 실현 불가 제외 → 합을 아는 후보가 먼저 → 월 비용 합(합이 null인 후보끼리는 모르는 비용 구성 요소 수, 그다음
+아는 부분의 합; 부분합은 순위에만 쓰고 출력하지 않는다) → 모르는 판정 셀 수 → 운영 부담 → 설정 요구 수
+→ 과금 방식(응답 밖 CPU가 필요 없으면 요청 기반이 먼저, A4·B3·워커가 있으면 응답 밖 CPU가 있는 쪽이 먼저) → ID.
 비용을 모르는 구성 요소가 하나라도 있으면 합(monthly_baseline_usd)은 null이다. 0이나 부분합은 "무료"·"싸다"로
-읽히므로 쓰지 않는다. 모르는 구성 요소는 cost.unknown_cost_components 에 적고 unknown 수로도 센다.
+읽히므로 쓰지 않는다. 모르는 구성 요소는 cost.unknown_cost_components 에 적고 unknown_count 로도 센다.
+scale-to-zero 플랫폼에서 인스턴스 고정 설정(단일 인스턴스·상시 실행)이 필요하면 바닥 비용 대신
+COST.monthly_pinned_usd 를 쓰고, 그 값이 없으면 비용을 모른다.
+결과(outcome): recommended | no_feasible | static_only(정적 프런트엔드만) | not_deployable(앱·정적 워크로드 없음).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from infrafit.fit.engine import cap_entry, cap_value, evaluate, source_of
+from infrafit.fit.engine import cap_entry, cap_value, evaluate, match_when, source_of
 from infrafit.fit.matrix import all_scopes, components_by_id
 from infrafit.fit.scopes import Scope, _family
 
@@ -20,6 +26,12 @@ SQLITE_TRANSFORM = "TF-SQLITE-TO-MANAGED-POSTGRES"
 PRICE_SNAPSHOT_DEFAULT = "2026-10-01"
 OPS_ORDER = {"low": 0, "medium": 1, "high": 2}
 RESULT_ORDER = {"feasible": 0, "feasible_with_config": 1, "unknown": 2, "infeasible": 3}
+# 이 능력 키에서 설정 이름을 가져오는 규칙이 요구한 설정은 인스턴스를 붙잡아 둔다(scale-to-zero가 꺼진다)
+PIN_CONFIG_KEYS = ("CP.single_instance_config", "CP.always_on_config")
+# 응답 밖 CPU가 필요한 프로필(과금 방식 동점 깨기): 응답 후 작업, 앱 안 스케줄러, 상시 워커·정기 작업
+NEEDS_BACKGROUND = {"any": [{"dimension": "A4", "equals": "있음"}, {"dimension": "B3", "equals": "있음"},
+                            {"dimension": "A1", "in": ["워커", "정기 작업"]}]}
+STATIC_KINDS = ("static-frontend",)
 
 
 def ops_of(component: dict | None) -> str | None:
@@ -29,9 +41,9 @@ def ops_of(component: dict | None) -> str | None:
     return value if value in OPS_ORDER else None
 
 
-def cost_of(component: dict | None):
-    """(월 최소 비용, 출처 항목) 또는 MISSING이면 (None, None)."""
-    entry = cap_entry(component, "COST.monthly_floor_usd")
+def cost_of(component: dict | None, key: str = "COST.monthly_floor_usd"):
+    """(월 비용, 출처 항목) 또는 MISSING이면 (None, None)."""
+    entry = cap_entry(component, key)
     if not isinstance(entry, dict) or not isinstance(entry.get("value"), (int, float)):
         return None, None
     return float(entry["value"]), entry
@@ -58,6 +70,7 @@ class Combo:
     cells: list[dict] = field(default_factory=list)
     transforms: list[str] = field(default_factory=list)
     blocked: list[dict] = field(default_factory=list)   # Rejected.reasons 항목
+    external: list[str] = field(default_factory=list)   # 현재 BaaS를 그대로 둔 데이터 범위
 
     def violations(self) -> list[dict]:
         return [v for c in self.cells for v in c["violations"]]
@@ -116,6 +129,8 @@ class Recommender:
         self.sqlite = [s for s in self.data if s.engine == "sqlite"]
         self.cells = {(c["scope"], c["candidate"]): c for c in fit["matrix"]}
         self.transform_cells: dict[tuple, dict] = {}
+        self.pin_rules = {r["id"] for r in rules if r.get("config_from") in PIN_CONFIG_KEYS}
+        self.needs_background = any(match_when(NEEDS_BACKGROUND, s.dims) for s in self.app)
 
     # ----- 선택 -----
     def _cell(self, scope: Scope, cid: str, transformed: bool = False) -> dict:
@@ -156,6 +171,13 @@ class Recommender:
             combo.assignment[scope.id] = cid
             combo.cells.append(self._cell(scope, cid, transformed))
         for scope in self.data:
+            if scope.external:
+                keep = scope.current[0]
+                combo.assignment[scope.id] = keep
+                combo.external.append(scope.id)
+                if (scope.id, keep) in self.cells:
+                    combo.cells.append(self.cells[(scope.id, keep)])
+                continue
             if scope.engine == "sqlite" and disk:
                 keep = scope.current[0]
                 combo.assignment[scope.id] = keep
@@ -173,22 +195,38 @@ class Recommender:
         return combo
 
     # ----- 후보 -----
+    def _pinned(self, combo: Combo) -> bool:
+        """scale-to-zero 컴퓨트인데 인스턴스를 붙잡아 두는 설정이 필요한가."""
+        if cap_value(self.components.get(combo.compute), "CP.scale_to_zero") is not True:
+            return False
+        app = {s.id for s in self.app}
+        return any(req["rule"] in self.pin_rules for c in combo.cells if c["scope"] in app
+                   for req in c["requires_config"])
+
+    def _mode_key(self, compute: str) -> int:
+        """과금 방식 동점 깨기: 응답 밖 CPU 유무가 프로필의 필요와 맞으면 0."""
+        has_bg = cap_value(self.components.get(compute), "CP.cpu_after_response") is True
+        return 0 if has_bg == self.needs_background else 1
+
     def _candidate(self, combo: Combo) -> dict:
         used = sorted(set(combo.assignment.values()))
         breakdown, total, unknown, snapshots, unknown_cost = [], 0.0, 0, [], []
+        pinned = self._pinned(combo)
         for cid in used:
-            cost, entry = cost_of(self.components.get(cid))
+            key = "COST.monthly_pinned_usd" if pinned and cid == combo.compute else "COST.monthly_floor_usd"
+            cost, entry = cost_of(self.components.get(cid), key)
             if cost is None:
                 unknown += 1
                 unknown_cost.append(cid)
                 continue
             total += cost
-            item = {"component": cid, "item": "monthly_floor", "monthly_usd": cost,
-                    "price_source": source_of(entry)}
+            item = {"component": cid, "item": "monthly_pinned" if key.endswith("pinned_usd") else "monthly_floor",
+                    "monthly_usd": cost, "price_source": source_of(entry)}
             breakdown.append(item)
             if item["price_source"].get("checked_at"):
                 snapshots.append(item["price_source"]["checked_at"])
-        unknown += sum(1 for c in combo.cells if c["result"] == "unknown")
+        unknown_cells = sum(1 for c in combo.cells if c["result"] == "unknown")
+        unknown += unknown_cells
         ops = [o for o in (ops_of(self.components.get(cid)) for cid in used) if o]
         current = {s.id: s.current for s in self.app + self.data}
         is_current = all(cid in current.get(sid, []) for sid, cid in combo.assignment.items())
@@ -213,7 +251,10 @@ class Recommender:
             "is_current": is_current,
             "paths": [], "cross_scope_violations": [], "sizing": [],
             "transforms": list(combo.transforms),
-            "_config": sum(len(c["requires_config"]) for c in combo.cells),
+            "external_scopes": sorted(combo.external),
+            # 합이 null인 후보끼리는 모르는 구성 요소 수 → 아는 부분의 합으로 가른다(출력에는 쓰지 않는다)
+            "_sort": (unknown_cells, sum(len(c["requires_config"]) for c in combo.cells),
+                      self._mode_key(combo.compute), len(unknown_cost), round(total, 4)),
         }
 
     def run(self) -> dict:
@@ -229,17 +270,19 @@ class Recommender:
                 rejected.append({"id": combo.compute, "reasons": reasons})
             else:
                 feasible.append(self._candidate(combo))
-        feasible.sort(key=lambda c: (c["unknown_count"], _cost_key(c["cost"]["monthly_baseline_usd"]),
-                                     OPS_ORDER[c["ops_burden"]], c["_config"],
+        feasible.sort(key=lambda c: (c["cost"]["monthly_baseline_usd"] is None, c["_sort"][3],
+                                     _cost_key(c["cost"]["monthly_baseline_usd"]), c["_sort"][4], c["_sort"][0],
+                                     OPS_ORDER[c["ops_burden"]], c["_sort"][1], c["_sort"][2],
                                      sorted(c["assignment"].items())))
         for i, cand in enumerate(feasible, start=1):
             cand["id"], cand["rank"] = f"C{i}", i
-            del cand["_config"]
+            del cand["_sort"]
+        outcome, detail = self._outcome(feasible)
         no_feasible = None
-        if not feasible:
+        if outcome == "no_feasible":
             no_feasible = {"blocking": [r["violation"] for rej in rejected for r in rej["reasons"]
                                         if "violation" in r],
-                           "suggestions": [] if self.app else ["앱 워크로드 범위가 없어 컴퓨트를 고를 수 없다"],
+                           "suggestions": [],
                            "enabling_transforms": []}
         used_tf = any(SQLITE_TRANSFORM in c.transforms for c in combos)
         transforms = []
@@ -265,7 +308,34 @@ class Recommender:
             "transforms": transforms,
             "transform_fits": transform_fits,
             "perspectives": None,
+            "outcome": outcome,
+            "outcome_detail": detail,
         }
+
+    def _outcome(self, feasible: list[dict]) -> tuple[str, dict | None]:
+        if feasible:
+            return "recommended", None
+        if self.app:
+            return "no_feasible", None
+        workloads = self.inventory.get("workloads", [])
+        static = sorted(w["id"] for w in workloads if w["kind"] in STATIC_KINDS)
+        if not static:
+            return "not_deployable", {
+                "message": "앱·정적 프런트엔드 워크로드가 없어 배포할 대상이 없다", "current": []}
+        current: list[dict] = []
+        for c in sorted(self.inventory.get("current_components", []),
+                        key=lambda c: (c["scope"], c["component"], c.get("label", ""))):
+            if c["scope"] not in static:
+                continue
+            item = {"scope": c["scope"], "component": c["component"]}
+            if c.get("label"):
+                item["label"] = c["label"]
+            if item not in current:
+                current.append(item)
+        where = ", ".join(f"{c['scope']}: {c.get('label') or c['component']}" for c in current) or "현재 호스팅 미확인"
+        return "static_only", {
+            "message": f"정적 프런트엔드만 있다({where}). 서버 컴퓨트가 필요 없어 컴퓨트를 고르지 않는다",
+            "current": current}
 
 
 def build_recommendation(inventory: dict, profile: dict, fit: dict,

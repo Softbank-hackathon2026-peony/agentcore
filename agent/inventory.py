@@ -298,6 +298,8 @@ def _candidate(c: dict) -> dict:
            "unknown_count": c.get("unknown_count", 0)}
     if c.get("transforms"):
         out["transforms"] = c["transforms"]
+    if c.get("external_scopes"):                     # 바꾸지 않고 그대로 쓰는 외부 서비스(BaaS 등)
+        out["external_scopes"] = c["external_scopes"]
     return out
 
 
@@ -358,6 +360,14 @@ def recommendation_summary(profile: dict, fit: dict, reco: dict) -> dict:
            "app_scope": scope, "dimensions": dims}
     if reco.get("no_feasible"):
         out["no_feasible"] = True
+    if reco.get("outcome"):                           # recommended | no_feasible | static_only | not_deployable
+        out["outcome"] = reco["outcome"]
+        detail = reco.get("outcome_detail")
+        if isinstance(detail, dict):                  # {"message": ..., "current": [{component, label, ...}]}
+            current = [c.get("label") or c.get("component") for c in detail.get("current") or [] if isinstance(c, dict)]
+            detail = (detail.get("message") or "") + (f" / 현재: {', '.join(map(str, current))}" if current else "")
+        if detail:
+            out["outcome_detail"] = str(detail)[:300]
     return out
 
 

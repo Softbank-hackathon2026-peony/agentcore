@@ -99,8 +99,9 @@ def workload_rows(dims: dict, workloads: list[dict], endpoints: list[dict],
                 continue
             own = list(by.get((wid, dim), []))
             if spec["shape"] == "set" and w["kind"] in spec.get("from_kind", {}):
+                # 워크로드 자체가 후보(candidate)면 종류도 확실하지 않다
                 own.append(Observation(wid, dim, spec["from_kind"][w["kind"]], None, (w["entrypoint"],),
-                                       "high"))
+                                       "low" if w.get("status") == "candidate" else "high"))
             eps = ep_vals.get((wid, dim), [])
             # 엔드포인트 행도 관찰로 되돌려 같은 규칙으로 합친다(값을 정한 엔드포인트를 aggregated_from에 남긴다)
             if spec["shape"] == "kinds":

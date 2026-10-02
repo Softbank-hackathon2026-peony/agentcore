@@ -48,7 +48,8 @@ def build_profile(snap: Snapshot, inventory: dict, cfg: dict | None = None) -> d
             dimensions.append({"dimension": a["key"], "scope": scope, "value": a["value"], "source": "assumption",
                                "confidence": "low", "assumption_key": a["key"], "evidence": [],
                                "aggregated_from": app_ids})
-    for a in cfg.get("assumptions", []):
+    # 앱 범위가 없으면 앱에 대한 가정(D2·G3)도 두지 않는다
+    for a in cfg.get("assumptions", []) if app_ids else []:
         assumptions.append({"key": a["key"], "value": a["value"], "reason": a["reason"], "origin": "domain-default"})
     order = {s: i for i, s in enumerate([e["id"] for e in endpoints] + app_ids)}
     dimensions.sort(key=lambda r: (order.get(r["scope"], len(order)), r["scope"], r["dimension"]))

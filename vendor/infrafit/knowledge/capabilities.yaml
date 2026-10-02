@@ -8,6 +8,11 @@
 # - 조사 문서에 적격 인용으로 적힌 값이 없거나, 줄의 인용이 그 값을 뒷받침하지 않으면 키를 생략한다(엔진은 unknown).
 #   추론·반올림·외부 지식은 쓰지 않는다.
 # - COST.monthly_floor_usd 는 조사 문서가 서울 리전 최소 월 비용을 적격 인용과 함께 적은 경우에만 둔다.
+# - COST.monthly_pinned_usd 는 인스턴스 1개를 상시 둘 때의 서울 월 비용(조사 문서 줄에 그 값이 있을 때만).
+#   scale-to-zero 플랫폼에서 인스턴스 고정 설정(CP.single_instance_config·CP.always_on_config)이 필요한 후보는
+#   바닥 비용 대신 이 값을 쓰고, 키가 없으면 비용을 모른다(null).
+# - CP.always_on_config 는 상시 실행이 아닌 플랫폼에서 워커를 붙잡아 두는 설정. 요청 기반 과금 Cloud Run은 요청 밖
+#   CPU가 없어(05:134) 두지 않는다.
 # - ops_burden 은 조사 문서의 해당 줄이 모두 ` ⚠️근거없음`(평가)이라 어느 구성 요소에도 두지 않았다.
 #
 # 생략한 키와 이유(조사 문서 줄 번호, 2026-10-02 공식 문서 재조사 후):
@@ -77,6 +82,10 @@ components:
       COST.monthly_floor_usd:
         value: 0
         source: {doc: "capabilities/05-compute-tier1-2.md", line: 148, url: "https://cloud.google.com/run/pricing", quote: "Idle instances that are not minimum instances are not charged."}
+      # 05:148 "min 1(1 vCPU·0.5 GiB) 유휴 상시 ≈ 월 $13.8". 인스턴스 고정(B1·B3 수동 확장)이 필요할 때 바닥 비용 대신 쓴다.
+      COST.monthly_pinned_usd:
+        value: 13.8
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 148, url: "https://cloud.google.com/run/pricing", quote: "Idle instances that are not minimum instances are not charged."}
       # max-instances 는 잠시 초과될 수 있어(05:139) 쓰지 않는다. 수동 확장(05:149), 트래픽 태그 전용 리비전은 두지 않는 조건.
       CP.single_instance_config:
         value: "수동 확장 --scaling=1"
@@ -105,12 +114,20 @@ components:
       COST.monthly_floor_usd:
         value: 0
         source: {doc: "capabilities/05-compute-tier1-2.md", line: 193, url: "https://cloud.google.com/run/pricing", quote: "from the time the container is started to when it is terminated, with a minimum of 1 minute"}
+      # 05:193 "min 1(1 vCPU·0.5 GiB) 상시 ≈ 월 $59.9(무료 등급 전)". 인스턴스 고정(수동 확장·min-instances)이 필요할 때 쓴다.
+      COST.monthly_pinned_usd:
+        value: 59.9
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 193, url: "https://cloud.google.com/run/pricing", quote: "from the time the container is started to when it is terminated, with a minimum of 1 minute"}
       CP.single_instance_config:
         value: "수동 확장 --scaling=1"
         source: {doc: "capabilities/05-compute-tier1-2.md", line: 194, url: "https://docs.cloud.google.com/run/docs/configuring/services/manual-scaling", quote: "Manual scaling lets you set a specific instance count, regardless of traffic or utilization, and without requiring redeployment."}
       CP.always_on:
         value: false
         source: {doc: "capabilities/05-compute-tier1-2.md", line: 195, url: "https://docs.cloud.google.com/run/docs/configuring/billing-settings", quote: "can be shut down at any time"}
+      # 05:176 "상시 워커는 가능하나 인스턴스가 유휴 시 언제든 종료될 수 있어 min-instances ≥1 필요"
+      CP.always_on_config:
+        value: "min-instances ≥ 1"
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 176, url: "https://docs.cloud.google.com/run/docs/configuring/billing-settings", quote: "allocates CPU even outside of request processing"}
 
   - id: "cp:aws/ecs-fargate/alb"
     target: aws_ecs_fargate

@@ -426,3 +426,12 @@ def test_inventory_summary_with_recommendation_bounded():
     r = s["recommendation"]
     assert r["recommended"]["id"] == "C1" and r["top"] and len(r["top"]) <= 5
     assert all(len(x["reasons"]) <= 3 for x in r["rejected"])
+
+
+def test_inventory_outcome_detail_is_text():
+    from agent import inventory
+    reco = {"outcome": "static_only", "candidates": [], "rejected": [],
+            "outcome_detail": {"message": "정적 사이트", "current": [{"component": "unmapped", "label": "static hosting (vercel.json)"}]}}
+    block = inventory.recommendation_summary({"dimensions": []}, {"matrix": []}, reco)
+    assert block["outcome"] == "static_only"
+    assert block["outcome_detail"] == "정적 사이트 / 현재: static hosting (vercel.json)"

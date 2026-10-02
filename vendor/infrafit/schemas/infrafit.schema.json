@@ -209,7 +209,8 @@
             "realtime",
             "static-frontend",
             "migration-job",
-            "reverse-proxy"
+            "reverse-proxy",
+            "batch"
           ]
         },
         "name": {
@@ -1047,6 +1048,13 @@
             "medium",
             "large"
           ]
+        },
+        "external_scopes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScopeId"
+          },
+          "description": "현재 구성 요소(BaaS 등)를 바꾸지 않고 그대로 배정한 데이터 범위"
         }
       },
       "additionalProperties": false,
@@ -2415,6 +2423,61 @@
               "$ref": "#/$defs/Perspectives"
             }
           ]
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "recommended",
+            "no_feasible",
+            "static_only",
+            "not_deployable"
+          ],
+          "description": "recommended: 후보 있음, no_feasible: 앱 범위는 있으나 실현 가능한 후보 없음, static_only: 정적 프런트엔드만 있어 컴퓨트 선택 불필요, not_deployable: 앱·정적 워크로드 없음"
+        },
+        "outcome_detail": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "current": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "scope": {
+                    "$ref": "#/$defs/ScopeId"
+                  },
+                  "component": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/ComponentId"
+                      },
+                      {
+                        "const": "unmapped"
+                      }
+                    ]
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "scope",
+                  "component"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "message",
+            "current"
+          ]
         }
       },
       "additionalProperties": false,
@@ -2428,7 +2491,8 @@
         "no_feasible",
         "transforms",
         "transform_fits",
-        "perspectives"
+        "perspectives",
+        "outcome"
       ]
     },
     "Adjustment": {

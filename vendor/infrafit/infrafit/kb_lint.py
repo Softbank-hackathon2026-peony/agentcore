@@ -335,8 +335,11 @@ CAPABILITY_KEYS = {
     "CP.scale_to_zero": lambda v: isinstance(v, bool),
     "CP.single_instance_config": lambda v: isinstance(v, str) and bool(v),
     "CP.always_on": lambda v: isinstance(v, bool),
+    "CP.always_on_config": lambda v: isinstance(v, str) and bool(v),
     "DS.engine": lambda v: v in DS_ENGINES,
     "COST.monthly_floor_usd": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0,
+    # 인스턴스를 고정(1개 상시)했을 때 서울 리전 월 비용. scale-to-zero 플랫폼에서 고정 설정이 필요한 후보에 쓴다
+    "COST.monthly_pinned_usd": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0,
 }
 # 조사 문서 줄에 붙은 이 표시가 있으면 그 줄은 근거로 쓸 수 없다(README §3)
 BAD_MARKERS = ("⚠️근거없음", "⚠️출처부적격", "⚠️출처확인필요")
@@ -533,7 +536,8 @@ def _lint_rule_vocabulary(entries: list[dict] | None = None, detectors: dict | N
                 issues.append(f"{rid}: when 값 {v!r}이 {dim} 어휘 {vocab}에 없음")
     return issues
 
-WORKLOAD_KINDS = {"web", "worker", "scheduled", "realtime", "static-frontend", "migration-job", "reverse-proxy"}
+WORKLOAD_KINDS = {"web", "worker", "scheduled", "realtime", "batch", "static-frontend", "migration-job",
+                  "reverse-proxy"}
 DIM_SHAPES = {"set", "ordered", "flag", "kinds"}
 DIM_ID = re.compile(r"^[A-G][0-9]+$")
 PROFILE_SCOPES = {"handler", "request-path", "workload"}

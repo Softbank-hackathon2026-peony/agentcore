@@ -22,7 +22,7 @@ class Observation:
     value: str | None  # ordered·flag·set 차원의 값
     kind: str | None  # kinds 차원의 종류
     evidence: tuple[dict, ...]
-    confidence: str  # high | medium
+    confidence: str  # high | medium | low(후보 워크로드의 종류)
 
 
 def _status_conf(status: str | None) -> str:

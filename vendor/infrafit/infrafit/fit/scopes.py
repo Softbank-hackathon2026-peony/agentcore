@@ -6,7 +6,10 @@ from dataclasses import dataclass, field
 
 from infrafit.fit.engine import COMPUTE_FAMILIES, DATA_FAMILIES, engine_of
 
-APP_KINDS = ("web", "worker", "scheduled", "realtime")
+APP_KINDS = ("web", "worker", "scheduled", "realtime", "batch")
+# 엔진만 알려진(호스팅 미확인·로컬) 저장소의 공급자. 이 밖이면서 능력 표의 클라우드도 아닌 공급자(supabase, firebase 등)는
+# BaaS로 보고 같은 엔진의 관리형으로 바꾸지 않는다.
+PLAIN_VENDORS = ("unspecified", "local")
 ENGINE_FAMILY = {"postgres": "ds", "sqlite": "ds", "redis": "ca"}  # 엔진 → 기본 계열(참고용)
 
 
@@ -18,6 +21,7 @@ class Scope:
     members: list[str]               # 이 범위가 대표하는 인벤토리 범위
     current: list[str] = field(default_factory=list)
     engine: str | None = None
+    external: bool = False           # BaaS 등 현재 구성 요소를 그대로 두는 범위
 
 
 def _family(component_id: str) -> str:
@@ -47,16 +51,32 @@ def app_scopes(inventory: dict, profile: dict) -> list[Scope]:
     return out
 
 
+def _vendor(component_id: str) -> str:
+    return component_id.split(":", 1)[-1].split("/", 1)[0]
+
+
+def is_baas(component_id: str, components: dict[str, dict]) -> bool:
+    """엔진만 알려진 저장소도, 능력 표에 있는 클라우드의 관리형도 아닌 데이터 구성 요소(BaaS)."""
+    clouds = {c.get("cloud") for c in components.values()}
+    vendor = _vendor(component_id)
+    return vendor not in PLAIN_VENDORS and vendor not in clouds
+
+
 def data_scopes(inventory: dict, profile: dict, components: dict[str, dict]) -> list[Scope]:
-    """엔진(postgres|redis|sqlite)을 알 수 있는 저장소 범위."""
+    """엔진(postgres|redis|sqlite)을 알 수 있는 저장소 범위와, 현재 구성 요소가 BaaS인 범위(그대로 둔다)."""
     out = []
     for ds in sorted(inventory.get("datastores", []), key=lambda d: d["id"]):
         current = sorted({c["component"] for c in inventory.get("current_components", [])
                           if c["scope"] == ds["id"] and _family(c["component"]) in DATA_FAMILIES})
+        dims = [d for d in profile.get("dimensions", []) if d["scope"] == ds["id"]]
+        baas = [c for c in current if is_baas(c, components)]
+        if baas:
+            out.append(Scope(id=ds["id"], kind="data", dims=dims, members=[ds["id"]], current=baas,
+                             engine=engine_of(baas[0], components), external=True))
+            continue
         engines = sorted({e for e in (engine_of(c, components) for c in current) if e in ENGINE_FAMILY})
         if not engines:
             continue
-        dims = [d for d in profile.get("dimensions", []) if d["scope"] == ds["id"]]
         out.append(Scope(id=ds["id"], kind="data", dims=dims, members=[ds["id"]],
                          current=current, engine=engines[0]))
     return out
@@ -64,6 +84,8 @@ def data_scopes(inventory: dict, profile: dict, components: dict[str, dict]) -> 
 
 def candidates_for(scope: Scope, components: dict[str, dict]) -> list[str]:
     """범위와 같은 계열의 후보(능력 표에 있는 것) + 현재 구성 요소(능력 표에 있을 때)."""
+    if scope.external:
+        return sorted(set(scope.current))
     if scope.kind == "compute":
         ids = [cid for cid, c in components.items() if c.get("family", _family(cid)) in COMPUTE_FAMILIES]
     else:
