@@ -250,11 +250,18 @@ def _recommendation_warnings(inv: dict) -> list[str]:
     rec = reco.get("recommended")
     if rec:
         cost = rec.get("monthly_baseline_usd")
-        cost_s = f"월 기본 ${cost}" if cost is not None else "월 기본 비용 모름"
-        compute = next((c for c in rec["assignment"].values() if c.startswith("cp:")), "?")
-        head = f"InfraFit: 추천 대상 {rec.get('target') or '?'} ({compute}, {cost_s})"
+        cost_s = f"월 ${cost}" if cost is not None else "월 비용 모름"
+        targets = rec.get("targets") or [rec.get("target") or "?"]
+        placement = rec.get("placement") or {}
+        names = [s.removeprefix("w-") + ("" if len(targets) == 1 else f"→{p.get('target') or '?'}")
+                 for s, p in placement.items()]
+        names_s = ", ".join(names[:6]) + (" …" if len(names) > 6 else "")
+        head = (f"InfraFit: 추천 {rec.get('topology') or '?'}({'+'.join(targets)})"
+                + (f" — {names_s}" if names_s else "") + f" / {cost_s}")
+        if rec.get("multi_target"):
+            head += f" — 워크로드마다 대상이 다름, 주 웹 워크로드 대상은 {rec.get('target') or '?'}"
         if not rec.get("deployable"):
-            head += " — 지금 Worker가 배포할 수 없는 대상"
+            head += f" — {rec.get('target') or '?'}는 지금 Worker가 배포할 수 없는 대상"
     elif reco.get("outcome") == "static_only":
         head = "InfraFit: 정적 사이트만 있어 컴퓨트를 고를 필요가 없습니다 (" + reco.get("outcome_detail", "")[:150] + ")"
     elif reco.get("outcome") == "not_deployable":
@@ -270,10 +277,12 @@ def _recommendation_warnings(inv: dict) -> list[str]:
             dv = why.get("dimension_value")
             dv = ",".join(map(str, dv)) if isinstance(dv, list) else dv
             why_s = f"{why['rule']}: {why.get('dimension')}={dv} / {why.get('capability')}={json.dumps(why.get('capability_value'), ensure_ascii=False)}"
+            if why.get("basis") == "유도":
+                why_s += " [유도]"
         else:
             why_s = why.get("detail", "?")[:80]
         label = r.get("target") or r["component"]
-        if seen.count(r.get("target")) > 1:         # 같은 대상의 다른 방식(예: Cloud Run 요청/인스턴스 과금)
+        if r.get("target") and seen.count(r["target"]) > 1:   # 같은 대상의 다른 방식(예: Cloud Run 요청/인스턴스 과금)
             label += "/" + r["component"].rsplit("/", 1)[-1]
         reasons.append(f"{label}({why_s})")
     return [head + (". 탈락: " + "; ".join(reasons[:4]) if reasons else ".")]

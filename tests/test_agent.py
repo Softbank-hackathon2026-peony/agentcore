@@ -68,7 +68,7 @@ def test_scan_sample_app():
     assert s["dockerfiles"] == ["Dockerfile"]
     assert 8080 in [p["port"] for p in s["port_hints"]]
     assert "PORT" in s["env_names"]
-    assert [w for w in s["warnings"] if not w.startswith("InfraFit: 추천 대상")] == []
+    assert [w for w in s["warnings"] if not w.startswith("InfraFit: 추천 ")] == []
 
 
 def test_scan_multi_service_warns():
@@ -344,28 +344,32 @@ def test_inventory_recommendation_fixtures():
     reco = s["inventory"]["summary"]["recommendation"]
     assert "stage_error" not in s["inventory"]
     assert reco["recommended"]["target"] == "aws_lambda" and reco["recommended"]["deployable"] is True
-    assert reco["recommended"]["assignment"] == {"w-app": "cp:aws/lambda/function-url"}
+    rec = reco["recommended"]
+    assert rec["topology"] == "services" and rec["targets"] == ["aws_lambda"] and "multi_target" not in rec
+    assert rec["placement"] == {"w-root": {"component": "cp:aws/lambda/function-url", "target": "aws_lambda",
+                                           "deployable": True}}
     assert 1 <= len(reco["top"]) <= 5 and reco["top"][0] == reco["recommended"]
     assert set(reco["dimensions"]) == set(inventory.APP_DIMENSIONS)
     assert reco["dimensions"]["A2"]["assumed"] is True and reco["dimensions"]["A2"]["why"]
-    assert any(w.startswith("InfraFit: 추천 대상 aws_lambda") for w in s["warnings"])
+    assert any(w.startswith("InfraFit: 추천 services(aws_lambda) — root / ") for w in s["warnings"])
 
     m = scan(source.load(MULTI))
     reco = m["inventory"]["summary"]["recommendation"]
     rec = reco["recommended"]
-    assert rec["target"] == "aws_ec2" and rec["assignment"]["w-app"] == "cp:aws/ec2/docker-compose"
-    assert set(rec["assignment"]) == {"w-app", "ds-postgresql", "svc-redis"}
+    assert rec["target"] == "aws_ec2" and rec["topology"] == "vm-compose"
+    assert {p["component"] for p in rec["placement"].values()} == {"cp:aws/ec2/docker-compose"}
+    assert set(rec["datastores"]) == {"ds-postgresql", "svc-redis"}
     assert rec["monthly_baseline_usd"] is None or rec["monthly_baseline_usd"] > 0
     lam = next(r for r in reco["rejected"] if r["target"] == "aws_lambda")
     why = lam["reasons"][0]
     assert why["rule"] == "CAP-ALWAYSON-001" and why["dimension"] == "A1"
-    assert why["dimension_value"] == ["웹", "워커"] and why["capability_value"] is False
-    assert why["source"]["url"].startswith("https://") and why["source"]["quote"]
+    assert why["scope"] == "w-worker" and why["dimension_value"] == ["워커"] and why["capability_value"] is False
+    assert why["source"]["url"].startswith("https://") and why["source"]["quote"] and why["basis"] == "공식"
     tree = source.load(MULTI)
     for at in reco["dimensions"]["A1"]["at"]:                  # 근거는 실제 파일·줄
         path, _, ln = at.partition(":")
         assert tree.exists(path) and 1 <= int(ln) <= len(tree.lines(path))
-    warn = next(w for w in m["warnings"] if w.startswith("InfraFit: 추천 대상"))
+    warn = next(w for w in m["warnings"] if w.startswith("InfraFit: 추천 "))
     assert "aws_ec2" in warn and "탈락: aws_lambda(CAP-ALWAYSON-001" in warn
 
 
@@ -435,3 +439,119 @@ def test_inventory_outcome_detail_is_text():
     block = inventory.recommendation_summary({"dimensions": []}, {"matrix": []}, reco)
     assert block["outcome"] == "static_only"
     assert block["outcome_detail"] == "정적 사이트 / 현재: static hosting (vercel.json)"
+
+
+def _placement_reco():
+    """웹 둘(Lambda) + 워커·프록시(Fargate) — 대상이 워크로드마다 다른 추천."""
+    place = [("w-web", "cp:aws/lambda/function-url", "aws_lambda"), ("w-admin", "cp:aws/lambda/function-url", "aws_lambda"),
+             ("w-nginx", "cp:aws/ecs-fargate/alb", "aws_ecs_fargate"), ("w-worker", "cp:aws/ecs-fargate/alb", "aws_ecs_fargate")]
+    cand = {"id": "C1", "rank": 1, "topology": "services", "unknown_count": 2,
+            "assignment": {**{s: c for s, c, _ in place}, "ds-postgresql": "ds:aws/rds-postgres/single-az"},
+            "placement": [{"scope": s, "component": c, "target": t, "min_replicas": 1} for s, c, t in place],
+            "cost": {"monthly_baseline_usd": None},
+            "derived_facts": [{"scope": "w-nginx", "component": "cp:aws/ecs-fargate/alb", "rule": "CAP-PROXY-001",
+                               "capability_key": "CP.runs_long_lived_server", "actual": True,
+                               "source": {"basis": "derived", "quote": "q", "ref": "https://x",
+                                          "reasoning": "서비스가 태스크를 계속 실행한다"}}]}
+    gke = {"id": "C2", "rank": 2, "topology": "kubernetes", "unknown_count": 0,
+           "assignment": {s: "cp:gcp/gke/autopilot" for s, _, _ in place},
+           "placement": [{"scope": s, "component": "cp:gcp/gke/autopilot", "target": "gcp_gke"} for s, _, _ in place],
+           "cost": {"monthly_baseline_usd": 193.65}}
+    rejected = [{"id": "vm-compose/cp:aws/ec2/docker-compose/managed-data", "reasons": [{"type": "violation", "detail": "d",
+                 "violation": {"rule": "CAP-SCALE-001", "dimension": "D6", "capability_key": "CP.horizontal_scaling",
+                               "actual": False, "source": {"basis": "derived", "ref": "https://y", "quote": "q",
+                                                           "reasoning": "단일 노드"}}}]}]
+    kinds = {"w-admin": "web", "w-web": "web", "w-nginx": "reverse-proxy", "w-worker": "worker"}
+    return {"recommended": "C1", "candidates": [cand, gke], "rejected": rejected, "outcome": "recommended"}, kinds
+
+
+def test_inventory_placements_multi_target():
+    reco, kinds = _placement_reco()
+    block = inventory.recommendation_summary({"dimensions": []}, {"matrix": []}, reco, kinds)
+    rec = block["recommended"]
+    assert rec["target"] == "aws_lambda"                      # 주 웹 워크로드 = 웹 범위 중 id 순 첫째 (w-admin)
+    assert rec["targets"] == ["aws_ecs_fargate", "aws_lambda"] and rec["multi_target"] is True
+    assert rec["placement"]["w-worker"] == {"component": "cp:aws/ecs-fargate/alb", "target": "aws_ecs_fargate",
+                                            "deployable": False}
+    assert rec["datastores"] == {"ds-postgresql": "ds:aws/rds-postgres/single-az"}
+    assert rec["monthly_baseline_usd"] is None and rec["unknown_count"] == 2
+    assert rec["derived_facts"] == ["w-nginx CP.runs_long_lived_server=true: 서비스가 태스크를 계속 실행한다"]
+    k8s = block["top"][1]
+    assert k8s["topology"] == "kubernetes" and k8s["target"] == "gcp_gke" and k8s["deployable"] is False
+    assert "multi_target" not in k8s
+    rej = block["rejected"][0]
+    assert rej["target"] == "aws_ec2"                         # 조합 id 에서도 대상을 찾는다
+    assert rej["reasons"][0]["basis"] == "유도" and rej["reasons"][0]["reasoning"] == "단일 노드"
+    # 웹이 없으면 첫 배치
+    no_web = inventory.recommendation_summary({"dimensions": []}, {"matrix": []}, reco, {})
+    assert no_web["recommended"]["target"] == "aws_lambda"
+
+
+def test_scan_warning_names_topology_and_targets():
+    from agent.scan import _recommendation_warnings
+    reco, kinds = _placement_reco()
+    block = inventory.recommendation_summary({"dimensions": []}, {"matrix": []}, reco, kinds)
+    w = _recommendation_warnings({"status": "ok", "summary": {"recommendation": block}})[0]
+    assert w.startswith("InfraFit: 추천 services(aws_ecs_fargate+aws_lambda) — web→aws_lambda, admin→aws_lambda, "
+                        "nginx→aws_ecs_fargate, worker→aws_ecs_fargate / 월 비용 모름")
+    assert "주 웹 워크로드 대상은 aws_lambda" in w and "[유도]" in w
+    reco["candidates"] = [reco["candidates"][1]]
+    reco["recommended"] = "C2"
+    block = inventory.recommendation_summary({"dimensions": []}, {"matrix": []}, reco, kinds)
+    w = _recommendation_warnings({"status": "ok", "summary": {"recommendation": block}})[0]
+    assert w.startswith("InfraFit: 추천 kubernetes(gcp_gke) — web, admin, nginx, worker / 월 $193.65")
+    assert "gcp_gke는 지금 Worker가 배포할 수 없는 대상" in w
+
+
+def test_scan_warning_outcome_texts():
+    from agent.scan import _recommendation_warnings
+    for outcome, detail, text in [
+            ("not_deployable", {"message": "사람이 실행하는 도구: 배치만 있음", "current": []}, "배포할 서버·정적 사이트가 없습니다"),
+            ("static_only", {"message": "정적 프런트엔드만", "current": [{"label": "vercel"}]}, "정적 사이트만 있어")]:
+        block = inventory.recommendation_summary({"dimensions": []}, {"matrix": []},
+                                                 {"outcome": outcome, "outcome_detail": detail, "candidates": []})
+        w = _recommendation_warnings({"status": "ok", "summary": {"recommendation": block}})[0]
+        assert text in w and detail["message"] in w
+
+
+def test_catalog_kubernetes_targets_comparison_only():
+    from agent import catalog
+    from agent.schemas import TargetId
+    from typing import get_args
+    for tid, label in [("gcp_gke", "Google Kubernetes Engine (Autopilot)"), ("aws_eks", "Amazon EKS")]:
+        t = catalog.TARGETS[tid]
+        assert t["label"] == label and set(t["sizes"]) == set(catalog.SIZES) and t["permissions"]
+        assert not catalog.is_deployable(tid) and tid in get_args(TargetId)
+        assert f"- {tid} [비교용 (지금은 배포 불가)] {label} (Kubernetes 클러스터)" in catalog.describe_for_prompt()
+    assert set(get_args(TargetId)) == set(catalog.TARGETS)
+
+
+def test_validate_kubernetes_target_falls_back(tmp_path):
+    from tests.fakes import FakeBrain, recommendation
+    from agent.schemas import Candidate
+    rec = recommendation(target="gcp_gke")
+    rec.candidates = [Candidate(target="gcp_gke", fit=95, verdict="추천", why="k8s"), *rec.candidates]
+    out, _ = analyze(tmp_path, brain=FakeBrain(rec=rec))
+    r = out["recommendation"]
+    assert r["target"] == "aws_lambda"
+    gke = next(c for c in r["candidates"] if c["target"] == "gcp_gke")
+    assert gke["deployable"] is False and gke["label"] == "Google Kubernetes Engine (Autopilot)"
+    assert "aws_eks" not in [c["target"] for c in r["candidates"]]
+
+
+def test_inventory_placement_summary_bounded():
+    reco, kinds = _placement_reco()
+    big = reco["candidates"][1]
+    big["placement"] = [{"scope": f"w-svc-{i:02d}-" + "n" * 30, "component": "cp:gcp/gke/autopilot", "target": "gcp_gke"}
+                        for i in range(60)]
+    reco["candidates"] = [big] * 5
+    reco["recommended"] = "C2"
+    inv = {"workloads": [{"id": f"w-svc-{i:02d}", "kind": "web", "name": "s" * 30,
+                          "scaling": {"min": 2, "max": 20, "autoscale": True, "evidence": []}} for i in range(60)],
+           "endpoints": []}
+    s = inventory.summarize(inv, {"dimensions": []}, {"matrix": []}, reco)
+    assert len(json.dumps(s, ensure_ascii=False).encode()) <= inventory.MAX_SUMMARY_BYTES
+    r = s["recommendation"]
+    assert len(json.dumps(r, ensure_ascii=False).encode()) <= inventory.MAX_RECOMMENDATION_BYTES
+    assert r["recommended"]["placement_truncated"] is True and len(r["top"]) == 1
+    assert s["workloads"][0]["scaling"] == {"min": 2, "max": 20, "autoscale": True}

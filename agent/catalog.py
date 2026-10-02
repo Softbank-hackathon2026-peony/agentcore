@@ -43,6 +43,23 @@ TARGETS: dict[str, dict] = {
         "good_for": "GCP에서 항상 켜진 서버",
         "limits": "켜져 있는 동안 계속 과금",
     },
+    # Kubernetes 클러스터 (InfraFit 추천 비교용). Worker 배포 모듈이 없어 기본값으로는 배포 대상이 아니다.
+    "gcp_gke": {
+        "cloud": "gcp", "architecture": "gke", "label": "Google Kubernetes Engine (Autopilot)",
+        "kubernetes": True,
+        "sizes": {"micro": "Pod 0.25 vCPU / 0.5GiB", "small": "Pod 0.5 vCPU / 1GiB", "medium": "Pod 1 vCPU / 2GiB"},
+        "permissions": ["Artifact Registry 이미지 읽기", "로드밸런서 공개"],
+        "good_for": "여러 서비스·워커를 한 클러스터에서 오토스케일 (k8s 매니페스트가 이미 있는 저장소)",
+        "limits": "클러스터 관리 요금과 Pod 자원 요청만큼 계속 과금, 운영 지식 필요",
+    },
+    "aws_eks": {
+        "cloud": "aws", "architecture": "eks", "label": "Amazon EKS",
+        "kubernetes": True,
+        "sizes": {"micro": "노드 t3.small", "small": "노드 t3.medium", "medium": "노드 t3.large"},
+        "permissions": ["ECR 이미지 읽기", "로드밸런서 공개"],
+        "good_for": "여러 서비스·워커를 한 클러스터에서 오토스케일 (k8s 매니페스트가 이미 있는 저장소)",
+        "limits": "클러스터 시간당 요금 + 노드가 켜져 있는 동안 계속 과금, 운영 지식 필요",
+    },
 }
 
 SIZES = ("micro", "small", "medium")
@@ -62,5 +79,6 @@ def describe_for_prompt() -> str:
     for tid, t in TARGETS.items():
         flag = "배포 가능" if is_deployable(tid) else "비교용 (지금은 배포 불가)"
         sizes = ", ".join(f"{k}={v}" for k, v in t["sizes"].items())
-        lines.append(f"- {tid} [{flag}] {t['label']}: 적합 = {t['good_for']} / 제약 = {t['limits']} / 크기 = {sizes}")
+        kind = " (Kubernetes 클러스터)" if t.get("kubernetes") else ""
+        lines.append(f"- {tid} [{flag}] {t['label']}{kind}: 적합 = {t['good_for']} / 제약 = {t['limits']} / 크기 = {sizes}")
     return "\n".join(lines)

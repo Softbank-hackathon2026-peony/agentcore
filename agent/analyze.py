@@ -111,8 +111,8 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
             continue
         seen.add(c.target)
         candidates.append(_candidate(c.target, c.fit, c.verdict, c.why, rec.size))
-    for tid in catalog.TARGETS:        # LLM이 빠뜨린 대상도 표시 (적합도 없음)
-        if tid not in seen:
+    for tid, t in catalog.TARGETS.items():   # LLM이 빠뜨린 대상도 표시 (적합도 없음). k8s 비교 대상은 LLM이 고를 때만
+        if tid not in seen and not (t.get("kubernetes") and not catalog.is_deployable(tid)):
             candidates.append(_candidate(tid, None, "부적합" if not catalog.is_deployable(tid) else "적합",
                                          "모델이 평가하지 않음", rec.size))
     for i, c in enumerate(candidates, 1):
