@@ -220,6 +220,7 @@ def _inventory_warnings(inv: dict) -> list[str]:
     if needs:
         names = ", ".join(f"{x['id']}({', '.join(x['secrets'][:3])})" for x in needs[:5])
         out.append(f"InfraFit: 비밀값이 필요한 외부 서비스가 있습니다: {names}")
+    out += _recommendation_warnings(inv)
     return out
 
 
@@ -237,6 +238,45 @@ def _suspicious_instructions(src: SourceTree, paths: list[str], limit: int = 10)
                 if len(found) >= limit:
                     return found
     return found
+
+
+def _recommendation_warnings(inv: dict) -> list[str]:
+    if inv.get("stage_error"):
+        err = inv["stage_error"]
+        return [f"InfraFit: 추천 단계({err['stage']})를 끝내지 못해 인벤토리(S1)만 씁니다: {err['message'][:200]}"]
+    reco = inv["summary"].get("recommendation")
+    if not reco:
+        return []
+    rec = reco.get("recommended")
+    if rec:
+        cost = rec.get("monthly_baseline_usd")
+        cost_s = f"월 기본 ${cost}" if cost is not None else "월 기본 비용 모름"
+        compute = next((c for c in rec["assignment"].values() if c.startswith("cp:")), "?")
+        head = f"InfraFit: 추천 대상 {rec.get('target') or '?'} ({compute}, {cost_s})"
+        if not rec.get("deployable"):
+            head += " — 지금 Worker가 배포할 수 없는 대상"
+    elif reco.get("outcome") == "static_only":
+        head = "InfraFit: 정적 사이트만 있어 컴퓨트를 고를 필요가 없습니다 (" + reco.get("outcome_detail", "")[:150] + ")"
+    elif reco.get("outcome") == "not_deployable":
+        head = "InfraFit: 배포할 서버·정적 사이트가 없습니다 (" + reco.get("outcome_detail", "")[:150] + ")"
+    else:
+        head = "InfraFit: 조건을 모두 만족하는 컴퓨트 후보가 없습니다"
+    rejected = reco.get("rejected") or []
+    seen = [r.get("target") for r in rejected] + [(rec or {}).get("target")]
+    reasons = []
+    for r in rejected:
+        why = r["reasons"][0] if r.get("reasons") else {}
+        if "rule" in why:
+            dv = why.get("dimension_value")
+            dv = ",".join(map(str, dv)) if isinstance(dv, list) else dv
+            why_s = f"{why['rule']}: {why.get('dimension')}={dv} / {why.get('capability')}={json.dumps(why.get('capability_value'), ensure_ascii=False)}"
+        else:
+            why_s = why.get("detail", "?")[:80]
+        label = r.get("target") or r["component"]
+        if seen.count(r.get("target")) > 1:         # 같은 대상의 다른 방식(예: Cloud Run 요청/인스턴스 과금)
+            label += "/" + r["component"].rsplit("/", 1)[-1]
+        reasons.append(f"{label}({why_s})")
+    return [head + (". 탈락: " + "; ".join(reasons[:4]) if reasons else ".")]
 
 
 def _line_of(src: SourceTree, path: str, needle: str) -> int:

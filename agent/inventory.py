@@ -1,7 +1,11 @@
-"""InfraFit S1 인벤토리 (LLM 없음, 규칙 기반).
+"""InfraFit S1~S4 인벤토리·추천 (LLM 없음, 규칙 기반).
 
-vendor/infrafit 의 InfraFit을 별도 프로세스로 S0+S1까지 돌려서 inventory.json 을 읽고,
-LLM 프롬프트에 넣을 수 있게 작게(약 8KB 이하) 요약한다.
+vendor/infrafit 의 InfraFit을 별도 프로세스로 S0~S4까지 돌려서 inventory.json (S1),
+profile.json (S2), fit.json (S3), recommendation.json (S4) 을 읽고,
+LLM 프롬프트에 넣을 수 있게 작게(약 10KB 이하) 요약한다.
+
+- S1 은 성공했는데 S2~S4 에서 실패·시간 초과하면 S1 요약은 그대로 두고
+  `stage_error: {"stage", "message"}` 로 알린다 (status 는 "ok").
 
 - 소스는 임시 폴더에 풀어서 넘긴다. 비밀 파일(.env, 키 등)은 쓰지 않는다.
   .env.example 류는 변수 이름만 남기고 값은 지운 채로 쓴다 (줄 번호는 그대로).
@@ -16,23 +20,53 @@ import re
 import subprocess
 import sys
 import tempfile
+from functools import lru_cache
 from pathlib import Path
 
+from . import catalog
 from .source import SourceTree, is_secret
 
 CODE_ROOT = Path(__file__).resolve().parent.parent        # 배포 zip 루트 (의존성도 여기 설치됨)
 VENDOR_DIR = CODE_ROOT / "vendor" / "infrafit"
-MAX_SUMMARY_BYTES = 8000
+MAX_SUMMARY_BYTES = 10000                                  # 요약 전체 (S1 + recommendation)
+MAX_RECOMMENDATION_BYTES = 4000                            # 그중 recommendation 블록
+APP_DIMENSIONS = ("A1", "A2", "A3", "A4", "B1", "B2", "B3", "E2")
 ENV_EXAMPLE_FILES = {".env.example", ".env.sample", ".env.template", "env.example"}
 EXPLICIT_SETTING = re.compile(r"timeout|body", re.I)
 RUN_ID = "run"
 
-_RUNNER = (
-    "import sys\n"
-    "from pathlib import Path\n"
-    "from infrafit.pipeline import analyze\n"
-    "analyze(sys.argv[1], Path(sys.argv[2]), until='S1', run_id=sys.argv[3])\n"
-)
+# InfraFit pipeline.analyze 를 그대로 쓰고, 단계 함수가 불릴 때마다 진행 단계를 파일에 남긴다.
+# 단계 N 의 정합성 검사는 단계 N+1 함수가 불리기 전에 끝나므로, 실패 단계 = 마지막으로 시작한 단계다.
+_RUNNER = """
+import json, sys, traceback
+from pathlib import Path
+from infrafit import pipeline
+
+out, progress = Path(sys.argv[2]), Path(sys.argv[2]) / "progress.json"
+out.mkdir(parents=True, exist_ok=True)
+state = {"stage": "S0"}
+
+def _track(stage, fn):
+    def run(*a, **k):
+        state["stage"] = stage
+        progress.write_text(json.dumps(state), encoding="utf-8")
+        return fn(*a, **k)
+    return run
+
+for st in ("S1", "S2", "S3", "S4"):
+    name = "run_" + st.lower()
+    setattr(pipeline, name, _track(st, getattr(pipeline, name)))
+try:
+    pipeline.analyze(sys.argv[1], out, until="S4", run_id=sys.argv[3])
+except Exception as e:
+    state["error"] = (type(e).__name__ + ": " + str(e))[:300]
+    progress.write_text(json.dumps(state), encoding="utf-8")
+    traceback.print_exc()
+    sys.exit(3)
+state["stage"] = "done"
+progress.write_text(json.dumps(state), encoding="utf-8")
+"""
+STAGE_FILES = {"S2": "profile.json", "S3": "fit.json", "S4": "recommendation.json"}
 
 
 def run_inventory(src: SourceTree, timeout_s: int = 60) -> dict:
@@ -42,18 +76,42 @@ def run_inventory(src: SourceTree, timeout_s: int = 60) -> dict:
             _materialize(src, repo)
             env = {**os.environ, "PYTHONPATH": os.pathsep.join(
                 [str(VENDOR_DIR), str(CODE_ROOT), *filter(None, [os.environ.get("PYTHONPATH")])])}
+            stage_error = None
             try:
                 proc = subprocess.run([sys.executable, "-c", _RUNNER, str(repo), str(out), RUN_ID],
                                       capture_output=True, text=True, timeout=timeout_s, env=env, cwd=tmp)
             except subprocess.TimeoutExpired:
-                return {"status": "timeout", "message": f"InfraFit 인벤토리가 {timeout_s}초 안에 끝나지 않음"}
-            if proc.returncode != 0:
-                tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-1:] or ["(출력 없음)"]
-                return {"status": "error", "message": f"InfraFit 실패 (exit {proc.returncode}): {tail[0][:300]}"}
-            inventory = json.loads((out / RUN_ID / "inventory.json").read_text(encoding="utf-8"))
-            return {"status": "ok", "infrafit_commit": _commit(), "summary": summarize(inventory)}
+                stage = _progress(out).get("stage")
+                if stage not in STAGE_FILES:
+                    return {"status": "timeout", "message": f"InfraFit 인벤토리가 {timeout_s}초 안에 끝나지 않음"}
+                stage_error = {"stage": stage, "message": f"InfraFit {stage} 가 {timeout_s}초 안에 끝나지 않음 (timeout)"}
+            else:
+                if proc.returncode != 0:
+                    prog = _progress(out)
+                    tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-1:] or ["(출력 없음)"]
+                    message = f"InfraFit 실패 (exit {proc.returncode}): {(prog.get('error') or tail[0])[:300]}"
+                    if prog.get("stage") not in STAGE_FILES:
+                        return {"status": "error", "message": message}
+                    stage_error = {"stage": prog["stage"], "message": message}
+            run_dir = out / RUN_ID
+            inventory = json.loads((run_dir / "inventory.json").read_text(encoding="utf-8"))
+            later = {}
+            if stage_error is None:
+                later = {st: json.loads((run_dir / f).read_text(encoding="utf-8")) for st, f in STAGE_FILES.items()}
+            result = {"status": "ok", "infrafit_commit": _commit(),
+                      "summary": summarize(inventory, later.get("S2"), later.get("S3"), later.get("S4"))}
+            if stage_error:
+                result["stage_error"] = stage_error
+            return result
     except Exception as e:  # noqa: BLE001 — 인벤토리는 보조 정보라 어떤 실패도 analyze 를 막지 않는다
         return {"status": "error", "message": f"{type(e).__name__}: {str(e)[:300]}"}
+
+
+def _progress(out: Path) -> dict:
+    try:
+        return json.loads((out / "progress.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
 
 
 def _materialize(src: SourceTree, root: Path) -> None:
@@ -105,7 +163,8 @@ def _ats(evs, n: int = 2) -> list[str]:
     return [a for a in (_at(e) for e in (evs or [])[:n]) if a]
 
 
-def summarize(inv: dict) -> dict:
+def summarize(inv: dict, profile: dict | None = None, fit: dict | None = None,
+              reco: dict | None = None) -> dict:
     eps = inv.get("endpoints") or []
     per_workload: dict[str, int] = {}
     for e in eps:
@@ -150,7 +209,12 @@ def summarize(inv: dict) -> dict:
         "request_paths": dict(list(paths.items())[:10]),
         "unmapped": [u.get("label") for u in inv.get("unmapped") or []][:20],
     }
-    return _bound(summary)
+    if reco is None or profile is None:
+        return _bound(summary)
+    block = _bound_recommendation(recommendation_summary(profile, fit or {}, reco))
+    _bound(summary, MAX_SUMMARY_BYTES - _size(block) - len(', "recommendation": '))
+    summary["recommendation"] = block
+    return summary
 
 
 def _component_of(inv: dict, scope: str) -> str | None:
@@ -161,7 +225,7 @@ def _size(obj) -> int:
     return len(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
 
 
-def _bound(summary: dict) -> dict:
+def _bound(summary: dict, limit: int = MAX_SUMMARY_BYTES) -> dict:
     """크기 상한을 넘으면 가장 긴 목록부터 반씩 줄인다."""
     def lists(s):
         yield "endpoints.first", s["endpoints"], "first"
@@ -169,7 +233,7 @@ def _bound(summary: dict) -> dict:
             yield k, s, k
         yield "request_paths", s, "request_paths"
 
-    while _size(summary) > MAX_SUMMARY_BYTES:
+    while _size(summary) > limit:
         name, holder, key = max(lists(summary), key=lambda t: _size(t[1][t[2]]))
         items = holder[key]
         if not items:                      # 더 줄일 목록이 없다
@@ -184,3 +248,142 @@ def _bound(summary: dict) -> dict:
         if name not in summary["truncated"]:
             summary["truncated"].append(name)
     return summary
+
+
+# ---------------- 추천 (S2~S4) ----------------
+
+@lru_cache(maxsize=1)
+def _targets() -> dict[str, str]:
+    """capabilities.yaml 의 구성 요소 id → AgentCore 배포 대상 id (catalog.TARGETS)."""
+    try:
+        import yaml
+        data = yaml.safe_load((VENDOR_DIR / "knowledge" / "capabilities.yaml").read_text(encoding="utf-8"))
+        return {c["id"]: c["target"] for c in data.get("components") or [] if c.get("id") and c.get("target")}
+    except Exception:  # noqa: BLE001 — 대상 이름이 없어도 요약은 만든다
+        return {}
+
+
+def _short(text, n: int = 160) -> str:
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= n else text[: n - 1] + "…"
+
+
+def _app_scope(profile: dict, reco: dict) -> str | None:
+    """추천 1순위 조합에서 컴퓨트(cp:)가 배정된 범위. 없으면 앱 집계 범위(aggregated_from 있는 w-*)."""
+    for cand in reco.get("candidates") or []:
+        for scope, comp in (cand.get("assignment") or {}).items():
+            if str(comp).startswith("cp:"):
+                return scope
+    dims = [d for d in profile.get("dimensions") or [] if str(d.get("scope", "")).startswith("w-")]
+    agg = sorted({d["scope"] for d in dims if d.get("aggregated_from")})
+    scopes = agg or sorted({d["scope"] for d in dims})
+    return scopes[0] if scopes else None
+
+
+def _dim_value(v):
+    if isinstance(v, dict) and "value" in v:          # {"value": "있음", "kinds": [...]}
+        return f"{v['value']} ({', '.join(map(str, v['kinds']))})" if v.get("kinds") else v["value"]
+    return v
+
+
+def _candidate(c: dict) -> dict:
+    targets = _targets()
+    assignment = c.get("assignment") or {}
+    compute = next((comp for comp in assignment.values() if str(comp).startswith("cp:")), None)
+    target = targets.get(compute)
+    out = {"id": c.get("id"), "rank": c.get("rank"), "target": target,
+           "deployable": catalog.is_deployable(target) if target else False,
+           "assignment": assignment,
+           "monthly_baseline_usd": (c.get("cost") or {}).get("monthly_baseline_usd"),
+           "unknown_count": c.get("unknown_count", 0)}
+    if c.get("transforms"):
+        out["transforms"] = c["transforms"]
+    if c.get("external_scopes"):                     # 바꾸지 않고 그대로 쓰는 외부 서비스(BaaS 등)
+        out["external_scopes"] = c["external_scopes"]
+    return out
+
+
+def recommendation_summary(profile: dict, fit: dict, reco: dict) -> dict:
+    scope = _app_scope(profile, reco)
+    reasons_by_assumption = {a.get("key"): a.get("reason") for a in profile.get("assumptions") or []}
+    dims, dim_values = {}, {}
+    for d in profile.get("dimensions") or []:
+        if d.get("scope") != scope or d.get("dimension") not in APP_DIMENSIONS:
+            continue
+        row = {"value": _dim_value(d.get("value"))}
+        at = _ats(d.get("evidence"), 2)
+        if at:
+            row["at"] = at
+        if d.get("source") == "assumption":
+            row["assumed"] = True
+            row["why"] = _short(reasons_by_assumption.get(d.get("assumption_key") or d["dimension"]), 120)
+        dims[d["dimension"]] = row
+        dim_values[d["dimension"]] = row["value"]
+
+    targets = _targets()
+    rejected, seen = [], set()
+
+    def add_reason(component: str, v: dict | None, detail: str | None = None):
+        entry = next((r for r in rejected if r["component"] == component), None)
+        if entry is None:
+            entry = {"component": component, "target": targets.get(component), "reasons": []}
+            rejected.append(entry)
+        if v:
+            key = (component, v.get("rule"), v.get("dimension"), v.get("capability_key"))
+            if key in seen:
+                return
+            seen.add(key)
+            src = v.get("source") or {}
+            entry["reasons"].append({
+                "rule": v.get("rule"), "dimension": v.get("dimension"),
+                "dimension_value": dim_values.get(v.get("dimension")),
+                "capability": v.get("capability_key"), "capability_value": v.get("actual"),
+                "source": {"url": src.get("ref") or src.get("url"), "quote": _short(src.get("quote"), 140)}})
+        elif detail:
+            entry["reasons"].append({"detail": _short(detail, 160)})
+
+    for rej in reco.get("rejected") or []:
+        for r in rej.get("reasons") or []:
+            add_reason(rej.get("id"), r.get("violation"), r.get("detail"))
+    for cell in fit.get("matrix") or []:            # S4 가 조합으로 못 만든 컴퓨트 탈락도 놓치지 않게
+        if cell.get("result") == "infeasible" and str(cell.get("candidate", "")).startswith("cp:"):
+            for v in cell.get("violations") or []:
+                add_reason(cell["candidate"], v)
+    for entry in rejected:
+        entry["reasons"] = entry["reasons"][:3]
+
+    cands = reco.get("candidates") or []
+    rec = next((c for c in cands if c.get("id") == reco.get("recommended")), None)
+    out = {"recommended": _candidate(rec) if rec else None,
+           "top": [_candidate(c) for c in cands[:5]],
+           "rejected": rejected,
+           "app_scope": scope, "dimensions": dims}
+    if reco.get("no_feasible"):
+        out["no_feasible"] = True
+    if reco.get("outcome"):                           # recommended | no_feasible | static_only | not_deployable
+        out["outcome"] = reco["outcome"]
+        detail = reco.get("outcome_detail")
+        if isinstance(detail, dict):                  # {"message": ..., "current": [{component, label, ...}]}
+            current = [c.get("label") or c.get("component") for c in detail.get("current") or [] if isinstance(c, dict)]
+            detail = (detail.get("message") or "") + (f" / 현재: {', '.join(map(str, current))}" if current else "")
+        if detail:
+            out["outcome_detail"] = str(detail)[:300]
+    return out
+
+
+def _bound_recommendation(block: dict) -> dict:
+    """recommendation 블록 상한: 탈락 근거 인용 → 후보 수 → 탈락 수 순으로 줄인다."""
+    if _size(block) > MAX_RECOMMENDATION_BYTES:
+        for entry in block["rejected"]:
+            for r in entry["reasons"]:
+                if "source" in r:
+                    r["source"].pop("quote", None)
+    while _size(block) > MAX_RECOMMENDATION_BYTES and len(block["top"]) > 1:
+        block["top"] = block["top"][:-1]
+    while _size(block) > MAX_RECOMMENDATION_BYTES and block["rejected"]:
+        block["rejected"] = block["rejected"][:-1]
+    for d in block["dimensions"].values():
+        if _size(block) <= MAX_RECOMMENDATION_BYTES:
+            break
+        d.pop("why", None)
+    return block

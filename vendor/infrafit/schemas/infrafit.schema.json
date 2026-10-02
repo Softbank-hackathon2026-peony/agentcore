@@ -209,7 +209,8 @@
             "realtime",
             "static-frontend",
             "migration-job",
-            "reverse-proxy"
+            "reverse-proxy",
+            "batch"
           ]
         },
         "name": {
@@ -917,7 +918,11 @@
       "type": "object",
       "properties": {
         "monthly_baseline_usd": {
-          "type": "number"
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "월 최소 비용 합. 배정된 구성 요소 중 하나라도 비용을 모르면 null(0이나 부분합을 쓰지 않는다)."
         },
         "peak_hourly_usd": {
           "type": "number"
@@ -950,6 +955,13 @@
               "monthly_usd"
             ]
           }
+        },
+        "unknown_cost_components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ComponentId"
+          },
+          "description": "비용(COST.monthly_floor_usd)을 모르는 구성 요소. 비어 있지 않으면 monthly_baseline_usd 는 null."
         },
         "price_snapshot": {
           "type": "string",
@@ -1036,6 +1048,13 @@
             "medium",
             "large"
           ]
+        },
+        "external_scopes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScopeId"
+          },
+          "description": "현재 구성 요소(BaaS 등)를 바꾸지 않고 그대로 배정한 데이터 범위"
         }
       },
       "additionalProperties": false,
@@ -2404,6 +2423,61 @@
               "$ref": "#/$defs/Perspectives"
             }
           ]
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "recommended",
+            "no_feasible",
+            "static_only",
+            "not_deployable"
+          ],
+          "description": "recommended: 후보 있음, no_feasible: 앱 범위는 있으나 실현 가능한 후보 없음, static_only: 정적 프런트엔드만 있어 컴퓨트 선택 불필요, not_deployable: 앱·정적 워크로드 없음"
+        },
+        "outcome_detail": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "current": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "scope": {
+                    "$ref": "#/$defs/ScopeId"
+                  },
+                  "component": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/ComponentId"
+                      },
+                      {
+                        "const": "unmapped"
+                      }
+                    ]
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "scope",
+                  "component"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "message",
+            "current"
+          ]
         }
       },
       "additionalProperties": false,
@@ -2417,7 +2491,8 @@
         "no_feasible",
         "transforms",
         "transform_fits",
-        "perspectives"
+        "perspectives",
+        "outcome"
       ]
     },
     "Adjustment": {

@@ -29,6 +29,9 @@ STATIC_OUTPUT_DIRS = ("dist", "build", "out")  # 정적 프런트엔드 빌드 �
 PROC_KINDS = {"web": "web", "worker": "worker", "clock": "scheduled", "release": "migration-job"}
 # 워커 프로세스를 뜻하는 토큰 끝(`board.worker`, `jobs/worker.py` 등). `--workers 4`, `uvicorn.workers.UvicornWorker`는 아니다
 WORKER_SUFFIXES = (".worker", "/worker", ":worker", "worker.py", "worker.js", "worker.ts")
+# 진입점 파일이 계속 도는 프로세스라는 근거(무한 루프, 서버·소비자 루프). 없으면 실행하고 끝나는 배치·CLI(batch)
+LOOP_EVIDENCE = re.compile(r"^\s*while\s+(?:True|1)\s*:|\.(?:run_forever|serve_forever|start_consuming)\(",
+                           re.MULTILINE)
 
 
 def slug(text: str) -> str:
@@ -563,7 +566,8 @@ def _scheduled_runs(snap: Snapshot) -> list[tuple[str, int | None, str, str]]:
 def _from_entrypoints(snap: Snapshot) -> list[WorkloadInfo]:
     """워크로드가 하나도 없을 때: 테스트·보조 디렉터리가 아닌 곳의 진입점(파이썬 `__main__` 블록·`__main__.py`,
     package.json `bin`, pyproject 스크립트)을 디렉터리마다 하나(경로 순 첫 번째) 후보 워크로드로 만든다.
-    `on: schedule` 워크플로가 실행하면 scheduled(근거: cron 줄), 아니면 worker."""
+    `on: schedule` 워크플로가 실행하면 scheduled(근거: cron 줄), 진입점 파이썬 파일에 루프 근거(LOOP_EVIDENCE)가
+    있으면 worker, 아니면 실행하고 끝나는 batch."""
     entries = [e for e in _py_entries(snap) + _script_entries(snap)
                if not is_test_path(e.path) and not is_aux_path(e.path)]
     first: dict[str, _Entry] = {}
@@ -580,8 +584,10 @@ def _from_entrypoints(snap: Snapshot) -> list[WorkloadInfo]:
             continue
         ids.add(wid)
         sched = next(((rel, cron) for rel, cron, run, wd in runs if _runs_entry(run, wd, e)), None)
+        loops = bool(e.file and LOOP_EVIDENCE.search(snap.read(e.file)))
+        kind = "scheduled" if sched else "worker" if loops else "batch"
         out.append(WorkloadInfo(
-            id=wid, kind="scheduled" if sched else "worker", name=wid[2:], entrypoint=evidence(snap, e.path, e.line),
+            id=wid, kind=kind, name=wid[2:], entrypoint=evidence(snap, e.path, e.line),
             status="candidate", source="code", app_dir=d, code_root=d,
             schedule_evidence=evidence(snap, sched[0], sched[1], "tech") if sched else None))
     return out

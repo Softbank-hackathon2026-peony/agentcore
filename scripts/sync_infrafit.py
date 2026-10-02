@@ -36,7 +36,7 @@ def sync(src: Path) -> Path:
     for part in PARTS:
         shutil.copytree(src / part, DEST / part, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     commit = _git(src, "rev-parse", "HEAD")
-    dirty = " (uncommitted changes)" if _git(src, "status", "--porcelain") not in ("", "unknown") else ""
+    dirty = " (uncommitted changes)" if _git(src, "status", "--porcelain", "--", *PARTS) not in ("", "unknown") else ""
     (DEST / "SOURCE").write_text(
         f"commit: {commit}{dirty}\n"
         f"commit_date: {_git(src, 'log', '-1', '--format=%cI')}\n"
