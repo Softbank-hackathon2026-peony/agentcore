@@ -24,13 +24,13 @@ components:
   - {id: "qu:lib/celery/default", family: qu, name: "Celery", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md, recommendable: false, reason: "근거 절이 Celery 문서(C)에만 기댐"}
   - {id: "qu:aws/sqs/standard", family: qu, name: "Amazon SQS 표준", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
   # 스케줄러
-  - {id: "sc:local/in-process/default", family: sc, name: "앱 프로세스 안 스케줄러", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md, recommendable: false, reason: "근거가 APScheduler·node-cron·Celery 문서(C)와 출처 없는 값뿐"}
+  - {id: "sc:local/in-process/default", family: sc, name: "앱 프로세스 안 스케줄러", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md, recommendable: false, reason: "근거 절 삭제(부적격 출처)"}
   - {id: "sc:k8s/cronjob/default", family: sc, name: "Kubernetes CronJob", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
   - {id: "sc:vercel/cron/unspecified-plan", family: sc, name: "Vercel Cron (플랜 미확인)", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
   - {id: "sc:github/actions-schedule/default", family: sc, name: "GitHub Actions schedule", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
   # 실시간
   - {id: "rt:lib/socketio/no-adapter", family: rt, name: "Socket.IO (어댑터 없음)", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md, recommendable: false, reason: "근거 절이 Socket.IO 문서(C)에만 기댐"}
-  - {id: "rt:lib/socketio/redis-adapter", family: rt, name: "Socket.IO (Redis 어댑터)", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md, recommendable: false, reason: "근거 절이 Socket.IO 문서(C)에만 기댐"}
+  - {id: "rt:lib/socketio/redis-adapter", family: rt, name: "Socket.IO (Redis 어댑터)", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md, recommendable: false, reason: "근거 절 삭제(부적격 출처)"}
   - {id: "rt:lib/ws/default", family: rt, name: "ws", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md, recommendable: false, reason: "조사 문서에 ws 절이 없음"}
   # 파일 저장소
   - {id: "fs:local/container-disk/default", family: fs, name: "컨테이너 로컬 디스크", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
@@ -40,8 +40,8 @@ components:
   # 컴퓨트
   - {id: "cp:vercel/functions/unspecified-plan", family: cp, name: "Vercel Functions (플랜 미확인)", source: docs/research/capabilities/04-compute-tier0.md}
   - {id: "cp:netlify/functions/unspecified-plan", family: cp, name: "Netlify Functions (플랜 미확인)", source: docs/research/capabilities/04-compute-tier0.md}
-  - {id: "cp:fly/machines/default", family: cp, name: "Fly.io Machines", source: docs/research/capabilities/04-compute-tier0.md, recommendable: false, reason: "근거 절이 Fly.io 문서(C)에만 기댐"}
-  - {id: "cp:render/web/unspecified-plan", family: cp, name: "Render 웹 서비스 (플랜 미확인)", source: docs/research/capabilities/04-compute-tier0.md, recommendable: false, reason: "근거 절이 Render 문서(C)에만 기댐"}
+  - {id: "cp:fly/machines/default", family: cp, name: "Fly.io Machines", source: docs/research/capabilities/04-compute-tier0.md, recommendable: false, reason: "근거 절 삭제(부적격 출처)"}
+  - {id: "cp:render/web/unspecified-plan", family: cp, name: "Render 웹 서비스 (플랜 미확인)", source: docs/research/capabilities/04-compute-tier0.md, recommendable: false, reason: "근거 절 삭제(부적격 출처)"}
   - {id: "cp:railway/service/unspecified-plan", family: cp, name: "Railway 서비스 (플랜 미확인)", source: docs/research/capabilities/04-compute-tier0.md}
   - {id: "cp:k8s/deployment/unspecified-cluster", family: cp, name: "쿠버네티스 (클러스터 미확인)", source: docs/research/capabilities/05-compute-tier1-2.md, recommendable: false, reason: "조사 문서에 일반 쿠버네티스 절이 없음"}
   - {id: "cp:aws/eks/unspecified", family: cp, name: "Amazon EKS (구성 미확인)", source: docs/research/capabilities/05-compute-tier1-2.md}
@@ -66,6 +66,6 @@ components:
   - {id: "nw:k8s/ingress-nginx/default", family: nw, name: "ingress-nginx", source: docs/research/capabilities/09-network-lb-ingress.md}
   - {id: "nw:vercel/edge-proxy/default", family: nw, name: "Vercel 엣지 프록시", source: docs/research/capabilities/09-network-lb-ingress.md}
   - {id: "nw:netlify/edge-proxy/default", family: nw, name: "Netlify 엣지 프록시", source: docs/research/capabilities/09-network-lb-ingress.md}
-  - {id: "nw:fly/proxy/default", family: nw, name: "Fly.io 프록시", source: docs/research/capabilities/09-network-lb-ingress.md, recommendable: false, reason: "근거 절이 Fly.io 문서(C)에만 기댐"}
-  - {id: "nw:render/proxy/default", family: nw, name: "Render 프록시", source: docs/research/capabilities/09-network-lb-ingress.md, recommendable: false, reason: "근거 절이 Render 문서(C)에만 기댐"}
+  - {id: "nw:fly/proxy/default", family: nw, name: "Fly.io 프록시", source: docs/research/capabilities/09-network-lb-ingress.md, recommendable: false, reason: "근거 절 삭제(부적격 출처)"}
+  - {id: "nw:render/proxy/default", family: nw, name: "Render 프록시", source: docs/research/capabilities/09-network-lb-ingress.md, recommendable: false, reason: "근거 절 삭제(부적격 출처)"}
   - {id: "nw:railway/proxy/default", family: nw, name: "Railway 프록시", source: docs/research/capabilities/09-network-lb-ingress.md}
