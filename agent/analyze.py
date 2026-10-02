@@ -14,6 +14,9 @@ from .storage import Store
 
 ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SECRETISH = re.compile(r"(KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE|DSN|DATABASE_URL)", re.I)
+# 이름이 평범해도 값이 비밀값처럼 생기면 env 에 넣지 않는다 (README·주석에서 흘러든 키 차단)
+SECRET_VALUE = re.compile(r"AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|\bsk-[A-Za-z0-9_\-]{16,}|\bgh[pousr]_[A-Za-z0-9]{20,}"
+                          r"|\bxox[abposr]-|-----BEGIN [A-Z ]*PRIVATE KEY|\bAIza[0-9A-Za-z_\-]{30,}")
 RESERVED_ENV = {"PORT", "AWS_LWA_PORT", "AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
 
 
@@ -81,6 +84,10 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
             notes.append(f"환경변수 제외: {k}")
             continue
         if SECRETISH.search(k):
+            secrets_needed.append(k)
+            continue
+        if SECRET_VALUE.search(str(v)):
+            notes.append(f"환경변수 값이 비밀값처럼 보여 env 에서 빼고 직접 넣도록 바꿈: {k}")
             secrets_needed.append(k)
             continue
         env[k] = str(v)[:200].replace("\n", " ")

@@ -119,6 +119,12 @@ LLM 프롬프트에는 이것을 워크로드 수·리버스 프록시·엔드�
 - 소스: `vendor/infrafit/` 에 복사본(vendoring). 갱신은 `python scripts/sync_infrafit.py <InfraFit 저장소 경로>` (커밋·날짜는 `vendor/infrafit/SOURCE`). 의존성 `crossplane`, `python-hcl2`(+`lark`, `regex`) 추가, `jsonschema`·`pyyaml` 은 기존에 이미 포함. kustomize 바이너리는 없어도 됨(overlay 는 미해석으로 기록).
 - 크기·시간: 배포 zip 약 +0.6MB (vendor 0.13MB + 새 의존성 약 0.5MB, 압축 기준). 실제 저장소에서 인벤토리 0.2~0.4초.
 
+## 평가 (analyze)
+
+[evals/](evals/README.md): 데모·공개 저장소 10개 + 프롬프트 인젝션 저장소 5개의 기대 결과 표와 채점 스크립트.
+`python scripts/eval_analyze.py --offline`(스캔만) / `AWS_PROFILE=... python scripts/eval_analyze.py`(실제 모델).
+파일 속 AI 지시문은 스캔이 찾아 `scan.suspicious_instructions` 와 사용자 경고로 남기고, 모델에는 따르지 말라고 알립니다.
+
 ## 개발
 
 ```bash
