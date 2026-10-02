@@ -151,7 +151,7 @@ Worker 는 `PAWPLOY_AGENT_BUCKET` 이 있으면 `terraform_uri` 없이도 이 �
 | CodeBuild 프로젝트 | `pawploy-build` | buildspec = `agent/buildfiles.py` 고정 템플릿 ([examples/buildspec.yml](examples/buildspec.yml)), amd64·privileged, 20분 제한 |
 | ECR 저장소 | `pawploy-apps` | 푸시 때 스캔, 최근 50개 보관 |
 | IAM 역할 | `pawploy-codebuild` | 소스 버킷(`pawploy-agent-*`, `fawploy-source-*`) 읽기, `pawploy-apps` 푸시, GCP 키 읽기, 로그 |
-| GCP AR | `asia-northeast3-docker.pkg.dev/softbankhackathon2026-peony/pawploy` | 이미 있는 저장소 (의진님 Cloud Run 확인 때 사용) |
+| GCP AR | `asia-northeast3-docker.pkg.dev/softbankhackathon2026-peony/pawploy/pawploy-apps` | 이미 있는 저장소 `pawploy`. 키는 워커 키 `pawploy/gcp-worker-key` (저장소 단위 작성자 권한 추가됨) |
 
 만들기·갱신: `AWS_PROFILE=peony python scripts/setup_build.py [--gcp-ar-repo <AR 주소> --gcp-key-secret <Secrets Manager 이름>]`
 (GCP 옵션을 주면 모든 빌드가 ECR + AR 양쪽에 올림. 키는 AR **쓰기** 권한 `roles/artifactregistry.writer` 가 있어야 함)
@@ -168,7 +168,9 @@ Main Server 는 `start_build(projectName="pawploy-build")` 에 세 개만 넘기
 결과는 exported variables `ECR_IMAGE_URI`, `GCP_IMAGE_URI`(@sha256 digest 고정) → Worker `targets[].image_uri`.
 빌드 실패 시 `scripts/build.py` 가 로그 마지막 부분을 출력 → 그대로 `fix_build` 의 `build_log` 로.
 
-실제 확인: `prj_test` 샘플 앱 빌드 → ECR 푸시 성공 (57초).
+지금 설정: `setup_build.py --gcp-ar-repo asia-northeast3-docker.pkg.dev/softbankhackathon2026-peony/pawploy/pawploy-apps --gcp-key-secret pawploy/gcp-worker-key`
+
+실제 확인: `prj_test` 샘플 앱 빌드 → ECR + Artifact Registry 둘 다 푸시 성공 (47초), `ECR_IMAGE_URI`·`GCP_IMAGE_URI` 둘 다 digest 고정으로 나옴.
 이미지는 Lambda Web Adapter 포함 · `linux/amd64` · `$PORT` 로 받으므로 EC2·Lambda·Cloud Run 공용입니다.
 
 ## InfraFit 인벤토리 연동
