@@ -337,31 +337,49 @@ def prepare_run(units: dict, src: SourceTree) -> tuple[list[str], list[str]]:
     stores = {d["id"]: d for d in units["datastores"]}
     pw_stores = {sid for sid, d in stores.items() if any(PASSWORD_KEY.search(n) for n in d["env_names"])}
     one_shot = {c["id"] for c in units["containers"] if c["one_shot"]}
-    dev_passwords: dict[str, set[str]] = {}
     named: set[str] = set()
     runs: dict[str, dict] = {}
+
+    # 코드에 저장소 비밀번호가 직접 적혀 있으면(예: 'postgres://postgres:postgres@db') 무작위 비밀번호로 바꾸면 앱이 접속하지 못한다.
+    # 그 저장소는 프로젝트 값을 그대로 쓴다 (저장소 포트는 서버 안에서만 열리고 외부는 entry 80번뿐)
+    dev_passwords: dict[str, set[str]] = {}
+    for svc in [*units["containers"], *units["datastores"]]:
+        for name, value in _raw_env((raw.get(svc["id"]) or {}).get("environment")).items():
+            if svc["id"] in stores and PASSWORD_KEY.search(name) and value:
+                dev_passwords.setdefault(svc["id"], set()).add(value)
+            elif (m := URL_PASSWORD.search(value)) and m.group("host") in pw_stores:
+                dev_passwords.setdefault(m.group("host"), set()).add(m.group("pw"))
+    hardcoded = {sid: where for sid, pws in dev_passwords.items() if (where := _hardcoded(src, sid, pws))}
+    for sid, where in hardcoded.items():
+        notes.append(f"코드에 {sid} 비밀번호가 직접 적혀 있어({', '.join(where)}) 무작위 비밀번호 대신 프로젝트 값을 그대로 씁니다. "
+                     f"{sid} 는 서버 안에서만 접속되고 외부에는 80번(entry)만 열립니다. "
+                     "무작위 비밀번호를 쓰려면 코드가 환경변수에서 읽도록 고치세요.")
 
     for svc in [*units["containers"], *units["datastores"]]:
         sid = svc["id"]
         r = raw.get(sid) or {}
         raw_env = _raw_env(r.get("environment"))
         env: dict[str, list] = {}
+        credential: list[str] = []            # 저장소 비밀번호(무작위 또는 프로젝트 값)로 채운 이름 — 사용자에게 묻지 않음
         for name in svc["env_names"]:
             literal = name in svc["env"]
             value = svc["env"][name] if literal else raw_env.get(name)
             if literal and not URL_PASSWORD.search(value):
                 env[name] = [value]
                 continue
+            m = URL_PASSWORD.search(value or "")
+            if sid in hardcoded and PASSWORD_KEY.search(name) and value or m and m.group("host") in hardcoded:
+                env[name] = [value]
+                credential.append(name)
+                continue
             if sid in stores and PASSWORD_KEY.search(name):
                 env[name] = [{"password": sid}]
-                if value:
-                    dev_passwords.setdefault(sid, set()).add(value)
+                credential.append(name)
                 notes.append(f"{sid}.{name}: 개발용 비밀번호 대신 배포 때 만드는 무작위 비밀번호(passwords[\"{sid}\"])를 씁니다")
                 continue
-            m = URL_PASSWORD.search(value or "")
             if m and m.group("host") in pw_stores:
                 env[name] = [value[:m.start("pw")], {"password": m.group("host")}, value[m.end("pw"):]]
-                dev_passwords.setdefault(m.group("host"), set()).add(m.group("pw"))
+                credential.append(name)
                 notes.append(f"{sid}.{name}: 접속 주소의 개발용 비밀번호를 {m.group('host')} 배포 비밀번호로 바꿨습니다")
                 continue
             d = INTERPOLATION_DEFAULT.match(value or "")
@@ -385,7 +403,8 @@ def prepare_run(units: dict, src: SourceTree) -> tuple[list[str], list[str]]:
         hc = _healthcheck(r.get("healthcheck"), bind_targets)
         if r.get("healthcheck") and hc is None:
             notes.append(f"{sid}: 저장소 파일(마운트)에 기대는 헬스체크라 뺐습니다")
-        runs[sid] = {"env": env, "volumes": volumes, "healthcheck": hc, "_raw_depends": r.get("depends_on")}
+        runs[sid] = {"env": env, "credential_env": credential, "volumes": volumes, "healthcheck": hc,
+                     "_raw_depends": r.get("depends_on")}
 
     for svc in [*units["containers"], *units["datastores"]]:
         run = runs[svc["id"]]
@@ -405,11 +424,6 @@ def prepare_run(units: dict, src: SourceTree) -> tuple[list[str], list[str]]:
         run["depends_on"] = deps
         svc["run"] = run
     units["volumes"] = sorted(named)
-
-    for sid, pws in dev_passwords.items():
-        for where in _hardcoded(src, sid, pws):
-            notes.append(f"코드에 {sid} 비밀번호가 직접 적혀 있습니다 ({where}). 배포 비밀번호는 무작위라 이 접속은 실패합니다 "
-                         "— 환경변수로 받도록 고쳐야 합니다")
     return list(dict.fromkeys(notes)), sorted(set(secrets))
 
 

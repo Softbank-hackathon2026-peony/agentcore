@@ -121,7 +121,9 @@ def test_board_end_to_end(tmp_path):
     assert s["nginx"]["ports"] == ["80:8080"] and all("ports" not in v for k, v in s.items() if k != "nginx")
     assert s["board-api"]["image"] == f"{ECR}@sha256:{'a' * 64}" and s["postgres"]["image"] == "postgres:16-alpine"
     assert s["board-api"]["command"] == ["uvicorn", "board.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    # 앱이 비밀번호를 환경변수(DATABASE_URL)로 읽으므로 무작위 비밀번호를 쓴다
     assert s["postgres"]["environment"]["POSTGRES_PASSWORD"] == pw["postgres"]
+    assert not any("프로젝트 값을 그대로" in w for w in rec["warnings"])
     assert s["board-worker"]["environment"]["DATABASE_URL"] == \
         f"postgresql+asyncpg://app:{pw['postgres']}@postgres:5432/app"
     assert s["board-api"]["depends_on"] == {"migrate": {"condition": "service_completed_successfully"},
@@ -170,8 +172,10 @@ def test_vote_transforms_and_checked_llm_fixes(tmp_path):
     assert du["entry"]["container"] == "vote"
     assert any(w.startswith("InfraFit 미해결: entry") for w in rec["warnings"])
     assert any("vote:80 하나로만" in w for w in rec["warnings"])
-    # 코드에 적힌 DB 비밀번호는 무작위 비밀번호와 안 맞는다고 알린다
-    assert any("result/server.js:10" in w for w in rec["warnings"])
+    # 코드에 DB 비밀번호가 직접 적혀 있으면(result/server.js, worker/Program.cs) 무작위로 바꾸지 않고 프로젝트 값을 쓰고 알린다
+    kept = next(w for w in rec["warnings"] if "프로젝트 값을 그대로" in w)
+    assert "result/server.js:10" in kept and "worker/Program.cs:11" in kept and "80번" in kept
+    assert "POSTGRES_PASSWORD" not in rec["required_secrets"]
 
     t = _gen(store, rec)["targets"][0]
     template = t["files"]["compose.yaml.tftpl"]
@@ -184,7 +188,8 @@ def test_vote_transforms_and_checked_llm_fixes(tmp_path):
     assert "healthcheck" not in s["redis"] and "healthcheck" not in s["db"]         # 마운트한 스크립트에 기대던 헬스체크
     assert s["vote"]["healthcheck"]["test"] == ["CMD", "curl", "-f", "http://localhost"]
     assert s["worker"]["depends_on"] == {"redis": {"condition": "service_started"}, "db": {"condition": "service_started"}}
-    assert s["db"]["environment"] == {"POSTGRES_USER": "postgres", "POSTGRES_PASSWORD": pw["db"]}
+    assert s["db"]["environment"] == {"POSTGRES_USER": "postgres", "POSTGRES_PASSWORD": "postgres"}
+    assert t["passwords"] == [] and pw == {}                                        # passwords["db"] 를 만들지 않음
     assert "networks" not in s["vote"] and "build" not in template
 
 

@@ -235,10 +235,9 @@ def validate_multi(rec: LLMRecommendation, src: source.SourceTree, scan: dict, d
 
 
 def _generated_env(u: dict) -> set[str]:
-    """배포 때 모듈이 만드는 비밀번호(passwords)로 채우는 환경변수 이름. 사용자가 넣을 비밀값이 아니다."""
-    return {name for svc in [*u["containers"], *u["datastores"]]
-            for name, parts in ((svc.get("run") or {}).get("env") or {}).items()
-            if any(isinstance(p, dict) and "password" in p for p in parts)}
+    """저장소 비밀번호(모듈이 만드는 무작위 값, 또는 코드에 적혀 있어 그대로 쓰는 프로젝트 값)로 채우는 환경변수 이름.
+    사용자가 넣을 비밀값이 아니다."""
+    return {name for svc in [*u["containers"], *u["datastores"]] for name in (svc.get("run") or {}).get("credential_env") or []}
 
 
 def _infrafit_compute_warnings(reco: dict, count: int) -> list[str]:
