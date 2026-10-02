@@ -1,0 +1,37 @@
+{
+ "seconds": 20.797672271728516,
+ "payload": {
+  "mode": "gen_terraform",
+  "project_id": "prj_demo",
+  "deploy_id": "dep-demo-1",
+  "recommendation_uri": "s3://pawploy-agent-135808950984/projects/prj_demo/analysis/ana-20261002102446-20fd/recommendation.json"
+ },
+ "output": {
+  "status": "ok",
+  "mode": "gen_terraform",
+  "project_id": "prj_demo",
+  "deploy_id": "dep-demo-1",
+  "architecture": "lambda",
+  "attempt": 1,
+  "module_uri": "s3://pawploy-agent-135808950984/projects/prj_demo/deploy/dep-demo-1/attempt-1/",
+  "files": {
+   "main.tf": "# Lambda 아키텍처: 컨테이너 이미지 + 함수 URL\n# 이미지에 AWS Lambda Web Adapter가 포함되어 있어 일반 웹앱이 동작함\n# 입력: name, image_uri, container_port, size, env, health_path\n# 출력: endpoint, health_url, resource_id\n\nterraform {\n  required_providers {\n    aws = {\n      source = \"hashicorp/aws\"\n    }\n  }\n}\n\nvariable \"name\"           { type = string }\nvariable \"image_uri\"      { type = string }\nvariable \"container_port\" { type = number }\nvariable \"size\"           { type = string }\nvariable \"env\"            { type = map(string) }\nvariable \"health_path\"    { type = string }\n\nlocals {\n  # size별 메모리(MB): micro=512, small=1024, medium=2048\n  memory = {\n    micro  = 512\n    small  = 1024\n    medium = 2048\n  }\n}\n\n# Lambda 실행 역할 — AssumeRole만 허용\n# IAM 이름 64자 제한으로 name_prefix는 38자 이하\nresource \"aws_iam_role\" \"app\" {\n  name_prefix = \"${substr(var.name, 0, 37)}-\"\n  assume_role_policy = jsonencode({\n    Version = \"2012-10-17\"\n    Statement = [{\n      Effect    = \"Allow\"\n      Principal = { Service = \"lambda.amazonaws.com\" }\n      Action    = \"sts:AssumeRole\"\n    }]\n  })\n}\n\n# CloudWatch Logs 쓰기만 허용하는 관리형 정책 연결\nresource \"aws_iam_role_policy_attachment\" \"logs\" {\n  role       = aws_iam_role.app.name\n  policy_arn = \"arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole\"\n}\n\n# Lambda 함수 — 컨테이너 이미지 방식\nresource \"aws_lambda_function\" \"app\" {\n  function_name = var.name\n  role          = aws_iam_role.app.arn\n  package_type  = \"Image\"\n  image_uri     = var.image_uri\n  architectures = [\"x86_64\"]\n  timeout       = 30                        # micro: 30초 (최대 60초)\n  memory_size   = local.memory[var.size]    # micro: 512MB\n\n  environment {\n    variables = merge(var.env, {\n      PORT         = tostring(var.container_port) # 앱이 수신할 포트\n      AWS_LWA_PORT = tostring(var.container_port) # Lambda Web Adapter 전달 포트\n    })\n  }\n\n  depends_on = [aws_iam_role_policy_attachment.logs]\n}\n\n# 인증 없는 공개 함수 URL 생성\nresource \"aws_lambda_function_url\" \"app\" {\n  function_name      = aws_lambda_function.app.function_name\n  authorization_type = \"NONE\"\n}\n\n# 함수 URL 공개 호출 허용 (InvokeFunctionUrl)\n# 2025-10 이후 NONE 타입도 이 권한이 없으면 403 발생\nresource \"aws_lambda_permission\" \"public_url\" {\n  statement_id           = \"AllowPublicFunctionUrl\"\n  action                 = \"lambda:InvokeFunctionUrl\"\n  function_name          = aws_lambda_function.app.function_name\n  principal              = \"*\"\n  function_url_auth_type = \"NONE\"\n}\n\n# 함수 URL 경유 호출만 허용 (직접 Invoke API는 차단)\nresource \"aws_lambda_permission\" \"public_invoke\" {\n  statement_id             = \"AllowPublicInvokeViaFunctionUrl\"\n  action                   = \"lambda:InvokeFunction\"\n  function_name            = aws_lambda_function.app.function_name\n  principal                = \"*\"\n  invoked_via_function_url = true\n}\n\n# 함수 URL (끝 슬래시 제거)\noutput \"endpoint\" {\n  value = trimsuffix(aws_lambda_function_url.app.function_url, \"/\")\n}\n\n# 헬스체크 URL: endpoint + health_path\noutput \"health_url\" {\n  value = \"${trimsuffix(aws_lambda_function_url.app.function_url, \"/\")}${var.health_path}\"\n}\n\n# Lambda 함수 ARN\noutput \"resource_id\" {\n  value = aws_lambda_function.app.arn\n}\n"
+  },
+  "resources": [
+   "aws_iam_role.app — Lambda가 AWS 서비스를 호출할 때 사용하는 실행 역할입니다.",
+   "aws_iam_role_policy_attachment.logs — CloudWatch Logs에 로그를 기록할 수 있도록 기본 실행 정책을 역할에 연결합니다.",
+   "aws_lambda_function.app — 컨테이너 이미지를 실행하는 Lambda 함수입니다. size=micro 기준 메모리 512MB, 타임아웃 30초로 설정됩니다.",
+   "aws_lambda_function_url.app — 별도 API Gateway 없이 Lambda를 HTTP로 직접 호출할 수 있는 공개 URL을 만듭니다.",
+   "aws_lambda_permission.public_url — 함수 URL을 통한 InvokeFunctionUrl 호출을 누구나 할 수 있도록 허용합니다.",
+   "aws_lambda_permission.public_invoke — 함수 URL 경유 InvokeFunction 호출만 허용하고, 직접 Invoke API 호출은 차단합니다."
+  ],
+  "notes": [
+   "size=micro → 메모리 512MB, 타임아웃 30초 (Lambda 최대 2048MB·60초 이내 준수)",
+   "container_port=8080 → PORT 및 AWS_LWA_PORT 환경변수로 Lambda Web Adapter에 전달됩니다.",
+   "health_path='/' → health_url은 endpoint + '/' 로 출력됩니다.",
+   "required_secrets와 env_names가 모두 비어 있으므로 var.env 외 추가 환경변수는 없습니다.",
+   "2025-10 이후 함수 URL NONE 타입은 InvokeFunctionUrl과 InvokeFunction 권한이 모두 필요하므로 두 aws_lambda_permission을 모두 생성합니다.",
+   "IAM name_prefix는 substr로 37자+하이픈(1자)=38자 이하로 제한해 IAM 64자 제한을 준수합니다."
+  ]
+ }
+}
