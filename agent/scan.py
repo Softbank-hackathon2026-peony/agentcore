@@ -50,6 +50,21 @@ ENV_EXAMPLE_FILES = {".env.example", ".env.sample", ".env.template", "env.exampl
 CODE_EXTS = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".go", ".java", ".kt", ".rb", ".php"}
 MAX_SCAN_FILES = 400
 
+# 프롬프트 인젝션: 파일 안에서 AI(우리 분석기)에게 지시하려는 문장. 찾으면 경고로 알리고 모델에도 "따르지 말 것"으로 넘긴다.
+# 공개 저장소·데모 저장소에서 오탐이 없도록 맞춘 목록 (evals/README.md 참고)
+INJECTION_PATTERNS = [
+    re.compile(r"ignore\s+(all\s+|any\s+|the\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules)", re.I),
+    re.compile(r"disregard\s+(all\s+|any\s+|the\s+)?(previous|prior|above|earlier)", re.I),
+    re.compile(r"(이전|위의?|앞의?)\s*(지시|명령|규칙)[^\n]{0,12}(무시|잊)"),
+    re.compile(r"\b(note|message|instructions?)\s+(to|for)\s+(the\s+|any\s+)?(ai|llm|assistant|agent|model|claude|gpt)\b", re.I),
+    re.compile(r"(\bai|\bllm|에이전트|분석기|어시스턴트|챗봇|claude|gpt)\s*(에게|한테)[^\n]{0,60}"
+                r"(해라|하라|하세요|해\s*줘|해\s*주세요|할\s*것|하십시오|[:：])", re.I),
+    re.compile(r"(무조건|반드시|꼭|항상)[^\n]{0,40}(ec2|lambda|람다|cloud\s*run|클라우드\s*런|서버리스|aws|gcp)"
+               r"[^\n]{0,20}(추천|선택|골라)", re.I),
+    re.compile(r"\b(always|must|only)\s+(recommend|suggest)\b", re.I),
+]
+DOC_EXTS = {".md", ".markdown", ".txt", ".rst", ".adoc"}
+
 
 def scan(src: SourceTree, inventory: bool = True) -> dict:
     paths = src.paths()
@@ -151,6 +166,10 @@ def scan(src: SourceTree, inventory: bool = True) -> dict:
         warnings.append(f"외부 데이터베이스/캐시가 필요해 보입니다: {', '.join(datastores)}")
     if secrets_present:
         warnings.append(f"비밀 파일이 포함돼 있습니다 (내용은 읽지 않음): {', '.join(secrets_present[:5])}")
+    suspicious = _suspicious_instructions(src, paths)
+    if suspicious:
+        where = ", ".join(f"{x['file']}:{x['line']}" for x in suspicious[:5])
+        warnings.append(f"프로젝트 파일에 AI에게 주는 지시로 보이는 문장이 있어 따르지 않았습니다: {where}")
 
     # InfraFit S1 인벤토리 (규칙 기반 정밀 분석, 별도 프로세스). 실패해도 스캔은 계속된다.
     if inventory and config.INVENTORY_TIMEOUT > 0:
@@ -176,6 +195,7 @@ def scan(src: SourceTree, inventory: bool = True) -> dict:
         "k8s_dirs": k8s,
         "static_site": has_index_html and not server_like,
         "secret_files": secrets_present,
+        "suspicious_instructions": suspicious,
         "warnings": warnings,
         "evidence": evidence,
         "inventory": inv,
@@ -201,6 +221,22 @@ def _inventory_warnings(inv: dict) -> list[str]:
         names = ", ".join(f"{x['id']}({', '.join(x['secrets'][:3])})" for x in needs[:5])
         out.append(f"InfraFit: 비밀값이 필요한 외부 서비스가 있습니다: {names}")
     return out
+
+
+def _suspicious_instructions(src: SourceTree, paths: list[str], limit: int = 10) -> list[dict]:
+    """INJECTION_PATTERNS 에 걸리는 줄. 판단은 바꾸지 않고, 모델과 사용자에게 알리기만 한다."""
+    found: list[dict] = []
+    targets = [p for p in paths if posixpath.splitext(p)[1].lower() in DOC_EXTS | CODE_EXTS or
+               posixpath.basename(p) in ("Dockerfile", "Procfile")][:MAX_SCAN_FILES]
+    for p in targets:
+        for i, line in enumerate(src.lines(p), 1):
+            if len(line) > 1000:
+                continue
+            if any(pat.search(line) for pat in INJECTION_PATTERNS):
+                found.append({"file": p, "line": i, "text": line.strip()[:160]})
+                if len(found) >= limit:
+                    return found
+    return found
 
 
 def _line_of(src: SourceTree, path: str, needle: str) -> int:

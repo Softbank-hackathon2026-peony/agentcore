@@ -6,3 +6,5 @@ __pycache__/
 work/
 .bedrock_agentcore/
 .agentcore/
+evals/.cache/
+evals/results/
