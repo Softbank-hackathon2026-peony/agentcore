@@ -207,6 +207,32 @@ def test_buildspec_is_fixed_template():
     assert "exported-variables" in spec
 
 
+def test_lambda_adapter_line_is_exactly_one_pinned_copy():
+    """LLM 이 없는 이미지(aws-lambda-web-adapter:0.8.4)를 정상 줄과 같이 넣어 검사를 통과하던 문제."""
+    lwa = buildfiles.LWA_LINE
+    bad = ("FROM python:3.12-slim\n"
+           "COPY --from=public.ecr.aws/awsguru/aws-lambda-web-adapter:0.8.4 /lambda-adapter /opt/extensions/lambda-adapter\n"
+           f"{lwa}\nWORKDIR /app\nCOPY app.py .\nCMD [\"python\", \"app.py\"]\n")
+    out, fixes = buildfiles.normalize_dockerfile(bad, 8080)
+    assert out.count("lambda-adapter /opt") == 1 and lwa in out and "web-adapter" not in out
+    assert any("0.8.4" in f for f in fixes)
+
+    multiline = ("FROM node:20 AS build\nCOPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.8.4 \\\n"
+                 "     /lambda-adapter /opt/extensions/lambda-adapter\nRUN npm ci\n"
+                 "FROM node:20-slim\nCOPY --from=build /app /app\nCMD [\"node\", \"/app/server.js\"]\n")
+    out, _ = buildfiles.normalize_dockerfile(multiline, 3000)
+    lines = out.splitlines()
+    assert "0.8.4" not in out and "/lambda-adapter /opt/extensions/lambda-adapter" not in "\n".join(lines[:3])
+    assert lines[lines.index("FROM node:20-slim") + 1] == lwa          # 마지막 스테이지 FROM 바로 아래 하나
+
+    ok = f"FROM python:3.12-slim\n{lwa}\nCOPY app.py .\nCMD [\"python\", \"app.py\"]\n"
+    out, fixes = buildfiles.normalize_dockerfile(ok, 8080)
+    assert out.count(lwa) == 1 and not any("Lambda" in f for f in fixes)  # 이미 맞으면 고친 것으로 안 남김
+
+    out, fixes = buildfiles.normalize_dockerfile(bad, None, lambda_adapter=False)
+    assert "lambda-adapter" not in out and fixes
+
+
 def test_generated_dockerfile_ignores_project_dockerignore():
     """프로젝트 .dockerignore 가 생성 Dockerfile 의 COPY 경로(examples/ 등)를 빼서 빌드가 깨지던 문제."""
     spec = buildfiles.buildspec()

@@ -62,11 +62,18 @@ def normalize_dockerfile(text: str, port: int | None, lambda_adapter: bool = Tru
         if m and _mentions_secret(m.group(2)):
             raise AgentError("dockerfile_unsafe", f"비밀 파일을 이미지에 복사하는 줄이 있습니다: {l.strip()}")
 
-    # Lambda Web Adapter: 마지막 스테이지에 없으면 FROM 바로 아래 추가
-    last = from_idx[-1]
-    if lambda_adapter and not any("aws-lambda-adapter" in l for l in lines[last:]):
+    # Lambda Web Adapter: 마지막 스테이지에 LWA_LINE 딱 하나. LLM 이 쓴 어댑터 COPY 는 이름·버전이 틀릴 수 있어서
+    # (예: 없는 이미지 aws-lambda-web-adapter:0.8.4 가 정상 줄과 같이 들어가 검사를 통과함) 정확히 그 한 줄이 아니면 전부 지우고 다시 넣는다
+    lines, found = _strip_lambda_adapter(lines)
+    last = [i for i, l in enumerate(lines) if _FROM.match(l)][-1]
+    if lambda_adapter:
         lines.insert(last + 1, LWA_LINE)
-        fixes.append("Lambda Web Adapter 줄을 추가함 (EC2·Cloud Run에서는 무시됨)")
+        if found != [(LWA_LINE, True)]:
+            wrong = [s for s, _ in found if s != LWA_LINE]
+            fixes.append("Lambda Web Adapter 줄을 1.1.0 하나로 맞춤"
+                         + (f" (잘못된 줄 제거: {'; '.join(wrong)[:200]})" if wrong else " (EC2·Cloud Run에서는 무시됨)"))
+    elif found:
+        fixes.append("Lambda 에서 돌지 않는 이미지라 Lambda Web Adapter 줄을 뺌")
 
     if port is None:
         return "\n".join(lines).strip("\n") + "\n", fixes
@@ -83,6 +90,27 @@ def normalize_dockerfile(text: str, port: int | None, lambda_adapter: bool = Tru
         fixes.append(f"EXPOSE {port} 로 맞춤")
 
     return "\n".join(lines).strip("\n") + "\n", fixes
+
+
+_LWA_REF = re.compile(r"lambda-(web-)?adapter", re.I)
+
+
+def _strip_lambda_adapter(lines: list[str]) -> tuple[list[str], list[tuple[str, bool]]]:
+    """Lambda Web Adapter 를 가져오는 COPY 명령(\\ 로 이어진 줄 포함)을 모든 스테이지에서 지운다.
+    돌려주는 found = [(한 줄로 합친 명령, 마지막 스테이지였는지)]."""
+    last = [i for i, l in enumerate(lines) if _FROM.match(l)][-1]
+    out, found, i = [], [], 0
+    while i < len(lines):
+        j = i
+        while lines[j].rstrip().endswith("\\") and j + 1 < len(lines):
+            j += 1
+        instr = " ".join(l.strip().rstrip("\\").strip() for l in lines[i:j + 1])
+        if re.match(r"^COPY\b", instr, re.I) and _LWA_REF.search(instr):
+            found.append((" ".join(instr.split()), i > last))
+        else:
+            out.extend(lines[i:j + 1])
+        i = j + 1
+    return out, found
 
 
 def _insert_pos(lines: list[str]) -> int:

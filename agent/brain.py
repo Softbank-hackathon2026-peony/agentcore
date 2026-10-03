@@ -146,6 +146,7 @@ class StrandsBrain:
         df_prompt = (
             f"이제 위 추천({rec.target}, 포트 {rec.container_port})에 맞는 Dockerfile을 만들어라.\n"
             "- 하나의 이미지가 AWS Lambda(Lambda Web Adapter), EC2, Cloud Run 모두에서 동작해야 한다.\n"
+            "  Lambda Web Adapter COPY 줄은 코드가 정해진 버전으로 넣으니 직접 쓰지 마라.\n"
             "- linux/amd64, 앱은 환경변수 PORT 의 포트에서 0.0.0.0 으로 요청을 받아야 한다.\n"
             "- 프로젝트에 Dockerfile이 있으면 그것을 기반으로 하라.\n"
             "- 의존성 설치는 실제 의존성 파일을 사용하고, 개발용 서버(예: flask run --debug) 대신 운영용 실행 명령을 써라.\n"
