@@ -24,6 +24,7 @@ SECRET_VALUE = re.compile(r"AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|\bsk-[A-Za-z0-9_\-
 RESERVED_ENV = {"PORT", "AWS_LWA_PORT", "AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
 MULTI_TARGET = "aws_ec2_compose"
 COMPOSE_COMPUTE = "cp:aws/ec2/docker-compose"      # InfraFit capabilities.yaml 의 같은 실행기
+MAX_CANDIDATES = 5                                 # 화면 규격: 1~5순위
 
 
 def new_analysis_id() -> str:
@@ -137,6 +138,7 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
         if tid not in seen and tid not in catalog.MULTI_CONTAINER:
             candidates.append(_candidate(tid, None, "부적합" if not catalog.is_deployable(tid) else "적합",
                                          "모델이 평가하지 않음", rec.size))
+    candidates = candidates[:MAX_CANDIDATES]
     for i, c in enumerate(candidates, 1):
         c["rank"] = i
 
@@ -225,11 +227,12 @@ def validate_multi(rec: LLMRecommendation, src: source.SourceTree, scan: dict, d
         notes.append(f"모델 추천 {rec.target} → 컨테이너가 여러 개라 {target} 로 정함")
     if not rec.supported:
         notes.append("모델은 supported=false 로 봤지만, 여러 컨테이너는 코드 검사 결과로만 판단함")
-    reco = ((scan.get("inventory") or {}).get("summary") or {}).get("recommendation") or {}
+    inv_summary = (scan.get("inventory") or {}).get("summary") or {}
+    reco = inv_summary.get("recommendation") or {}
     if reco.get("no_feasible"):
         problems.append("InfraFit: 조건을 모두 만족하는 컴퓨트 후보가 없습니다")
     services = [*u["containers"], *u["datastores"]]
-    warnings += _infrafit_compute_warnings(reco, len(services))
+    warnings += _infrafit_compute_warnings(reco, u, inv_summary)
     if rec.size == "micro" and len(services) > 2:
         warnings.append(f"컨테이너 {len(services)}개를 t3.micro(메모리 1GB)에 띄웁니다. 메모리가 모자라면 medium 을 고르세요.")
 
@@ -250,6 +253,7 @@ def validate_multi(rec: LLMRecommendation, src: source.SourceTree, scan: dict, d
     for tid in catalog.TARGETS:
         if tid not in seen:
             candidates.append(_candidate(tid, None, "부적합", "모델이 평가하지 않음", rec.size))
+    candidates = candidates[:MAX_CANDIDATES]
     for i, c in enumerate(candidates, 1):
         c["rank"] = i
         if i > 1:                                  # 컨테이너 하나만 받는 대상: 이 앱은 그대로 못 띄움
@@ -262,7 +266,7 @@ def validate_multi(rec: LLMRecommendation, src: source.SourceTree, scan: dict, d
         "cloud": t["cloud"], "architecture": t["architecture"], "container_port": (u.get("entry") or {}).get("port"),
         "size": rec.size, "health_path": health, "env": env, "reason": rec.reason,
         "target": target, "label": t["label"], "summary": rec.summary,
-        "required_secrets": sorted((set(secrets_needed) - _generated_env(u)) | set(run_secrets)),
+        "required_secrets": sorted((set(secrets_needed) - _generated_env(u) - _filled_env(u)) | set(run_secrets)),
         "permissions": t["permissions"],
         "cost": cost.estimate(target, rec.size), "clues": clues, "candidates": candidates,
         "supported": not problems, "warnings": list(dict.fromkeys(warnings)),
@@ -276,15 +280,56 @@ def _generated_env(u: dict) -> set[str]:
     return {name for svc in [*u["containers"], *u["datastores"]] for name in (svc.get("run") or {}).get("credential_env") or []}
 
 
-def _infrafit_compute_warnings(reco: dict, count: int) -> list[str]:
+def _filled_env(u: dict) -> set[str]:
+    """compose 에 값이 이미 들어가는 환경변수 이름 (예: REDIS_URL=redis://redis:6379/0). 사용자에게 다시 묻지 않는다.
+    다른 서비스에서 같은 이름을 비밀값으로 받는 곳이 있으면 빼지 않는다."""
+    filled, asked = set(), set()
+    for svc in [*u["containers"], *u["datastores"]]:
+        for name, parts in ((svc.get("run") or {}).get("env") or {}).items():
+            (asked if any(isinstance(p, dict) and "secret" in p for p in parts) else filled).add(name)
+    return filled - asked
+
+
+def _engine(component) -> str | None:
+    """'ca:unspecified/redis/default' → 'redis', 'qu:unspecified/redis-streams/default' → 'redis'.
+    라이브러리(qu:lib/celery)·파일 DB(ds:local/sqlite)는 컨테이너가 아니라 None."""
+    parts = str(component or "").split("/")
+    if len(parts) < 2 or parts[0].endswith(":lib") or parts[0].endswith(":local"):
+        return None
+    return parts[1].split("-")[0] or None
+
+
+def _infrafit_compute_warnings(reco: dict, u: dict, inv_summary: dict) -> list[str]:
+    """InfraFit 추천과 이번 배포 묶음(deploy_units)이 다른 점. 코드가 쓰는 저장소가 묶음에 없으면 그것부터 알린다."""
+    count = len(u["containers"]) + len(u["datastores"])
     rec = reco.get("recommended") or {}
     assignment = rec.get("assignment") or {}
     compute = next((c for c in assignment.values() if str(c).startswith("cp:")), None)
     out = []
+    # 저장소 컨테이너가 묶음에 있는지는 InfraFit 인벤토리의 저장소(id·엔진)와 deploy_units.datastores 를 맞춰 본다
+    found = {d["id"]: d for d in inv_summary.get("datastores") or [] if d.get("status") == "confirmed"}
+    bundled = {d["datastore"] for d in u["datastores"] if d.get("datastore")}
+    engines = {_engine(found[i].get("component")) for i in bundled if i in found}
+    images = {str(d.get("image") or "").split(":")[0].rsplit("/", 1)[-1] for d in u["datastores"]} - {""}
+
+    def in_bundle(sid: str, eng: str | None) -> bool:    # 이미지 이름은 postgres ↔ postgresql 처럼 앞부분이 같으면 같은 엔진
+        return sid in bundled or eng in engines or any(eng and (eng.startswith(i) or i.startswith(eng)) for i in images)
+
+    missing = {}
+    for sid, d in found.items():
+        eng = _engine(d.get("component"))
+        if eng and not in_bundle(sid, eng):
+            missing.setdefault(eng, d)
+    for eng, d in missing.items():
+        at = ", ".join(d.get("at") or [])[:80]
+        out.append(f"코드가 {eng} 를 쓰는데({at}) 이번 배포 묶음에 {eng} 컨테이너가 없습니다 (compose 에 없는 저장소는 "
+                   f"띄우지 않음). 접속 주소를 환경변수로 따로 넣지 않으면 앱이 localhost 로 접속하다 실패합니다. "
+                   f"docker-compose.yml 에 {eng} 서비스를 추가하고 다시 분석하세요.")
     if compute and compute != COMPOSE_COMPUTE:
         out.append(f"InfraFit 1순위 컴퓨트는 {rec.get('target') or '?'}({compute})지만, 컨테이너 {count}개를 그대로 함께 "
                    f"띄울 수 있는 배포 대상은 {MULTI_TARGET} 뿐이라 이것으로 정했습니다.")
-    managed = sorted(c for c in assignment.values() if not str(c).startswith("cp:"))
+    managed = sorted(c for scope, c in assignment.items()
+                     if not str(c).startswith("cp:") and in_bundle(scope, _engine((found.get(scope) or {}).get("component"))))
     if managed:
         out.append(f"InfraFit 은 데이터 저장소를 관리형({', '.join(managed[:4])})으로 추천했지만, 이번 배포는 같은 서버의 "
                    "컨테이너로 띄웁니다 (서버를 지우면 데이터도 사라짐).")
@@ -304,6 +349,13 @@ def _run_multi(payload: dict, brain, store: Store, src, scan: dict, rec, du: dic
             images[iid] = {"dockerfile": img["dockerfile"], "generated": False, "context": img["context"],
                            "target": img.get("target"), "port": ports.get(iid)}
             df_notes.append(f"{iid}: 프로젝트 Dockerfile 그대로 사용 ({img['dockerfile']})")
+            continue
+        if img.get("base"):                    # 레지스트리 이미지 + 저장소 설정 파일 (units._bake, LLM 없음)
+            name = buildfiles.generated_name(iid)
+            files[name] = buildfiles.baked_dockerfile(img["base"], img["copies"])
+            images[iid] = {"dockerfile": name, "generated": True, "context": img["context"], "target": None,
+                           "port": ports.get(iid)}
+            df_notes.append(f"{iid}: {img['base']} + 저장소 파일 {len(img['copies'])}개 COPY")
             continue
         out = brain.image_dockerfile(src, scan, img, units.users_of(u, iid))
         text, fixes = buildfiles.normalize_dockerfile(out.dockerfile, ports.get(iid), lambda_adapter=False)
