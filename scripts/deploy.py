@@ -128,6 +128,10 @@ def ensure_runtime(role_arn: str, bucket: str, key: str) -> str:
     env = {"PAWPLOY_ARTIFACT_BUCKET": bucket, "PAWPLOY_REGION": REGION}
     existing = next((r for r in ctl.list_agent_runtimes().get("agentRuntimes", [])
                      if r["agentRuntimeName"] == RUNTIME_NAME), None)
+    if existing:
+        # 콘솔·CLI 로 바꿔 둔 설정(예: PAWPLOY_MODEL_ID — 하루 토큰 한도로 모델을 바꾼 경우)을 재배포가 지우지 않게 이어받는다
+        current = ctl.get_agent_runtime(agentRuntimeId=existing["agentRuntimeId"]).get("environmentVariables") or {}
+        env = {**current, **env}
     common = dict(agentRuntimeArtifact=artifact, roleArn=role_arn, environmentVariables=env,
                   networkConfiguration={"networkMode": "PUBLIC"})
     if existing:
