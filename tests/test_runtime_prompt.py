@@ -22,6 +22,9 @@ def test_nginx_runtime_guidance_reaches_model(monkeypatch, route):
     model = ScriptedModel(answers)
     monkeypatch.setattr(brain_mod, "_model", lambda: model)
     src = source.load(str(FIX / "sample_app"))
+    if route in ("analyze", "fallback"):
+        # 프로젝트 Dockerfile 이 고정 포트면 모델 답 대신 그대로 쓰므로(existing_dockerfile), 모델이 만드는 경로만 보려고 뺀다
+        src = source.SourceTree({p: (FIX / "sample_app" / p).read_bytes() for p in src.paths() if p != "Dockerfile"})
     sc = scan(src)
     brain = brain_mod.StrandsBrain()
 
