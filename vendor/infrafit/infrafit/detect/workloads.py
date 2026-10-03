@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import posixpath
 import re
@@ -574,6 +575,19 @@ def _scheduled_runs(snap: Snapshot) -> list[tuple[str, int | None, str, str]]:
     return out
 
 
+def _stdlib_http_server(text: str) -> bool:
+    """실제 표준 HTTP 서버 생성자 호출은 serve_forever 워커 오탐에서 제외한다."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return False
+    constructors = {alias.asname or alias.name for node in ast.walk(tree)
+                    if isinstance(node, ast.ImportFrom) and node.module == "http.server"
+                    for alias in node.names if alias.name in {"HTTPServer", "ThreadingHTTPServer"}}
+    return any(isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+               and node.func.id in constructors for node in ast.walk(tree))
+
+
 def _from_entrypoints(snap: Snapshot) -> list[WorkloadInfo]:
     """워크로드가 하나도 없을 때: 테스트·보조 디렉터리가 아닌 곳의 진입점(파이썬 `__main__` 블록·`__main__.py`,
     package.json `bin`, pyproject 스크립트)을 디렉터리마다 하나(경로 순 첫 번째) 후보 워크로드로 만든다.
@@ -595,8 +609,10 @@ def _from_entrypoints(snap: Snapshot) -> list[WorkloadInfo]:
             continue
         ids.add(wid)
         sched = next(((rel, cron) for rel, cron, run, wd in runs if _runs_entry(run, wd, e)), None)
-        loops = bool(e.file and LOOP_EVIDENCE.search(snap.read(e.file)))
-        kind = "scheduled" if sched else "worker" if loops else "batch"
+        text = snap.read(e.file) if e.file else ""
+        loops = bool(LOOP_EVIDENCE.search(text))
+        http_server = _stdlib_http_server(text)
+        kind = "scheduled" if sched else "web" if http_server else "worker" if loops else "batch"
         out.append(WorkloadInfo(
             id=wid, kind=kind, name=wid[2:], entrypoint=evidence(snap, e.path, e.line),
             status="candidate", source="code", app_dir=d, code_root=d,
