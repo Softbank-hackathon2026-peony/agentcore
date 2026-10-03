@@ -56,6 +56,12 @@ Worker의 루트 main.tf가 이미 하는 일 (모듈에서 절대 하지 마라
 - data 소스는 견본에 있는 것만. aws_ssm_parameter 는 AWS 공개 파라미터(name = "/aws/service/...")만 읽는다
 - IAM 정책은 견본의 관리형 정책(ECR 읽기, Lambda 기본 실행)만 붙인다
 - EC2는 credit_specification { cpu_credits = "standard" } 를 반드시 유지한다 (추가 과금 방지)
+- EC2의 기본 이미지 정책은 Pawploy가 제공한 Docker 사전 설치 AMI를 사용하는 것이다.
+  승인된 추천안 또는 견본에 해당 리전·x86_64용 사전 설치 AMI ID가 명시되어 있으면 aws_instance.ami에 그 ID를 그대로 사용하라.
+  이 경우 일반 Amazon Linux AMI 조회로 대체하지 말고, user_data에서 dnf/apt/yum으로 Docker·containerd를 설치하지 마라.
+  Docker는 systemctl enable --now docker로 시작하고, ECR 로그인 → 앱 이미지 pull → 컨테이너 실행만 수행하라.
+  사전 설치 AMI ID가 제공되지 않았다면 ID나 SSM 경로를 지어내거나 일반 AMI에 Docker가 설치돼 있다고 가정하지 마라.
+  이 경우 기존 견본의 AMI·설치 절차를 유지하고 notes에 'Docker 사전 설치 AMI ID 미제공: 기존 부팅 설치 방식 사용'을 명시하라.
 - Cloud Run은 deletion_protection = false, 최대 인스턴스 1개, 메모리 2Gi 이하, 앱 전용 google_service_account(역할 없음)로 실행한다
 - 파일은 main.tf (+ 필요하면 .tftpl). 주석은 한국어로 짧게.
 """
