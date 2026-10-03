@@ -161,7 +161,8 @@ Worker 는 `PAWPLOY_AGENT_BUCKET` 이 있으면 `terraform_uri` 없이도 이 �
 만들기·갱신: `AWS_PROFILE=peony python scripts/setup_build.py [--gcp-ar-repo <AR 주소> --gcp-key-secret <Secrets Manager 이름>]`
 (GCP 옵션을 주면 모든 빌드가 ECR + AR 양쪽에 올림. 키는 AR **쓰기** 권한 `roles/artifactregistry.writer` 가 있어야 함)
 
-Main Server 는 `start_build(projectName="pawploy-build")` 에 세 개만 넘기면 됩니다 (`scripts/build.py` 가 같은 호출):
+Main Server 는 `start_build(projectName="pawploy-build", buildspecOverride=<응답 build_files.buildspec>)` 에 환경변수 세 개를 넘기면 됩니다 (`scripts/build.py` 가 같은 호출).
+**`buildspecOverride` 는 꼭 넘겨야 합니다.** 프로젝트에 박힌 buildspec 은 컨테이너 1개용이라, 여러 컨테이너 앱은 이걸 안 넘기면 이미지 하나만 빌드됩니다. 값은 analyze·fix_build 응답의 `build_files.buildspec` (= 빌드 파일 폴더의 `buildspec.yml`) 그대로:
 
 | 이름 | 예 |
 |---|---|
@@ -176,6 +177,7 @@ Main Server 는 `start_build(projectName="pawploy-build")` 에 세 개만 넘기
 지금 설정: `setup_build.py --gcp-ar-repo asia-northeast3-docker.pkg.dev/softbankhackathon2026-peony/pawploy/pawploy-apps --gcp-key-secret pawploy/gcp-worker-key`
 
 실제 확인: `prj_test` 샘플 앱 빌드 → ECR + Artifact Registry 둘 다 푸시 성공 (47초), `ECR_IMAGE_URI`·`GCP_IMAGE_URI` 둘 다 digest 고정으로 나옴.
+여러 컨테이너 실제 확인 (10/3, `buildspecOverride` 사용): simple-web-app 분석(68초, `ec2_compose`, 컨테이너 5개·이미지 3개) → CodeBuild 이미지 3개 빌드·푸시 성공 (88초), `IMAGE_DIGESTS` 3개 digest 고정. 같은 방식으로 샘플 앱(컨테이너 1개)도 ECR + AR 성공 (47초).
 이미지는 Lambda Web Adapter 포함 · `linux/amd64` · `$PORT` 로 받으므로 EC2·Lambda·Cloud Run 공용입니다.
 
 여러 컨테이너 (`buildspec-images.yml`, `env.shell: bash`):

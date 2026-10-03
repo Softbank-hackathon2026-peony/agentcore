@@ -3,7 +3,7 @@
   python scripts/build.py --analyze-response examples/demo/1-analyze-sample.json
   python scripts/build.py --source s3://.../source/ --build-files s3://.../build/<id>/attempt-1/ --tag prj-x-abc
 
-끝나면 ECR_IMAGE_URI / GCP_IMAGE_URI (digest 고정) 를 출력한다. 실패하면 로그 마지막 부분을 출력한다
+끝나면 ECR_IMAGE_URI / GCP_IMAGE_URI (여러 컨테이너면 IMAGE_DIGESTS, 모두 digest 고정) 를 출력한다. 실패하면 로그 마지막 부분을 출력한다
 (이 로그를 그대로 fix_build 의 build_log 로 넘기면 된다).
 """
 import argparse
@@ -18,12 +18,21 @@ REGION = "ap-northeast-2"
 PROJECT = "pawploy-build"
 
 
+def read_buildspec(build_files_uri: str) -> str:
+    """빌드 파일 폴더의 buildspec.yml. 컨테이너 1개면 프로젝트 기본값과 같고, 여러 개면 이미지 목록을 도는 템플릿이다."""
+    bucket, _, prefix = build_files_uri[len("s3://"):].partition("/")
+    body = boto3.client("s3", region_name=REGION).get_object(Bucket=bucket, Key=prefix + "buildspec.yml")["Body"]
+    return body.read().decode("utf-8")
+
+
 def start(source_uri: str, build_files_uri: str, image_tag: str) -> str:
     cb = boto3.client("codebuild", region_name=REGION)
     env = [{"name": "SOURCE_URI", "value": source_uri, "type": "PLAINTEXT"},
            {"name": "BUILD_FILES_URI", "value": build_files_uri, "type": "PLAINTEXT"},
            {"name": "IMAGE_TAG", "value": image_tag, "type": "PLAINTEXT"}]
-    return cb.start_build(projectName=PROJECT, environmentVariablesOverride=env)["build"]["id"]
+    # 프로젝트에 박힌 buildspec 은 컨테이너 1개용이라, 항상 그 앱의 buildspec 으로 덮어쓴다
+    return cb.start_build(projectName=PROJECT, environmentVariablesOverride=env,
+                          buildspecOverride=read_buildspec(build_files_uri))["build"]["id"]
 
 
 def wait(build_id: str) -> dict:
