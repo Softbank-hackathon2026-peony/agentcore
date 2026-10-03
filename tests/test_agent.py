@@ -92,7 +92,7 @@ def test_scan_sample_app():
     assert s["dockerfiles"] == ["Dockerfile"]
     assert 8080 in [p["port"] for p in s["port_hints"]]
     assert "PORT" in s["env_names"]
-    assert [w for w in s["warnings"] if not w.startswith("InfraFit: 추천 대상")] == []
+    assert [w for w in s["warnings"] if not w.startswith("InfraFit: 추천 대상") and "유형으로 판단" not in w] == []
 
 
 def test_scan_multi_service_warns():
@@ -509,7 +509,7 @@ def test_inventory_recommendation_fixtures():
     reco = s["inventory"]["summary"]["recommendation"]
     assert "stage_error" not in s["inventory"]
     assert reco["recommended"]["target"] == "aws_lambda" and reco["recommended"]["deployable"] is True
-    assert reco["recommended"]["assignment"] == {"w-app": "cp:aws/lambda/function-url"}
+    assert reco["recommended"]["assignment"] == {"w-root": "cp:aws/lambda/function-url"}
     assert 1 <= len(reco["top"]) <= 5 and reco["top"][0] == reco["recommended"]
     assert set(reco["dimensions"]) == set(inventory.APP_DIMENSIONS)
     assert reco["dimensions"]["A2"]["assumed"] is True and reco["dimensions"]["A2"]["why"]
@@ -518,13 +518,14 @@ def test_inventory_recommendation_fixtures():
     m = scan(source.load(MULTI))
     reco = m["inventory"]["summary"]["recommendation"]
     rec = reco["recommended"]
-    assert rec["target"] == "aws_ec2" and rec["assignment"]["w-app"] == "cp:aws/ec2/docker-compose"
-    assert set(rec["assignment"]) == {"w-app", "ds-postgresql", "svc-redis"}
+    assert rec["target"] == "aws_ec2" and rec["assignment"]["w-api"] == "cp:aws/ec2/docker-compose"
+    assert set(rec["assignment"]) == {"w-api", "w-worker", "ds-postgresql", "svc-redis"}
     assert "monthly_baseline_usd" not in rec                # 화면 비용은 cost.estimate(prices.json) 하나만
     lam = next(r for r in reco["rejected"] if r["target"] == "aws_lambda")
+    assert reco["app_scope"] == "w-api"                         # 워크로드별 범위 (InfraFit f51cbe4)
     why = lam["reasons"][0]
     assert why["rule"] == "CAP-ALWAYSON-001" and why["dimension"] == "A1"
-    assert why["dimension_value"] == ["웹", "워커"] and why["capability_value"] is False
+    assert why["dimension_value"] == ["웹"] and why["capability_value"] is False
     assert why["source"]["url"].startswith("https://") and why["source"]["quote"]
     tree = source.load(MULTI)
     for at in reco["dimensions"]["A1"]["at"]:                  # 근거는 실제 파일·줄
@@ -532,6 +533,38 @@ def test_inventory_recommendation_fixtures():
         assert tree.exists(path) and 1 <= int(ln) <= len(tree.lines(path))
     warn = next(w for w in m["warnings"] if w.startswith("InfraFit: 추천 대상"))
     assert "aws_ec2" in warn and "탈락: aws_lambda(CAP-ALWAYSON-001" in warn
+
+    # 서비스 유형별 순위 (InfraFit f51cbe4)
+    rk = reco["ranking"]
+    assert rk["service_type"] in {"realtime", "long_request", "stateful", "background", "light_web"}
+    assert rk["criteria_order"][0] == "certainty" and rk["why"]
+    assert all("topology" in c for c in reco["top"])
+    assert any(w.startswith("InfraFit: ") and "유형으로 판단" in w for w in m["warnings"])
+
+
+SOCKETIO = str(Path(__file__).parent / "fixtures" / "code_socketio")
+
+
+def test_infrafit_ranking_reaches_analyze_response(tmp_path):
+    out = handle({"mode": "analyze", "project_id": "prj_ws", "source_uri": SOCKETIO},
+                 brain=FakeBrain(rec=recommendation(target="aws_ec2")), store=LocalStore(str(tmp_path)))
+    rec = out["recommendation"]
+    assert rec["infrafit"]["service_type"] == "realtime"
+    assert rec["infrafit"]["criteria_order"][:2] == ["certainty", "always_on"]
+    assert rec["infrafit"]["recommended_target"] != "aws_lambda"      # 웹소켓 능력 모름 → 1순위 아님 (QA 3)
+    # aws_ec2 는 InfraFit 6순위라 요약 top(5)에 없다 → infrafit 필드 없음. top 안의 대상(gcp_cloud_run, 3순위)으로 확인
+    cr = next(c for c in rec["candidates"] if c["target"] == "gcp_cloud_run")
+    assert cr["infrafit"]["rank"] >= 1 and cr["infrafit"]["decided_by"]["criterion"] == "certainty"
+    assert "monthly_baseline_usd" not in cr["infrafit"]                 # 비용은 화면 cost 하나만 (PR #5)
+    assert "infrafit" not in next(c for c in rec["candidates"] if c["target"] == "aws_ec2")
+    assert any("실시간 유형으로 판단" in w for w in rec["warnings"])
+
+
+def test_brain_prompt_mentions_ranking_and_cost_rule():
+    import inspect
+    from agent import brain
+    src = inspect.getsource(brain)
+    assert "ranking" in src and "unverified" in src
 
 
 def _broken_vendor(tmp_path, stage_file: str, body: str):

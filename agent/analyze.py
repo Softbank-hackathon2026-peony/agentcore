@@ -141,6 +141,8 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
     candidates = candidates[:MAX_CANDIDATES]
     for i, c in enumerate(candidates, 1):
         c["rank"] = i
+    reco = ((scan.get("inventory") or {}).get("summary") or {}).get("recommendation") or {}
+    _attach_infrafit(candidates, reco)
 
     t = catalog.TARGETS[target]
     # 여러 컨테이너 구성은 InfraFit deploy_units 로만 읽는다. 인벤토리가 실패했는데 compose·k8s 에 서비스가 여럿이면
@@ -158,6 +160,7 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
         "required_secrets": sorted(set(secrets_needed)), "permissions": t["permissions"],
         "cost": cost.estimate(target, rec.size), "clues": clues, "candidates": candidates,
         "supported": supported, "warnings": warnings,
+        **_infrafit_field(reco),
     }, notes
 
 
@@ -259,6 +262,7 @@ def validate_multi(rec: LLMRecommendation, src: source.SourceTree, scan: dict, d
         if i > 1:                                  # 컨테이너 하나만 받는 대상: 이 앱은 그대로 못 띄움
             c["deployable"] = False
             c["why"] = f"컨테이너가 {len(services)}개라 이 대상 하나로는 그대로 띄울 수 없음. {c['why']}"
+    _attach_infrafit(candidates, reco)
 
     t = catalog.TARGETS[target]
     warnings += problems + applied + units.review_warnings(u) + run_notes
@@ -271,7 +275,44 @@ def validate_multi(rec: LLMRecommendation, src: source.SourceTree, scan: dict, d
         "cost": cost.estimate(target, rec.size), "clues": clues, "candidates": candidates,
         "supported": not problems, "warnings": list(dict.fromkeys(warnings)),
         "deploy_units": u,
+        **_infrafit_field(reco),
     }, notes
+
+
+def _infrafit_view(reco: dict) -> dict | None:
+    """화면용 InfraFit 판단 요약: 유형·기준 순서·1순위 대상. 요약이 없으면 None."""
+    rk = reco.get("ranking") or {}
+    if not rk and not reco.get("recommended"):
+        return None
+    out = {k: rk[k] for k in ("service_type", "label", "coverage", "unprioritized", "criteria_order", "why") if k in rk}
+    if (reco.get("recommended") or {}).get("target"):
+        out["recommended_target"] = reco["recommended"]["target"]
+    if reco.get("outcome"):
+        out["outcome"] = reco["outcome"]
+    return out
+
+
+def _infrafit_field(reco: dict) -> dict:
+    view = _infrafit_view(reco)
+    return {"infrafit": view} if view else {}
+
+
+def _attach_infrafit(candidates: list[dict], reco: dict) -> None:
+    """후보마다 같은 대상의 InfraFit 순위·갈린 기준을 붙인다 (비용은 화면 cost 하나만 쓴다)."""
+    top = {}
+    for c in reco.get("top") or []:
+        top.setdefault(c.get("target"), c)
+    for cand in candidates:
+        c = top.get(cand["target"])
+        if c:
+            info = {"rank": c.get("rank")}
+            if c.get("decided_by"):
+                info["decided_by"] = c["decided_by"]
+            if c.get("unverified"):
+                info["unverified"] = True
+            if c.get("worker_limit"):                  # 우리 Worker 설정(Lambda 30초·Cloud Run 60초)으로는 안 됨
+                info["worker_limit"] = c["worker_limit"]
+            cand["infrafit"] = info
 
 
 def _generated_env(u: dict) -> set[str]:

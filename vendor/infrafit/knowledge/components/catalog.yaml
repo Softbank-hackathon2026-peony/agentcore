@@ -13,12 +13,16 @@ components:
   - {id: "ds:aws/rds-postgres/multi-az-instance", family: ds, name: "RDS for PostgreSQL Multi-AZ 인스턴스", source: docs/research/capabilities/01-sql-databases.md}
   - {id: "ds:gcp/cloudsql-postgres/single", family: ds, name: "Cloud SQL for PostgreSQL 단일", source: docs/research/capabilities/01-sql-databases.md}
   - {id: "ds:gcp/cloudsql-postgres/ha", family: ds, name: "Cloud SQL for PostgreSQL HA", source: docs/research/capabilities/01-sql-databases.md}
+  # compute VM 안 컨테이너(계획 2b). VM compute와만 짝지음
+  - {id: "ds:vm/compose-postgres/default", family: ds, name: "VM 안 PostgreSQL (docker compose)", source: "docs/research/capabilities/01-sql-databases.md §7"}
   # 캐시
   - {id: "ca:local/process-memory/default", family: ca, name: "프로세스 메모리", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
   - {id: "ca:unspecified/redis/default", family: ca, name: "Redis (호스팅 미확인)", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
   - {id: "ca:aws/elasticache/node-based", family: ca, name: "ElastiCache 노드 기반", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
   - {id: "ca:gcp/memorystore/redis", family: ca, name: "Memorystore for Redis", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
   - {id: "ca:gcp/memorystore/redis-basic", family: ca, name: "Memorystore for Redis Basic 티어", source: "docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md (Redis — Google Memorystore for Redis, Basic 티어)"}
+  # compute VM 안 컨테이너(계획 2b). VM compute와만 짝지음
+  - {id: "ca:vm/compose-redis/default", family: ca, name: "VM 안 Redis (docker compose)", source: "docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md (VM 안 Redis)"}
   # 큐
   - {id: "qu:unspecified/redis-streams/default", family: qu, name: "Redis Streams", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md}
   - {id: "qu:lib/bullmq/default", family: qu, name: "BullMQ", source: docs/research/capabilities/03-cache-queue-scheduler-realtime-storage.md, recommendable: false, reason: "근거 절이 BullMQ 문서(C)에만 기댐"}
@@ -59,6 +63,9 @@ components:
   - {id: "cp:gcp/cloud-run/instance-billing", family: cp, name: "Cloud Run 서비스 (인스턴스 기반 과금)", source: "docs/research/capabilities/05-compute-tier1-2.md §2.2"}
   - {id: "cp:aws/ecs-fargate/alb", family: cp, name: "ECS on Fargate 일반 서비스 + ALB", source: "docs/research/capabilities/05-compute-tier1-2.md §3.1"}
   - {id: "cp:gcp/compute-engine/docker-compose", family: cp, name: "단일 Compute Engine + docker compose", source: "docs/research/capabilities/05-compute-tier1-2.md §7.2"}
+  # 관리형 쿠버네티스 후보(계획 2b). 능력 값은 knowledge/capabilities.yaml
+  - {id: "cp:gcp/gke/autopilot", family: cp, name: "GKE Autopilot", source: "docs/research/capabilities/05-compute-tier1-2.md §5.1, §9"}
+  - {id: "cp:aws/eks/managed-node-group", family: cp, name: "Amazon EKS 관리형 노드 그룹", source: "docs/research/capabilities/05-compute-tier1-2.md §6.1, §9"}
   # 네트워크 경로
   - {id: "nw:app/uvicorn/default", family: nw, name: "uvicorn", source: docs/research/capabilities/09-network-lb-ingress.md}
   - {id: "nw:app/gunicorn/default", family: nw, name: "gunicorn", source: docs/research/capabilities/09-network-lb-ingress.md}

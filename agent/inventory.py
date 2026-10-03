@@ -31,7 +31,7 @@ from .source import SourceTree, is_secret
 CODE_ROOT = Path(__file__).resolve().parent.parent        # 배포 zip 루트 (의존성도 여기 설치됨)
 VENDOR_DIR = CODE_ROOT / "vendor" / "infrafit"
 MAX_SUMMARY_BYTES = 10000                                  # 요약 전체 (S1 + recommendation)
-MAX_RECOMMENDATION_BYTES = 4000                            # 그중 recommendation 블록
+MAX_RECOMMENDATION_BYTES = 4500                            # 그중 recommendation 블록
 MAX_DEPLOY_UNITS_BYTES = 3000                              # 그중 deploy_units 블록
 APP_DIMENSIONS = ("A1", "A2", "A3", "A4", "B1", "B2", "B3", "E2")
 ENV_EXAMPLE_FILES = {".env.example", ".env.sample", ".env.template", "env.example"}
@@ -303,6 +303,19 @@ def _targets() -> dict[str, str]:
         return {}
 
 
+@lru_cache(maxsize=1)
+def ranking_labels() -> dict:
+    """vendor knowledge/ranking.yaml 의 기준·유형 한국어 라벨. 파일이 없으면 빈 표."""
+    import yaml
+    path = VENDOR_DIR / "knowledge" / "ranking.yaml"
+    try:
+        cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except OSError:
+        return {"criteria": {}, "types": {}}
+    return {"criteria": {c["id"]: c.get("label", c["id"]) for c in cfg.get("criteria") or []},
+            "types": {t["id"]: t.get("label", t["id"]) for t in cfg.get("service_types") or []}}
+
+
 def _short(text, n: int = 160) -> str:
     text = " ".join(str(text or "").split())
     return text if len(text) <= n else text[: n - 1] + "…"
@@ -339,6 +352,12 @@ def _candidate(c: dict) -> dict:
         out["transforms"] = c["transforms"]
     if c.get("external_scopes"):                     # 바꾸지 않고 그대로 쓰는 외부 서비스(BaaS 등)
         out["external_scopes"] = c["external_scopes"]
+    if c.get("topology"):
+        out["topology"] = c["topology"]
+    if c.get("decided_by"):
+        out["decided_by"] = c["decided_by"]
+    if ((c.get("criteria") or {}).get("certainty") or {}).get("evidence_unknown"):
+        out["unverified"] = True                      # 탐지한 요구에 대한 플랫폼 능력을 모름 (확인 필요)
     return out
 
 
@@ -426,6 +445,10 @@ def recommendation_summary(profile: dict, fit: dict, reco: dict) -> dict:
         nxt = next((c for c in top if not c.get("worker_limit") and c["id"] != out["recommended"]["id"]), None)
         out["worker_override"] = {"infrafit_target": out["recommended"]["target"], "why": first_why}
         out["recommended"] = dict(nxt) if nxt else {**out["recommended"], "worker_limit": first_why}
+    rk = reco.get("ranking")
+    if isinstance(rk, dict):
+        out["ranking"] = {k: rk[k] for k in ("service_type", "label", "coverage", "unprioritized",
+                                              "criteria_order", "why") if k in rk}
     if reco.get("no_feasible"):
         out["no_feasible"] = True
     if reco.get("outcome"):                           # recommended | no_feasible | static_only | not_deployable
@@ -454,4 +477,6 @@ def _bound_recommendation(block: dict) -> dict:
         if _size(block) <= MAX_RECOMMENDATION_BYTES:
             break
         d.pop("why", None)
+    if _size(block) > MAX_RECOMMENDATION_BYTES and "ranking" in block:
+        block["ranking"]["why"] = _short(block["ranking"].get("why"), 120)
     return block

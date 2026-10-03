@@ -247,10 +247,29 @@ def _recommendation_warnings(inv: dict) -> list[str]:
     reco = inv["summary"].get("recommendation")
     if not reco:
         return []
+    from .inventory import ranking_labels
+    labels = ranking_labels()
+    lines = []
+    rk = reco.get("ranking") or {}
+    if rk.get("service_type"):
+        order = " → ".join(labels["criteria"].get(c, c) for c in rk.get("criteria_order") or [])
+        line = f"InfraFit: {rk.get('label') or rk['service_type']} 유형으로 판단 — {order} 순으로 비교"
+        if rk.get("coverage") == "partial" and rk.get("unprioritized"):
+            line += " (우선 고려하지 않은 특성: " + ", ".join(labels["types"].get(t, t) for t in rk["unprioritized"]) + ")"
+        elif rk.get("coverage") == "default":
+            line += " (유형 근거 없음 → 기본 순서)"
+        lines.append(line)
     rec = reco.get("recommended")
     if rec:
         compute = next((c for c in rec["assignment"].values() if c.startswith("cp:")), "?")
-        head = f"InfraFit: 추천 대상 {rec.get('target') or '?'} ({compute})"
+        if rec.get("unverified"):
+            head = (f"InfraFit: 1순위 {rec.get('target') or '?'} ({compute}) 는 탐지한 요구에 대한 플랫폼 능력이 "
+                    "확인되지 않았습니다 (확인 필요)")
+        else:
+            head = f"InfraFit: 추천 대상 {rec.get('target') or '?'} ({compute})"
+            crit = (rec.get("decided_by") or {}).get("criterion")
+            if crit:
+                head += f" — 갈린 기준: {labels['criteria'].get(crit, {'unknown_count': '모름 수', 'name': '이름'}.get(crit, crit))}"
         if reco.get("worker_override"):
             o = reco["worker_override"]
             head = (f"InfraFit 1순위 {o['infrafit_target']} 제외 (Worker 기준: {o['why']}). " + head
@@ -281,7 +300,7 @@ def _recommendation_warnings(inv: dict) -> list[str]:
         if seen.count(r.get("target")) > 1:         # 같은 대상의 다른 방식(예: Cloud Run 요청/인스턴스 과금)
             label += "/" + r["component"].rsplit("/", 1)[-1]
         reasons.append(f"{label}({why_s})")
-    return [head + (". 탈락: " + "; ".join(reasons[:4]) if reasons else ".")]
+    return lines + [head + (". 탈락: " + "; ".join(reasons[:4]) if reasons else ".")]
 
 
 def _line_of(src: SourceTree, path: str, needle: str) -> int:

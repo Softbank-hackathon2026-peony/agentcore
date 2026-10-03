@@ -118,6 +118,8 @@ class StrandsBrain:
             "worker_override·top[].worker_limit 은 우리 Worker 설정(Lambda 요청 30초, Cloud Run 60초)으로는 안 되는 대상이다. "
             "비용 숫자는 why·reason·summary 에 쓰지 말라 (화면 비용은 코드가 따로 계산한다). "
             "candidate(확정 아님) 사실은 단정하지 말라. "
+            "`inventory.summary.recommendation.ranking` 은 이 앱의 서비스 유형과 비교 기준 순서다. candidates 의 why 는 "
+            "그 순서의 기준으로 설명하라. `unverified: true` 후보는 확정적으로 추천하지 말고 warnings 에 확인 필요로 적어라. "
             "required_secrets 는 inventory 의 external_services.secrets 와 스캔의 env_names 를 모두 보고 정하라.\n\n"
             f"## 스캔 결과\n{json.dumps(scan_view, ensure_ascii=False, indent=1)}\n\n"
             f"## 파일 트리\n" + "\n".join(scan["tree"])

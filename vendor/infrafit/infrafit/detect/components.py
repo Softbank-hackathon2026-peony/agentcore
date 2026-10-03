@@ -159,6 +159,28 @@ def _add_image_services(scopes: dict[str, dict], services: list[ImageService], w
             entry["users"] += [by_name[n].id for n in svc.dependents if n in by_name]
 
 
+def _absorb(scopes: dict[str, dict], matches: list[Match], services: list[ImageService],
+            artifacts: list[ParsedArtifact]) -> None:
+    """시그니처의 `absorbs`(예: Supabase DB 접속 URL → 일반 Postgres): 흡수할 구성 요소의 범위를 맞은 시그니처의
+    범위로 합친다(시그니처·근거를 옮기고 그 범위는 지운다). 그 구성 요소를 compose·k8s 이미지로 띄우거나
+    Terraform이 호스팅을 정하면(RDS·Cloud SQL) 별개 저장소일 수 있어 합치지 않는다."""
+    absorbs = {s["id"]: s.get("absorbs") or [] for s in kb.signatures()}
+    image_components = {svc.component for svc in services if svc.component}
+    for m in matches:
+        target = scopes.get(scope_id(m.component, m.role))
+        if target is None:
+            continue
+        for comp in absorbs.get(m.signature, []):
+            if comp in image_components or _refine_hosting(comp, artifacts)[1] is not None:
+                continue
+            for sid in sorted(k for k, v in scopes.items() if v["component"] == comp and v is not target):
+                src = scopes.pop(sid)
+                target["signatures"] += [x for x in src["signatures"] if x not in target["signatures"]]
+                target["evidence"] += [e for e in src["evidence"] if e not in target["evidence"]]
+                if src["status"] == "confirmed":
+                    target["status"] = "confirmed"
+
+
 def map_components(snap: Snapshot, matches: list[Match], workloads: list[WorkloadInfo],
                    artifacts: list[ParsedArtifact],
                    services: list[ImageService] | None = None) -> tuple[list[dict], list[dict], dict[str, str]]:
@@ -181,6 +203,7 @@ def map_components(snap: Snapshot, matches: list[Match], workloads: list[Workloa
         if entry is not None:
             entry["signatures"].append(m.signature)
             entry["evidence"].extend(e for e in m.evidence if e not in entry["evidence"])
+    _absorb(scopes, [m for m in matches if m not in aux_only], services or [], artifacts)
 
     datastores: list[dict] = []
     comps: list[dict] = []
