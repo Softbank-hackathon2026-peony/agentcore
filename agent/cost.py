@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 
 _PRICES = json.loads((Path(__file__).with_name("prices.json")).read_text(encoding="utf-8"))
+# 같은 인스턴스 단가를 쓰는 대상 (ec2_compose = 같은 EC2 인스턴스 타입에 컨테이너만 여러 개)
+SAME_PRICE_AS = {"aws_ec2_compose": "aws_ec2"}
 
 # 비교용 사용량 가정 (화면에 그대로 보여준다)
 ASSUMPTIONS = {
@@ -17,7 +19,7 @@ ASSUMPTIONS = {
 
 
 def estimate(target_id: str, size: str) -> dict:
-    p = (_PRICES.get(target_id) or {}).get(size)
+    p = (_PRICES.get(SAME_PRICE_AS.get(target_id, target_id)) or {}).get(size)
     base = {"assumptions": ASSUMPTIONS, "currency": "USD"}
     if not p or p.get("hourly") is None and p.get("per_request_second") is None:
         return {**base, "test_1h": None, "monthly": None, "note": "단가 확인 전"}

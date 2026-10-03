@@ -1,0 +1,24 @@
+version: 0.2
+env:
+  shell: bash
+  exported-variables:
+    - IMAGE_DIGESTS
+phases:
+  pre_build:
+    commands:
+      - mkdir -p /tmp/src && cd /tmp/src
+      - case "$SOURCE_URI" in */) aws s3 cp --recursive "$SOURCE_URI" . ;; *.zip) aws s3 cp "$SOURCE_URI" /tmp/src.zip && unzip -q /tmp/src.zip -d . ;; *) aws s3 cp "$SOURCE_URI" /tmp/src.tgz && tar -xzf /tmp/src.tgz -C . ;; esac
+      - if [ "$(ls -A | wc -l)" = "1" ] && [ -d "$(ls -A)" ]; then cd "$(ls -A)"; fi
+      - aws s3 cp --recursive "${BUILD_FILES_URI}" /tmp/pawploy/
+      - echo "$PWD" > /tmp/build_dir
+      - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "${ECR_REPO_URI%%/*}"
+  build:
+    commands:
+      - cd "$(cat /tmp/build_dir)"
+      - fail=0; while IFS=$'\t' read -r id ctx df target gen; do if [ "$gen" = "true" ]; then cp "/tmp/pawploy/$df" "./$df"; fi; cat /tmp/pawploy/dockerignore >> "$ctx/.dockerignore"; if [ -f "$df.dockerignore" ]; then cat /tmp/pawploy/dockerignore >> "$df.dockerignore"; fi; tgt=(); if [ "$target" != "-" ]; then tgt=(--target "$target"); fi; echo "[pawploy] build $id ($df @ $ctx)"; docker build --platform linux/amd64 -f "$df" "${tgt[@]}" -t "$ECR_REPO_URI:$IMAGE_TAG-$id" "$ctx" || { fail=1; break; }; done < /tmp/pawploy/images.tsv; test "$fail" = 0
+  post_build:
+    commands:
+      - test "$CODEBUILD_BUILD_SUCCEEDING" = "1"
+      - cd "$(cat /tmp/build_dir)"
+      - fail=0; sep=""; out="{"; while IFS=$'\t' read -r id ctx df target gen; do docker push "$ECR_REPO_URI:$IMAGE_TAG-$id" || { fail=1; break; }; d="$(docker inspect --format='{{index .RepoDigests 0}}' "$ECR_REPO_URI:$IMAGE_TAG-$id")"; out="$out$sep\"$id\":\"$d\""; sep=","; done < /tmp/pawploy/images.tsv; test "$fail" = 0 && export IMAGE_DIGESTS="$out}"
+      - echo "IMAGE_DIGESTS=$IMAGE_DIGESTS"

@@ -29,6 +29,9 @@ STATIC_OUTPUT_DIRS = ("dist", "build", "out")  # 정적 프런트엔드 빌드 �
 PROC_KINDS = {"web": "web", "worker": "worker", "clock": "scheduled", "release": "migration-job"}
 # 워커 프로세스를 뜻하는 토큰 끝(`board.worker`, `jobs/worker.py` 등). `--workers 4`, `uvicorn.workers.UvicornWorker`는 아니다
 WORKER_SUFFIXES = (".worker", "/worker", ":worker", "worker.py", "worker.js", "worker.ts")
+# 진입점 파일이 계속 도는 프로세스라는 근거(무한 루프, 서버·소비자 루프). 없으면 실행하고 끝나는 배치·CLI(batch)
+LOOP_EVIDENCE = re.compile(r"^\s*while\s+(?:True|1)\s*:|\.(?:run_forever|serve_forever|start_consuming)\(",
+                           re.MULTILINE)
 
 
 def slug(text: str) -> str:
@@ -199,6 +202,14 @@ def _from_k8s(snap: Snapshot, artifacts: list[ParsedArtifact]) -> list[WorkloadI
     return list(seen.values())
 
 
+def compose_kind(name: str, cmd: str, cls: dict | None) -> str:
+    """compose 앱 서비스의 워크로드 종류: 리버스 프록시 이미지면 reverse-proxy, 이름·명령에 `migrat`가 있으면
+    migration-job, 워커 규칙(is_worker)에 맞으면 worker, 아니면 web."""
+    if cls:
+        return "reverse-proxy"
+    return "migration-job" if "migrat" in f"{name} {cmd}".lower() else "worker" if is_worker(name, cmd) else "web"
+
+
 def _from_compose(snap: Snapshot, artifacts: list[ParsedArtifact]) -> list[WorkloadInfo]:
     out: list[WorkloadInfo] = []
     for art, name, svc in compose_services(artifacts):
@@ -208,11 +219,7 @@ def _from_compose(snap: Snapshot, artifacts: list[ParsedArtifact]) -> list[Workl
             continue
         build = compose_build(art.path, svc)
         cmd = compose_command(art.path, svc, artifacts)
-        text = f"{name} {cmd}".lower()
-        if cls:
-            wkind = "reverse-proxy"
-        else:
-            wkind = "migration-job" if "migrat" in text else "worker" if is_worker(name, cmd) else "web"
+        wkind = compose_kind(name, cmd, cls)
         out.append(WorkloadInfo(
             id=f"w-{slug(name)}", kind=wkind, name=name,
             entrypoint=evidence(snap, art.path, service_line(snap, art.path, name)),
@@ -318,7 +325,7 @@ def _app_dockerfiles(workloads: list[WorkloadInfo], artifacts: list[ParsedArtifa
             and (base_class(df) or {}).get("role") != "reverse-proxy"]
 
 
-def _dockerfile_workload_name(path: str) -> str:
+def dockerfile_workload_name(path: str) -> str:
     """`<x>.Dockerfile`·`Dockerfile.<x>`이면 x, 아니면 Dockerfile 디렉터리 이름(저장소 루트는 root)."""
     name = PurePosixPath(path).name
     if name.endswith(".Dockerfile") and len(name) > len(".Dockerfile"):
@@ -358,7 +365,7 @@ def _repo_has(snap: Snapshot, path: str) -> bool:
     return snap.exists(p) or any(f.startswith(p + "/") for f in snap.files)
 
 
-def _recovered_context(snap: Snapshot, df: ParsedArtifact) -> str:
+def recovered_context(snap: Snapshot, df: ParsedArtifact) -> str:
     """Dockerfile만으로 찾은 워크로드의 빌드 컨텍스트: COPY·ADD 원본이 모두 저장소 루트 기준으로는 있고
     Dockerfile 디렉터리 기준으로는 없으면 저장소 루트(""), 아니면 Dockerfile 디렉터리."""
     d = parent_dir(df.path)
@@ -373,11 +380,11 @@ def _from_dockerfiles(snap: Snapshot, workloads: list[WorkloadInfo],
                       artifacts: list[ParsedArtifact]) -> list[WorkloadInfo]:
     """앱 워크로드를 못 찾았을 때: 연결되지 않은 앱 Dockerfile마다 후보 워크로드 하나.
     code_root는 빌드 컨텍스트 후보 규칙(1b F3)처럼 Dockerfile 디렉터리로 두되, COPY·ADD 원본으로 보아 저장소
-    루트가 컨텍스트이면 루트로 둔다(_recovered_context)."""
+    루트가 컨텍스트이면 루트로 둔다(recovered_context)."""
     ids = {w.id for w in workloads}
     out: list[WorkloadInfo] = []
     for df in _app_dockerfiles(workloads, artifacts):
-        name = _dockerfile_workload_name(df.path)
+        name = dockerfile_workload_name(df.path)
         command = _image_command(df.path, artifacts)
         wid = f"w-{slug(name)}"
         if wid in ids:
@@ -388,7 +395,7 @@ def _from_dockerfiles(snap: Snapshot, workloads: list[WorkloadInfo],
         fact = next((f for key in ("cmd", "entrypoint") for f in df.settings if f["key"] == key), None)
         entry = (fact or {}).get("evidence") or evidence(snap, df.path)
         d = parent_dir(df.path)
-        context = _recovered_context(snap, df)
+        context = recovered_context(snap, df)
         out.append(WorkloadInfo(id=wid, kind="worker" if is_worker(name, command) else "web", name=name,
                                 entrypoint=entry, status="candidate", source="dockerfile", app_dir=d,
                                 command=command, code_root=context, dockerfile=df.path,
@@ -563,7 +570,8 @@ def _scheduled_runs(snap: Snapshot) -> list[tuple[str, int | None, str, str]]:
 def _from_entrypoints(snap: Snapshot) -> list[WorkloadInfo]:
     """워크로드가 하나도 없을 때: 테스트·보조 디렉터리가 아닌 곳의 진입점(파이썬 `__main__` 블록·`__main__.py`,
     package.json `bin`, pyproject 스크립트)을 디렉터리마다 하나(경로 순 첫 번째) 후보 워크로드로 만든다.
-    `on: schedule` 워크플로가 실행하면 scheduled(근거: cron 줄), 아니면 worker."""
+    `on: schedule` 워크플로가 실행하면 scheduled(근거: cron 줄), 진입점 파이썬 파일에 루프 근거(LOOP_EVIDENCE)가
+    있으면 worker, 아니면 실행하고 끝나는 batch."""
     entries = [e for e in _py_entries(snap) + _script_entries(snap)
                if not is_test_path(e.path) and not is_aux_path(e.path)]
     first: dict[str, _Entry] = {}
@@ -580,8 +588,10 @@ def _from_entrypoints(snap: Snapshot) -> list[WorkloadInfo]:
             continue
         ids.add(wid)
         sched = next(((rel, cron) for rel, cron, run, wd in runs if _runs_entry(run, wd, e)), None)
+        loops = bool(e.file and LOOP_EVIDENCE.search(snap.read(e.file)))
+        kind = "scheduled" if sched else "worker" if loops else "batch"
         out.append(WorkloadInfo(
-            id=wid, kind="scheduled" if sched else "worker", name=wid[2:], entrypoint=evidence(snap, e.path, e.line),
+            id=wid, kind=kind, name=wid[2:], entrypoint=evidence(snap, e.path, e.line),
             status="candidate", source="code", app_dir=d, code_root=d,
             schedule_evidence=evidence(snap, sched[0], sched[1], "tech") if sched else None))
     return out

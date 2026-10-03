@@ -209,7 +209,8 @@
             "realtime",
             "static-frontend",
             "migration-job",
-            "reverse-proxy"
+            "reverse-proxy",
+            "batch"
           ]
         },
         "name": {
@@ -500,6 +501,9 @@
           "items": {
             "$ref": "#/$defs/ExternalService"
           }
+        },
+        "deploy_units": {
+          "$ref": "#/$defs/DeployUnits"
         }
       },
       "additionalProperties": false,
@@ -513,7 +517,268 @@
         "request_paths",
         "endpoints",
         "environments",
-        "external_services"
+        "external_services",
+        "deploy_units"
+      ]
+    },
+    "DeployUnits": {
+      "type": "object",
+      "description": "프로젝트가 스스로 정의한 같이 떠야 하는 컨테이너 묶음(docs/superpowers/specs/2026-10-03-multi-container-contract.md §1). 출처 우선순위 compose → k8s → 코드",
+      "properties": {
+        "source": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "compose",
+                    "k8s",
+                    "code"
+                  ]
+                },
+                "path": {
+                  "type": "string",
+                  "description": "compose 기본 파일, 첫 k8s 매니페스트, 코드 워크로드 진입점 파일"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "path"
+              ]
+            }
+          ]
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "description": "빌드(컨텍스트+Dockerfile+target)마다 하나. 같은 빌드를 쓰는 컨테이너가 공유한다",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "context": {
+                "type": "string",
+                "description": "저장소 경로(루트는 빈 문자열)"
+              },
+              "dockerfile": {
+                "type": "string",
+                "description": "저장소에 있는 Dockerfile. 없으면 빼고 unresolved에 적는다"
+              },
+              "target": {
+                "type": "string",
+                "description": "compose build.target(다단계 빌드 단계)"
+              },
+              "evidence": {
+                "$ref": "#/$defs/Evidence"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "context",
+              "evidence"
+            ]
+          }
+        },
+        "containers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "원래 서비스 이름 그대로(컨테이너끼리 이 이름으로 접속한다)"
+              },
+              "workload": {
+                "$ref": "#/$defs/ScopeId"
+              },
+              "image": {
+                "type": "string",
+                "description": "images[].id"
+              },
+              "registry_image": {
+                "type": "string",
+                "description": "빌드 없이 받는 레지스트리 이미지"
+              },
+              "command": {
+                "type": "string",
+                "description": "적힌 대로의 실행 명령(compose command, k8s args). 목록은 셸 규칙으로 잇는다"
+              },
+              "entrypoint": {
+                "type": "string",
+                "description": "이미지 ENTRYPOINT를 바꾸는 명령(compose entrypoint, k8s command)"
+              },
+              "ports": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                "description": "컨테이너가 듣는 포트(호스트 포트가 아니다)"
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "비밀이 아닌 값만. 비밀값·호스트에서 받는 값은 env_names에만 있다"
+              },
+              "env_names": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "이 컨테이너가 받는 환경변수 이름 전부(비밀값 포함)"
+              },
+              "depends_on": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "containers·datastores id"
+              },
+              "one_shot": {
+                "type": "boolean",
+                "description": "restart: \"no\" 이거나 service_completed_successfully로 기다리는 컨테이너, k8s Job"
+              },
+              "evidence": {
+                "$ref": "#/$defs/Evidence"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "ports",
+              "env",
+              "env_names",
+              "depends_on",
+              "one_shot",
+              "evidence"
+            ]
+          }
+        },
+        "datastores": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "datastore": {
+                "$ref": "#/$defs/ScopeId",
+                "description": "inventory datastores id"
+              },
+              "image": {
+                "type": "string",
+                "description": "레지스트리 이미지"
+              },
+              "build_image": {
+                "type": "string",
+                "description": "저장소에서 빌드하는 저장소 이미지면 images[].id"
+              },
+              "ports": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                "description": "컨테이너가 듣는 포트(호스트 포트가 아니다)"
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "비밀이 아닌 값만. 비밀값·호스트에서 받는 값은 env_names에만 있다"
+              },
+              "env_names": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "이 컨테이너가 받는 환경변수 이름 전부(비밀값 포함)"
+              },
+              "evidence": {
+                "$ref": "#/$defs/Evidence"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "ports",
+              "env",
+              "env_names",
+              "evidence"
+            ]
+          }
+        },
+        "entry": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "container": {
+                  "type": "string"
+                },
+                "port": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                "why": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "container",
+                "port",
+                "why"
+              ]
+            }
+          ]
+        },
+        "unresolved": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string"
+              },
+              "why": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "field",
+              "why"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "images",
+        "containers",
+        "datastores",
+        "entry",
+        "unresolved"
       ]
     },
     "DimensionValue": {
@@ -917,7 +1182,11 @@
       "type": "object",
       "properties": {
         "monthly_baseline_usd": {
-          "type": "number"
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "월 최소 비용 합. 배정된 구성 요소 중 하나라도 비용을 모르면 null(0이나 부분합을 쓰지 않는다)."
         },
         "peak_hourly_usd": {
           "type": "number"
@@ -950,6 +1219,13 @@
               "monthly_usd"
             ]
           }
+        },
+        "unknown_cost_components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ComponentId"
+          },
+          "description": "비용(COST.monthly_floor_usd)을 모르는 구성 요소. 비어 있지 않으면 monthly_baseline_usd 는 null."
         },
         "price_snapshot": {
           "type": "string",
@@ -1036,6 +1312,13 @@
             "medium",
             "large"
           ]
+        },
+        "external_scopes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScopeId"
+          },
+          "description": "현재 구성 요소(BaaS 등)를 바꾸지 않고 그대로 배정한 데이터 범위"
         }
       },
       "additionalProperties": false,
@@ -2404,6 +2687,61 @@
               "$ref": "#/$defs/Perspectives"
             }
           ]
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "recommended",
+            "no_feasible",
+            "static_only",
+            "not_deployable"
+          ],
+          "description": "recommended: 후보 있음, no_feasible: 앱 범위는 있으나 실현 가능한 후보 없음, static_only: 정적 프런트엔드만 있어 컴퓨트 선택 불필요, not_deployable: 앱·정적 워크로드 없음"
+        },
+        "outcome_detail": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "current": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "scope": {
+                    "$ref": "#/$defs/ScopeId"
+                  },
+                  "component": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/ComponentId"
+                      },
+                      {
+                        "const": "unmapped"
+                      }
+                    ]
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "scope",
+                  "component"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "message",
+            "current"
+          ]
         }
       },
       "additionalProperties": false,
@@ -2417,7 +2755,8 @@
         "no_feasible",
         "transforms",
         "transform_fits",
-        "perspectives"
+        "perspectives",
+        "outcome"
       ]
     },
     "Adjustment": {

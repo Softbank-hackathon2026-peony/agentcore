@@ -68,7 +68,7 @@ def test_scan_sample_app():
     assert s["dockerfiles"] == ["Dockerfile"]
     assert 8080 in [p["port"] for p in s["port_hints"]]
     assert "PORT" in s["env_names"]
-    assert s["warnings"] == []
+    assert [w for w in s["warnings"] if not w.startswith("InfraFit: 추천 대상")] == []
 
 
 def test_scan_multi_service_warns():
@@ -77,6 +77,7 @@ def test_scan_multi_service_warns():
     assert "fastapi" in s["frameworks"] and "postgres" in s["datastores"]
     assert {"DATABASE_URL", "REDIS_URL"} <= set(s["env_names"])
     assert any("서비스가 4개" in w for w in s["warnings"])
+    assert not any("1개" in w and "지원" in w for w in s["warnings"])      # 예전 "컨테이너 1개 배포만 지원" 경고 없음
 
 
 # ---------- analyze ----------
@@ -94,6 +95,10 @@ def test_analyze_ok_and_worker_fields(tmp_path):
     assert rec["candidates"][0]["target"] == "aws_lambda" and rec["candidates"][0]["rank"] == 1
     assert len(rec["candidates"]) == 5                         # 1~5순위
     assert rec["cost"]["monthly"] is not None and rec["cost"]["source"]   # 단가는 출처와 함께
+    # 컨테이너 1개 앱은 예전 응답 그대로 (여러 컨테이너용 필드·대상 없음)
+    assert "deploy_units" not in rec and "aws_ec2_compose" not in [c["target"] for c in rec["candidates"]]
+    assert set(out["build_files"]) == {"attempt", "uri_prefix", "dockerfile", "buildspec"}
+    assert "ECR_IMAGE_URI" in out["build_files"]["buildspec"] and "IMAGE_DIGESTS" not in out["build_files"]["buildspec"]
     # 저장 경로
     saved = json.loads((tmp_path / f"projects/prj_demo/analysis/{out['analysis_id']}/recommendation.json").read_text("utf-8"))
     assert saved["architecture"] == "lambda"
@@ -121,9 +126,33 @@ def test_analyze_revision_passed_to_brain(tmp_path):
     assert brain.calls[0][1]["message"] == "항상 켜져 있어야 해"
 
 
-def test_analyze_multi_service_unsupported(tmp_path):
+def test_analyze_multi_service_runs_as_compose(tmp_path):
+    """예전에는 compose 서비스가 여럿이면 supported=false 로 막았다. 이제는 deploy_units 로 서버 1대(ec2_compose)에 함께 띄운다."""
+    brain = FakeBrain()
+    out, _ = analyze(tmp_path, brain=brain, source_uri=MULTI)
+    rec = out["recommendation"]
+    assert rec["supported"] is True, rec["warnings"]
+    assert (rec["target"], rec["cloud"], rec["architecture"], rec["container_port"]) == \
+        ("aws_ec2_compose", "aws", "ec2_compose", 8000)
+    du = rec["deploy_units"]
+    assert [c["id"] for c in du["containers"]] == ["api", "worker"] and [d["id"] for d in du["datastores"]] == ["db", "redis"]
+    # Dockerfile 이 없는 이미지만 LLM 이 만든다 (Lambda 어댑터 없음, api·worker 가 같은 이미지)
+    assert ("image_dockerfile", "api", ["api", "worker"]) in brain.calls
+    img = out["build_files"]["images"]["api"]
+    assert img["generated"] is True and img["dockerfile"] == "Dockerfile.pawploy.api" and img["context"] == "api"
+    df = (tmp_path / f"projects/prj_demo/build/{out['analysis_id']}/attempt-1/Dockerfile.pawploy.api").read_text()
+    assert buildfiles.LWA_LINE not in df and "ENV PORT=8000" in df
+    assert "dockerfile" not in out["build_files"]
+
+
+def test_analyze_compose_without_inventory_still_blocked(tmp_path, monkeypatch):
+    """InfraFit 이 없으면 어떤 컨테이너를 같이 띄울지 몰라 예전처럼 막는다."""
+    from agent import config
+    monkeypatch.setattr(config, "INVENTORY_TIMEOUT", 0)
     out, _ = analyze(tmp_path, source_uri=MULTI)
-    assert out["recommendation"]["supported"] is False
+    rec = out["recommendation"]
+    assert rec["supported"] is False and "deploy_units" not in rec
+    assert any("InfraFit 인벤토리가 없어" in w for w in rec["warnings"])
 
 
 def test_unsafe_dockerfile_rejected(tmp_path):
@@ -398,3 +427,109 @@ def test_inventory_summary_bounded():
     s = inventory.summarize(inv)
     assert len(json.dumps(s, ensure_ascii=False).encode()) <= inventory.MAX_SUMMARY_BYTES
     assert s["endpoints"]["total"] == 500 and s["truncated"]
+
+
+# ---------- InfraFit 추천 (S2~S4) ----------
+
+def test_inventory_recommendation_fixtures():
+    s = scan(source.load(SAMPLE))
+    reco = s["inventory"]["summary"]["recommendation"]
+    assert "stage_error" not in s["inventory"]
+    assert reco["recommended"]["target"] == "aws_lambda" and reco["recommended"]["deployable"] is True
+    assert reco["recommended"]["assignment"] == {"w-app": "cp:aws/lambda/function-url"}
+    assert 1 <= len(reco["top"]) <= 5 and reco["top"][0] == reco["recommended"]
+    assert set(reco["dimensions"]) == set(inventory.APP_DIMENSIONS)
+    assert reco["dimensions"]["A2"]["assumed"] is True and reco["dimensions"]["A2"]["why"]
+    assert any(w.startswith("InfraFit: 추천 대상 aws_lambda") for w in s["warnings"])
+
+    m = scan(source.load(MULTI))
+    reco = m["inventory"]["summary"]["recommendation"]
+    rec = reco["recommended"]
+    assert rec["target"] == "aws_ec2" and rec["assignment"]["w-app"] == "cp:aws/ec2/docker-compose"
+    assert set(rec["assignment"]) == {"w-app", "ds-postgresql", "svc-redis"}
+    assert rec["monthly_baseline_usd"] is None or rec["monthly_baseline_usd"] > 0
+    lam = next(r for r in reco["rejected"] if r["target"] == "aws_lambda")
+    why = lam["reasons"][0]
+    assert why["rule"] == "CAP-ALWAYSON-001" and why["dimension"] == "A1"
+    assert why["dimension_value"] == ["웹", "워커"] and why["capability_value"] is False
+    assert why["source"]["url"].startswith("https://") and why["source"]["quote"]
+    tree = source.load(MULTI)
+    for at in reco["dimensions"]["A1"]["at"]:                  # 근거는 실제 파일·줄
+        path, _, ln = at.partition(":")
+        assert tree.exists(path) and 1 <= int(ln) <= len(tree.lines(path))
+    warn = next(w for w in m["warnings"] if w.startswith("InfraFit: 추천 대상"))
+    assert "aws_ec2" in warn and "탈락: aws_lambda(CAP-ALWAYSON-001" in warn
+
+
+def _broken_vendor(tmp_path, stage_file: str, body: str):
+    import shutil
+    vendor = tmp_path / "infrafit"
+    shutil.copytree(inventory.VENDOR_DIR, vendor, ignore=shutil.ignore_patterns("__pycache__"))
+    f = vendor / "infrafit" / "stages" / stage_file
+    f.write_text(f.read_text(encoding="utf-8") + body, encoding="utf-8")
+    return vendor
+
+
+def test_inventory_recommendation_failure_keeps_s1(tmp_path, monkeypatch):
+    vendor = _broken_vendor(tmp_path, "s2_profile.py",
+                            "\n\ndef run_s2(*a, **k):\n    raise RuntimeError('S2 고장')\n")
+    monkeypatch.setattr(inventory, "VENDOR_DIR", vendor)
+    s = scan(source.load(MULTI))
+    inv = s["inventory"]
+    assert inv["status"] == "ok" and inv["stage_error"]["stage"] == "S2"
+    assert "S2 고장" in inv["stage_error"]["message"]
+    assert "recommendation" not in inv["summary"]
+    assert {w["name"] for w in inv["summary"]["workloads"]} == {"api", "worker"}
+    assert any("추천 단계(S2)" in w for w in s["warnings"])
+    out, _ = analyze(tmp_path / "store", brain=FakeBrain())
+    assert out["status"] == "ok"
+
+
+def test_inventory_recommendation_timeout_keeps_s1(tmp_path, monkeypatch):
+    vendor = _broken_vendor(tmp_path, "s4_recommend.py",
+                            "\n\ndef run_s4(*a, **k):\n    import time\n    time.sleep(60)\n")
+    monkeypatch.setattr(inventory, "VENDOR_DIR", vendor)
+    inv = inventory.run_inventory(source.load(SAMPLE), timeout_s=4)
+    assert inv["status"] == "ok" and inv["stage_error"]["stage"] == "S4"
+    assert "timeout" in inv["stage_error"]["message"]
+    assert inv["summary"]["workloads"] and "recommendation" not in inv["summary"]
+
+
+def test_inventory_summary_with_recommendation_bounded():
+    eps = [{"id": f"ep-{i}", "workload": "w-a", "method": "GET", "route": "/r" * 40 + str(i),
+            "handler": {"path": f"src/routes/file_{i}.py", "line": i + 1, "snippet": "x"}} for i in range(300)]
+    inv = {"workloads": [{"id": "w-a", "kind": "web", "name": "a"}], "endpoints": eps}
+    long = "Q" * 400
+    comps = [f"cp:aws/x{i}/" + "y" * 40 for i in range(12)]
+    reco = {"recommended": "C1",
+            "candidates": [{"id": f"C{i + 1}", "rank": i + 1, "unknown_count": 0,
+                            "assignment": {"w-app": c, **{f"ds-{j}": "ds:" + "z" * 60 for j in range(6)}},
+                            "cost": {"monthly_baseline_usd": 1.0}} for i, c in enumerate(comps)],
+            "rejected": [{"id": c, "reasons": [{"type": "violation", "detail": "d", "violation": {
+                "rule": f"R-{k}", "dimension": "A1", "capability_key": "CP.k", "actual": False,
+                "source": {"ref": "https://example.com/" + "p" * 80, "quote": long}}} for k in range(5)]}
+                for c in comps]}
+    profile = {"dimensions": [{"scope": "w-app", "dimension": d, "value": "v" * 50, "source": "assumption",
+                               "assumption_key": d, "evidence": []} for d in inventory.APP_DIMENSIONS],
+               "assumptions": [{"key": d, "reason": long} for d in inventory.APP_DIMENSIONS]}
+    s = inventory.summarize(inv, profile, {"matrix": []}, reco)
+    size = len(json.dumps(s, ensure_ascii=False).encode())
+    assert size <= inventory.MAX_SUMMARY_BYTES, size
+    r = s["recommendation"]
+    assert r["recommended"]["id"] == "C1" and r["top"] and len(r["top"]) <= 5
+    assert all(len(x["reasons"]) <= 3 for x in r["rejected"])
+
+
+def test_inventory_outcome_detail_is_text():
+    from agent import inventory
+    reco = {"outcome": "static_only", "candidates": [], "rejected": [],
+            "outcome_detail": {"message": "정적 사이트", "current": [{"component": "unmapped", "label": "static hosting (vercel.json)"}]}}
+    block = inventory.recommendation_summary({"dimensions": []}, {"matrix": []}, reco)
+    assert block["outcome"] == "static_only"
+    assert block["outcome_detail"] == "정적 사이트 / 현재: static hosting (vercel.json)"
+
+
+def test_example_buildspecs_match_templates():
+    root = Path(__file__).resolve().parent.parent / "examples"
+    assert (root / "buildspec.yml").read_text(encoding="utf-8") == buildfiles.buildspec()
+    assert (root / "buildspec-images.yml").read_text(encoding="utf-8") == buildfiles.buildspec_images()

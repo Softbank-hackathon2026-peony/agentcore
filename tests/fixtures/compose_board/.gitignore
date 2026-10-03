@@ -1,0 +1,24 @@
+# SDD 작업 공간 (저장소에 올리지 않는다)
+.superpowers/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+
+# Node / 프론트엔드
+node_modules/
+dist/
+test-results/
+playwright-report/
+
+# 환경 변수·자격 증명
+.env
+.env.*
+*.env
+!.env.example
+
+.DS_Store

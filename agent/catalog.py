@@ -22,6 +22,14 @@ TARGETS: dict[str, dict] = {
         "good_for": "항상 켜져 있어야 하는 서버, 실시간 연결, 오래 걸리는 요청",
         "limits": "켜져 있는 동안 계속 과금",
     },
+    # 컨테이너 여러 개(앱·워커·DB·캐시·프록시)를 서버 1대에서 Docker Compose 로 함께 실행 (Worker modules/ec2_compose)
+    "aws_ec2_compose": {
+        "cloud": "aws", "architecture": "ec2_compose", "label": "AWS EC2 (Docker Compose)",
+        "sizes": {"micro": "t3.micro", "small": "t3.small", "medium": "t3.medium"},
+        "permissions": ["ECR 이미지 읽기", "외부 접속 80번 포트만 열림 (DB·캐시 포트는 서버 안에서만)"],
+        "good_for": "DB·캐시·워커·프록시처럼 컨테이너 여러 개가 같이 떠야 하는 앱",
+        "limits": "켜져 있는 동안 계속 과금, 서버 1대라 DB 데이터는 서버를 지우면 사라짐, 컨테이너가 많으면 medium 권장",
+    },
     "gcp_cloud_run": {
         "cloud": "gcp", "architecture": "cloud_run", "label": "Google Cloud Run",
         "sizes": {"micro": "메모리 512MiB", "small": "메모리 1GiB", "medium": "메모리 2GiB"},
@@ -46,9 +54,11 @@ TARGETS: dict[str, dict] = {
 }
 
 SIZES = ("micro", "small", "medium")
+# 컨테이너 여러 개를 한 번에 실행하는 대상. 컨테이너가 1개인 앱의 후보에는 넣지 않는다
+MULTI_CONTAINER = {"aws_ec2_compose"}
 
 # 실제 배포 가능한 대상. Worker가 지원을 늘리면 환경변수로 바꾼다.
-_DEFAULT_DEPLOYABLE = "aws_lambda,aws_ec2,gcp_cloud_run"
+_DEFAULT_DEPLOYABLE = "aws_lambda,aws_ec2,aws_ec2_compose,gcp_cloud_run"
 DEPLOYABLE = {t.strip() for t in os.environ.get("PAWPLOY_DEPLOYABLE", _DEFAULT_DEPLOYABLE).split(",")
               if t.strip() in TARGETS}
 

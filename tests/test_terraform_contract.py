@@ -5,6 +5,7 @@ WORKER_REPO=<Terraform-worker 경로> 를 주면 Worker 의 iac.check_code 를 �
 """
 import os
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -12,7 +13,7 @@ from agent import terraform as tf
 from agent.schemas import TfFile
 from tests.fakes import reference_files
 
-ARCHS = ["ec2", "lambda", "cloud_run"]
+ARCHS = ["ec2", "lambda", "cloud_run", "ec2_compose"]
 
 
 def _with(arch: str, extra: str = "", replace: tuple[str, str] | None = None) -> list[TfFile]:
@@ -49,7 +50,39 @@ VIOLATIONS = [
     ("lambda", {"extra": 'terraform {\n  required_providers {\n    aws = { source = "evil/aws" }\n  }\n}'},
      "provider source"),
     ("cloud_run", {"replace": ("max_instance_count = 1", "max_instance_count = 5")}, "최대 인스턴스"),
+    ("ec2_compose", {"replace": ('cpu_credits = "standard"', 'cpu_credits = "unlimited"')}, "cpu_credits"),
+    ("ec2_compose", {"extra": 'variable "image_uri" { type = string }'}, "넘겨주지 않는 변수"),
+    ("ec2", {"extra": 'resource "random_password" "x" {\n  length = 8\n}'}, "random_password"),   # ec2_compose 만
+    ("ec2_compose", {"replace": ("role       = aws_iam_role.app.name", 'role       = "admin"')}, "문자열"),
 ]
+
+
+# ---------- ec2_compose 템플릿 (compose.yaml.tftpl) ----------
+
+def _compose_with(extra: str):
+    files = reference_files("ec2_compose")
+    files[2] = TfFile(name="compose.yaml.tftpl", content=files[2].content + extra)
+    return files
+
+
+TEMPLATE_VIOLATIONS = [
+    ("    privileged: true\n", "privileged"),
+    ("    network_mode: host\n", "host"),
+    ('    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]\n', "Docker 소켓"),
+    ("    cap_add: [NET_ADMIN]\n", "cap_add"),
+    ("    build: .\n", "build"),
+    ('# ${file("/etc/passwd")}\n', "파일을 읽을 수 없음"),
+]
+
+
+@pytest.mark.parametrize("extra, needle", TEMPLATE_VIOLATIONS)
+def test_compose_template_violations(extra, needle):
+    errors = _errors(_compose_with(extra), "ec2_compose")
+    assert any(needle in e for e in errors), errors
+
+
+def test_compose_module_needs_template():
+    assert any("compose.yaml.tftpl" in e for e in _errors(reference_files("ec2_compose")[:2], "ec2_compose"))
 
 
 @pytest.mark.parametrize("arch", ARCHS)
@@ -100,8 +133,10 @@ def test_constants_equal_worker():
     assert tf.ALLOWED_DATA == iac.ALLOWED_DATA
     assert tf.ALLOWED_POLICY_ARNS == policy.ALLOWED_POLICY_ARNS
     assert tf.PROVIDER_SOURCES == iac.PROVIDER_SOURCES
+    assert tf.ARCHITECTURE_PROVIDER_SOURCES == iac.ARCHITECTURE_PROVIDER_SOURCES
     assert [p for p, _ in tf.FORBIDDEN] == [p for p, _ in iac.FORBIDDEN]
     assert tf.REQUIRED_VARS == iac.CONTRACT_VARIABLES and tf.REQUIRED_OUTPUTS == iac.CONTRACT_OUTPUTS
+    assert tf.COMPOSE_REQUIRED_VARS == iac.COMPOSE_CONTRACT_VARIABLES
     assert tf.ALLOWED_INSTANCE_TYPES == policy.ALLOWED_INSTANCE_TYPES
     assert (tf.MAX_LAMBDA_MEMORY_MB, tf.MAX_LAMBDA_TIMEOUT_SEC) == (policy.MAX_LAMBDA_MEMORY_MB,
                                                                      policy.MAX_LAMBDA_TIMEOUT_SEC)
@@ -109,11 +144,52 @@ def test_constants_equal_worker():
                                                                          policy.MAX_CLOUD_RUN_INSTANCES)
 
 
+def test_compose_contract_equals_worker():
+    """compose.yaml.tftpl 약속: 템플릿 검사·이미지 id 규칙·템플릿 이름이 Worker 와 같은지."""
+    iac, _ = _worker()
+    from tfworker import job, render
+    from agent import compose
+    assert [p for p, _ in compose.COMPOSE_FORBIDDEN] == [p for p, _ in iac.COMPOSE_FORBIDDEN]
+    assert compose.TEMPLATE_FILE_FUNC_RE.pattern == iac.TEMPLATE_FILE_FUNC_RE.pattern
+    assert compose.IMAGE_REF_RE.pattern == iac.IMAGE_REF_RE.pattern
+    assert compose.TEMPLATE_NAME == render.COMPOSE_TEMPLATE
+    from agent import units
+    assert units.ID_RE.pattern == job.IMAGE_ID_RE.pattern
+    main = Path(os.environ["WORKER_REPO"], "modules", "ec2_compose", "main.tf").read_text(encoding="utf-8")
+    import re
+    args = main.split('templatefile("${path.module}/compose.yaml.tftpl"')[1].split("})")[0]
+    for var in compose.TEMPLATE_VARS.values():          # 모듈이 템플릿에 넘기는 값 이름
+        assert re.search(rf"\b{var}\s*=", args), var
+
+
+@pytest.mark.parametrize("fixture", ["compose_board", "compose_vote", "multi_service"])
+def test_worker_accepts_rendered_compose_module(fixture, tmp_path):
+    """fixture 를 analyze → gen_terraform 한 ec2_compose 모듈 폴더를 Worker iac.find_violations 에 그대로 넣는다."""
+    iac, _ = _worker()
+    from agent.handler import handle
+    from agent.storage import LocalStore
+    from tests.fakes import FakeBrain, recommendation
+    store = LocalStore(str(tmp_path))
+    rec = handle({"mode": "analyze", "project_id": "prj", "source_uri": str(Path(__file__).parent / "fixtures" / fixture)},
+                 brain=FakeBrain(rec=recommendation(target="aws_ec2_compose", env={})), store=store)["recommendation"]
+    gen = handle({"mode": "gen_terraform", "project_id": "prj", "deploy_id": "dep-1", "recommendation": rec},
+                 brain=FakeBrain(), store=store)
+    target = gen["targets"][0]
+    assert target["status"] == "ok", target
+    module = Path(target["module_uri"])
+    images = {i: f"123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/x@sha256:{'0' * 64}" for i in target["images"]}
+    assert iac.find_violations(module, "aws", "ec2_compose", images) == []
+    from tfworker import render
+    assert render.detect_architecture(module) == "ec2_compose"
+
+
 @pytest.mark.parametrize("arch", ARCHS)
 def test_reference_equals_worker_module(arch):
     _worker()
     from pathlib import Path
     for f in reference_files(arch):
+        if f.name == "compose.yaml.tftpl":            # 앱마다 코드가 렌더 (Worker 것은 예시)
+            continue
         name = "main.tf" if f.name.endswith(".tf") else f.name
         worker = Path(os.environ["WORKER_REPO"], "modules", arch, name).read_text(encoding="utf-8")
         assert f.content.strip() == worker.replace("\r\n", "\n").strip(), f"{arch}/{name} 가 Worker 모듈과 다름"

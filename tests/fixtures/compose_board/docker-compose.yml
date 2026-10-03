@@ -1,0 +1,109 @@
+name: simple-web-app
+
+# 이 파일의 자격 증명(app/app)은 로컬 개발 전용 값이다.
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql+asyncpg://app:app@postgres:5432/app
+  REDIS_URL: redis://redis:6379/0
+  COOKIE_SECURE: "false"
+  LOG_LEVEL: INFO
+
+x-board-build: &board-build
+  context: .
+  dockerfile: services/board/Dockerfile
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    build: *board-build
+    image: simple-web-app/board:dev
+    command: ["python", "-m", "board.migrate"]
+    environment: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  auth:
+    build:
+      context: .
+      dockerfile: services/auth/Dockerfile
+    image: simple-web-app/auth:dev
+    # 개발용: 소스를 마운트하고 PYTHONPATH 로 설치본보다 먼저 읽게 해서 hot reload 한다.
+    command: ["uvicorn", "auth.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/src"]
+    environment:
+      <<: *backend-env
+      PYTHONPATH: /app/src
+    volumes:
+      - ./services/auth/src:/app/src:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  board-api:
+    build: *board-build
+    image: simple-web-app/board:dev
+    command: ["uvicorn", "board.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/src"]
+    environment:
+      <<: *backend-env
+      PYTHONPATH: /app/src
+    volumes:
+      - ./services/board/src:/app/src:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  board-worker:
+    build: *board-build
+    image: simple-web-app/board:dev
+    command: ["python", "-m", "board.worker"]
+    environment:
+      <<: *backend-env
+      PYTHONPATH: /app/src
+    volumes:
+      - ./services/board/src:/app/src:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  nginx:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: simple-web-app/frontend:dev
+    environment:
+      # 로컬에는 앞단 LB가 없으므로 X-Forwarded-For를 믿지 않는다.
+      REAL_IP_FROM: 127.0.0.1/32
+    ports:
+      - "8080:8080"
+    depends_on:
+      - auth
+      - board-api
+
+volumes:
+  pgdata: {}
