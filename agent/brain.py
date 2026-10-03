@@ -167,10 +167,14 @@ DOCKERFILE_RUNTIME_RULES = """
   여러 줄 문자열이나 복잡한 따옴표·역슬래시 이스케이프를 넣지 마라.
 - 정적 설정 파일은 RUN에서 생성하며 대상 디렉터리는 mkdir -p로 먼저 만든다.
   줄바꿈은 실제 줄바꿈을 가진 Dockerfile heredoc으로 표현하고 문자 그대로의 \\n과 혼동하지 마라.
+  셸 heredoc은 <<'EOF'처럼 구분자를 인용해서 ${PORT}·$uri·$host가 빌드 중 치환되지 않게 하라.
 - 런타임 환경변수 치환이 필요하면 베이스 이미지의 공식 기능을 우선 사용하라.
-  nginx는 /etc/nginx/templates/default.conf.template에 ${PORT}를 보존해서 저장하고,
-  공식 /docker-entrypoint.sh의 envsubst를 사용한다. nginx 변수 $uri 등을 미리 치환하지 마라.
-  nginx의 CMD는 ["nginx", "-g", "daemon off;"]로 유지한다.
+  공식 nginx 이미지에서는 /etc/nginx/templates/default.conf.template에 ${PORT}를 보존해서 저장하고,
+  상속한 /docker-entrypoint.sh를 유지해서 시작 시 envsubst가 실행되게 하라.
+  PORT만 치환하는 템플릿이면 ENV NGINX_ENVSUBST_FILTER=^PORT$로 범위를 제한하라.
+  다른 환경변수도 필요한 기존 템플릿은 필요한 변수 전체를 포함하도록 필터를 정하라.
+  nginx 변수 $uri·$host·$request_uri는 보존하고, CMD는 ["nginx", "-g", "daemon off;"]로 유지한다.
+  nginx를 직접 설치한 다른 베이스 이미지에는 공식 entrypoint·템플릿 기능이 있다고 가정하지 마라.
 - 별도 실행 스크립트가 꼭 필요하면 이미지 안에 실제 파일로 생성하고 셸 문법과 실행 권한을 확인하라.
   마지막 서버 실행은 exec로 하고 0.0.0.0에서 지정 포트를 리슨하게 하라.
 - 실행하지 않은 이미지를 실행 검증했다고 주장하지 마라.
