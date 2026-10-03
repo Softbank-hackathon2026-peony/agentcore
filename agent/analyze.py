@@ -8,6 +8,7 @@
 """
 import re
 import secrets
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from . import buildfiles, catalog, compose, config, cost, source, units
@@ -460,6 +461,13 @@ def _run_multi(payload: dict, brain, store: Store, src, scan: dict, rec, du: dic
     ports = units.image_ports(u)
     files = {"dockerignore": buildfiles.DOCKERIGNORE, "buildspec.yml": buildfiles.buildspec_images()}
     images, df_notes = {}, []
+    # Dockerfile 이 없는 이미지들은 모델을 동시에 부른다 (예전에는 이미지마다 차례로 불러 개수만큼 느려졌다)
+    need = [img for img in u["images"] if not img.get("dockerfile") and not img.get("base")]
+    made = {}
+    if need:
+        with ThreadPoolExecutor(len(need)) as ex:
+            outs = ex.map(lambda img: brain.image_dockerfile(src, scan, img, units.users_of(u, img["id"])), need)
+            made = {img["id"]: out for img, out in zip(need, outs)}
     for img in u["images"]:
         iid = img["id"]
         if img.get("dockerfile"):              # 프로젝트 Dockerfile 은 그대로 쓴다 (고치지 않음)
@@ -474,7 +482,7 @@ def _run_multi(payload: dict, brain, store: Store, src, scan: dict, rec, du: dic
                            "port": ports.get(iid)}
             df_notes.append(f"{iid}: {img['base']} + 저장소 파일 {len(img['copies'])}개 COPY")
             continue
-        out = brain.image_dockerfile(src, scan, img, units.users_of(u, iid))
+        out = made[iid]
         text, fixes = buildfiles.normalize_dockerfile(out.dockerfile, ports.get(iid), lambda_adapter=False)
         name = buildfiles.generated_name(iid)
         files[name] = text
