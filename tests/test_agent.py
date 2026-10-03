@@ -582,7 +582,9 @@ def test_detected_websocket_replaces_lambda_with_next_deployable(tmp_path):
     assert rec["reason"].startswith("(코드 검사: 웹소켓 때문에 aws_lambda 대신 aws_ec2)")
     lam = next(c for c in rec["candidates"] if c["target"] == "aws_lambda")
     assert lam["verdict"] == "부적합" and lam["why"].startswith("WebSocket 불가")
-    assert rec["candidates"][0]["target"] == "aws_ec2"
+    first = rec["candidates"][0]
+    assert first["target"] == "aws_ec2" and first["rank"] == 1 and first["verdict"] == "추천"
+    assert first["why"].startswith("코드 검사: 웹소켓 때문에 AWS Lambda 대신 선택. ")
 
 
 def test_no_websocket_keeps_lambda(tmp_path):
@@ -605,6 +607,37 @@ def test_websocket_evidence_needs_confirmed_a3_row():
     assert an._websocket_evidence({"dimensions": {"A3": {"value": ws, "assumed": True, "why": "가정"}}}) is None
     assert an._websocket_evidence({"dimensions": {"A3": {"value": "단발 요청", "at": ["a.js:1"]}}}) is None
     assert an._websocket_evidence({}) is None
+
+
+def test_websocket_gate_handles_candidates_the_model_did_not_list(tmp_path):
+    from agent.schemas import Candidate
+    only_ec2_fit = [Candidate(target="gcp_cloud_run", fit=50, verdict="적합", why="x")]
+    out = handle({"mode": "analyze", "project_id": "prj_ws", "source_uri": SOCKETIO},
+                 brain=FakeBrain(rec=recommendation(target="aws_lambda", candidates=only_ec2_fit)),
+                 store=LocalStore(str(tmp_path)))
+    cands = out["recommendation"]["candidates"]
+    assert cands[0]["target"] == "aws_ec2" and cands[0]["rank"] == 1 and cands[0]["verdict"] == "추천"
+    assert cands[0]["why"].endswith("모델이 평가하지 않음")
+    lam = next((c for c in cands if c["target"] == "aws_lambda"), None)       # 5개 안에 들면 부적합
+    assert lam is None or (lam["verdict"] == "부적합" and lam["why"] == "WebSocket 불가 — 모델이 평가하지 않음")
+
+
+def test_websocket_fallback_order():
+    from agent import analyze as an
+    from agent.schemas import Candidate
+    llm = recommendation(candidates=[Candidate(target="aws_lambda", fit=95, verdict="추천", why="-"),
+                                     Candidate(target="aws_ec2_compose", fit=90, verdict="적합", why="-"),
+                                     Candidate(target="aws_ecs_fargate", fit=85, verdict="적합", why="-"),
+                                     Candidate(target="gcp_cloud_run", fit=60, verdict="적합", why="-"),
+                                     Candidate(target="aws_ec2", fit=40, verdict="적합", why="-")])
+    top = [{"target": "aws_lambda"}, {"target": "aws_ec2", "mixed": True}, {"target": "aws_ec2", "unverified": True},
+           {"target": "gcp_cloud_run", "worker_limit": "60초"}, {"target": "gcp_gke"},
+           {"target": "gcp_cloud_run"}]
+    assert an._websocket_fallback({"top": top}, llm) == "gcp_cloud_run"          # (a) 걸러지는 항목 뒤 첫 후보 (gke 는 배포 불가)
+    assert an._websocket_fallback({}, llm) == "gcp_cloud_run"                    # (b) LLM 후보: Lambda·compose·배포 불가 fargate 제외
+    assert an._websocket_fallback({"top": [{"target": "aws_lambda"}]}, llm) == "gcp_cloud_run"
+    nothing = recommendation(candidates=[Candidate(target="aws_lambda", fit=90, verdict="추천", why="-")])
+    assert an._websocket_fallback({}, nothing) == "aws_ec2"                      # (c)
 
 
 def test_attach_infrafit_skips_mixed_and_aliases_ec2_once():

@@ -238,7 +238,7 @@ QA(실제 런타임 시나리오 검증) 방법·시나리오 목록·결과: [d
 
 ```bash
 python -m venv .venv && .venv/Scripts/pip install -r requirements.txt -r requirements-dev.txt
-.venv/Scripts/python -m pytest -q                 # 오프라인 테스트 153개 (모델·AWS 호출 없음)
+.venv/Scripts/python -m pytest -q                 # 오프라인 테스트 155개 (모델·AWS 호출 없음)
 WORKER_REPO=<Terraform-worker 체크아웃> .venv/Scripts/python -m pytest -q   # Worker 규칙과 직접 대조 (+33, Worker main)
 AWS_PROFILE=peony .venv/Scripts/python -m agent.app   # 로컬 서버 → POST http://localhost:8080/invocations
 ```

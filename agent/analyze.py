@@ -128,7 +128,7 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
 
     reco = ((scan.get("inventory") or {}).get("summary") or {}).get("recommendation") or {}
     ws_at = _websocket_evidence(reco)
-    ws_reason_prefix = ""
+    ws_reason_prefix, ws_swap = "", None
     if ws_at is not None and target in NO_WEBSOCKET:
         old, target = target, _websocket_fallback(reco, rec)
         where = ", ".join(ws_at[:2]) or "코드"
@@ -136,6 +136,7 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
                         f"{catalog.TARGETS[target]['label']}({target}) 로 바꿨습니다.")
         notes.append(f"웹소켓을 탐지({where})했는데 추천 대상 {old} 는 WebSocket 불가 → {target} 로 변경")
         ws_reason_prefix = f"(코드 검사: 웹소켓 때문에 {old} 대신 {target}) "
+        ws_swap = f"코드 검사: 웹소켓 때문에 {catalog.TARGETS[old]['label']} 대신 선택. "
 
     health = _health(rec, notes)
     env, secrets_needed = _env(rec, notes)
@@ -153,8 +154,14 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
         candidates.append(_candidate(c.target, c.fit, verdict, why, rec.size))
     for tid in catalog.TARGETS:        # LLM이 빠뜨린 대상도 표시 (적합도 없음)
         if tid not in seen and tid not in catalog.MULTI_CONTAINER:
-            candidates.append(_candidate(tid, None, "부적합" if not catalog.is_deployable(tid) else "적합",
-                                         "모델이 평가하지 않음", rec.size))
+            no_ws = ws_at is not None and tid in NO_WEBSOCKET
+            candidates.append(_candidate(tid, None, "부적합" if no_ws or not catalog.is_deployable(tid) else "적합",
+                                         ("WebSocket 불가 — " if no_ws else "") + "모델이 평가하지 않음", rec.size))
+    if ws_swap:                        # 코드가 고른 대상은 1순위, 모델이 매긴 평가(낭비 등)는 이 선택과 맞지 않으니 덮어쓴다
+        i = next(i for i, c in enumerate(candidates) if c["target"] == target)
+        chosen = candidates.pop(i)
+        chosen["verdict"], chosen["why"] = "추천", ws_swap + chosen["why"]
+        candidates.insert(0, chosen)
     candidates = candidates[:MAX_CANDIDATES]
     for i, c in enumerate(candidates, 1):
         c["rank"] = i
