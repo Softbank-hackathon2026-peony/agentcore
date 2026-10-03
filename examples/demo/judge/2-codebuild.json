@@ -1,0 +1,12 @@
+{
+ "seconds": 52.506030559539795,
+ "payload": {
+  "build_files": "s3://pawploy-agent-135808950984/projects/prj_demo/build/ana-20261003083744-ac5e/attempt-1/"
+ },
+ "output": {
+  "ok": true,
+  "log": "[빌드] pawploy-build  tag=prj_demo-judge-1791016695\n  source=s3://pawploy-agent-135808950984/projects/prj_live/source/sample1/\n  build_files=s3://pawploy-agent-135808950984/projects/prj_demo/build/ana-20261003083744-ac5e/attempt-1/\n  17:38:17 QUEUED\n  17:38:22 PROVISIONING\n  17:38:27 PRE_BUILD\n  17:38:47 BUILD\n  17:38:57 POST_BUILD\n  17:39:02 COMPLETED\n[결과] SUCCEEDED (52초)\n  ECR_IMAGE_URI=135808950984.dkr.ecr.ap-northeast-2.amazonaws.com/pawploy-apps@sha256:3addf49804d52bfee7230a415b0484382490512e9a71bf04ae1c29a294ca5655\n  GCP_IMAGE_URI=asia-northeast3-docker.pkg.dev/softbankhackathon2026-peony/pawploy/pawploy-apps@sha256:80e7cb5385379c3dba48c8a79937973273dcaf835b1afabd30e8bfdac14b5e95\n",
+  "ECR_IMAGE_URI": "135808950984.dkr.ecr.ap-northeast-2.amazonaws.com/pawploy-apps@sha256:3addf49804d52bfee7230a415b0484382490512e9a71bf04ae1c29a294ca5655",
+  "GCP_IMAGE_URI": "asia-northeast3-docker.pkg.dev/softbankhackathon2026-peony/pawploy/pawploy-apps@sha256:80e7cb5385379c3dba48c8a79937973273dcaf835b1afabd30e8bfdac14b5e95"
+ }
+}

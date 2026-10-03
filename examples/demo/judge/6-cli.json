@@ -1,0 +1,239 @@
+{
+ "seconds": 35.44964408874512,
+ "payload": {
+  "mode": "analyze",
+  "project_id": "prj_demo_cli",
+  "source_uri": "s3://pawploy-agent-135808950984/projects/prj-qa-A7a/source/x.tar.gz"
+ },
+ "output": {
+  "status": "ok",
+  "mode": "analyze",
+  "project_id": "prj_demo_cli",
+  "analysis_id": "ana-20261003083743-4af0",
+  "recommendation": {
+   "cloud": "gcp",
+   "architecture": "cloud_run",
+   "container_port": 8080,
+   "size": "micro",
+   "health_path": "/",
+   "env": {},
+   "reason": "이 프로젝트는 터미널에서 직접 실행하는 CLI 도구입니다. 웹 서버나 HTTP 요청을 받는 코드가 전혀 없어 Pawploy가 지원하는 어떤 배포 대상에도 올릴 수 없습니다. 배포하려면 Flask·FastAPI 같은 웹 프레임워크로 HTTP 래퍼를 직접 만들어야 합니다.",
+   "target": "gcp_cloud_run",
+   "label": "Google Cloud Run",
+   "summary": "사진 파일 이름을 촬영 날짜(수정 시각)로 바꾸는 CLI 스크립트로, 웹 서버나 HTTP 엔드포인트가 없는 일회성 실행 도구입니다.",
+   "required_secrets": [],
+   "permissions": [
+    "Artifact Registry 이미지 읽기",
+    "공개 접속 허용"
+   ],
+   "cost": {
+    "assumptions": {
+     "test_hours": 1,
+     "monthly_requests": 100000,
+     "avg_request_seconds": 0.2
+    },
+    "currency": "USD",
+    "test_1h": 0.0,
+    "monthly": 0.75,
+    "source": "https://cloud.google.com/run/pricing (Seoul asia-northeast3 = Tier 2: https://docs.cloud.google.com/run/docs/locations)",
+    "checked": "2026-10-02"
+   },
+   "clues": [
+    {
+     "file": "rename_photos.py",
+     "line": 1,
+     "finding": "모듈 docstring: '사진 파일 이름을 촬영 날짜로 바꾸는 CLI 스크립트'",
+     "plain": "쉽게 말하면: 이 파일은 웹 서비스가 아니라 터미널에서 쓰는 명령줄 도구입니다.",
+     "tag": "CLI 도구"
+    },
+    {
+     "file": "rename_photos.py",
+     "line": 9,
+     "finding": "argparse.ArgumentParser 사용 — 커맨드라인 인자(folder, --dry-run)를 받아 실행 후 종료",
+     "plain": "쉽게 말하면: HTTP 요청이 아니라 터미널 명령어로만 동작합니다.",
+     "tag": "일회성 실행"
+    },
+    {
+     "file": "rename_photos.py",
+     "line": 25,
+     "finding": "__main__ 진입점만 존재, 포트 리슨·웹 프레임워크 임포트 없음",
+     "plain": "쉽게 말하면: 웹 서버를 띄우는 코드가 한 줄도 없습니다.",
+     "tag": "웹 서버 없음"
+    }
+   ],
+   "candidates": [
+    {
+     "target": "gcp_cloud_run",
+     "cloud": "gcp",
+     "architecture": "cloud_run",
+     "label": "Google Cloud Run",
+     "deployable": true,
+     "fit": 0,
+     "verdict": "부적합",
+     "why": "HTTP 요청을 받는 진입점이 없어 Cloud Run에 올려도 요청을 처리할 수 없습니다.",
+     "size_spec": "메모리 512MiB",
+     "permissions": [
+      "Artifact Registry 이미지 읽기",
+      "공개 접속 허용"
+     ],
+     "cost": {
+      "assumptions": {
+       "test_hours": 1,
+       "monthly_requests": 100000,
+       "avg_request_seconds": 0.2
+      },
+      "currency": "USD",
+      "test_1h": 0.0,
+      "monthly": 0.75,
+      "source": "https://cloud.google.com/run/pricing (Seoul asia-northeast3 = Tier 2: https://docs.cloud.google.com/run/docs/locations)",
+      "checked": "2026-10-02"
+     },
+     "rank": 1
+    },
+    {
+     "target": "aws_lambda",
+     "cloud": "aws",
+     "architecture": "lambda",
+     "label": "AWS Lambda",
+     "deployable": true,
+     "fit": 0,
+     "verdict": "부적합",
+     "why": "Lambda 핸들러 함수가 없고 웹 API 구조가 아니라 배포할 수 없습니다.",
+     "size_spec": "메모리 512MB",
+     "permissions": [
+      "CloudWatch Logs 쓰기 (실행 로그)"
+     ],
+     "cost": {
+      "assumptions": {
+       "test_hours": 1,
+       "monthly_requests": 100000,
+       "avg_request_seconds": 0.2
+      },
+      "currency": "USD",
+      "test_1h": 0.0,
+      "monthly": 0.19,
+      "source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/ap-northeast-2/index.json",
+      "checked": "2026-10-02"
+     },
+     "rank": 2
+    },
+    {
+     "target": "aws_ec2",
+     "cloud": "aws",
+     "architecture": "ec2",
+     "label": "AWS EC2",
+     "deployable": true,
+     "fit": 0,
+     "verdict": "부적합",
+     "why": "항상 켜진 서버가 필요한 웹 서비스가 아니므로 EC2를 써도 의미가 없습니다.",
+     "size_spec": "t3.micro",
+     "permissions": [
+      "ECR 이미지 읽기",
+      "외부 접속 80번 포트만 열림"
+     ],
+     "cost": {
+      "assumptions": {
+       "test_hours": 1,
+       "monthly_requests": 100000,
+       "avg_request_seconds": 0.2
+      },
+      "currency": "USD",
+      "test_1h": 0.013,
+      "monthly": 9.49,
+      "source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "checked": "2026-10-02"
+     },
+     "rank": 3
+    },
+    {
+     "target": "aws_ecs_fargate",
+     "cloud": "aws",
+     "architecture": "ecs_fargate",
+     "label": "AWS ECS Fargate",
+     "deployable": false,
+     "fit": 0,
+     "verdict": "부적합",
+     "why": "상시 실행 컨테이너 서비스이지만 HTTP 엔드포인트가 없어 배포 의미가 없습니다.",
+     "size_spec": "0.25 vCPU / 0.5GB",
+     "permissions": [
+      "ECR 이미지 읽기",
+      "로드밸런서 공개"
+     ],
+     "cost": {
+      "assumptions": {
+       "test_hours": 1,
+       "monthly_requests": 100000,
+       "avg_request_seconds": 0.2
+      },
+      "currency": "USD",
+      "test_1h": 0.0142,
+      "monthly": 10.36,
+      "source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonECS/current/ap-northeast-2/index.json",
+      "checked": "2026-10-02"
+     },
+     "rank": 4
+    },
+    {
+     "target": "gcp_compute_engine",
+     "cloud": "gcp",
+     "architecture": "compute_engine",
+     "label": "Google Compute Engine",
+     "deployable": false,
+     "fit": 0,
+     "verdict": "부적합",
+     "why": "GCP VM이어도 웹 서버 코드가 없으면 HTTP 트래픽을 받을 수 없습니다.",
+     "size_spec": "e2-micro",
+     "permissions": [
+      "Artifact Registry 이미지 읽기",
+      "외부 접속 80번 포트"
+     ],
+     "cost": {
+      "assumptions": {
+       "test_hours": 1,
+       "monthly_requests": 100000,
+       "avg_request_seconds": 0.2
+      },
+      "currency": "USD",
+      "test_1h": 0.0107,
+      "monthly": 7.84,
+      "source": "https://cloud.google.com/products/compute/pricing/general-purpose#e2-machine-types (E2 shared-core, Seoul asia-northeast3, Default)",
+      "checked": "2026-10-02"
+     },
+     "rank": 5
+    }
+   ],
+   "supported": false,
+   "warnings": [
+    "InfraFit: 가벼운 웹 유형으로 판단 — 확실성 → 비용 → 설정 부담 → 상시 응답 순으로 비교 (유형 근거 없음 → 기본 순서)",
+    "InfraFit: 배포할 서버·정적 사이트가 없습니다 (사람이 실행하는 도구: 앱 워크로드가 모두 실행하고 끝나는 배치·CLI(일회성 실행)이고 상시 실행·요청 수신 진입점이 없다).",
+    "배포 불가: 이 프로젝트는 HTTP 요청을 받는 웹 서버가 없는 CLI 스크립트입니다. Pawploy는 HTTP 요청을 처리하는 웹 서비스만 배포할 수 있습니다. 배포하려면 Flask·FastAPI 등으로 HTTP 엔드포인트를 추가해야 합니다.",
+    "HTTP 요청을 받는 서버 코드를 찾지 못했습니다 (웹 프레임워크·포트·Dockerfile·compose·HTTP 엔드포인트 없음). Pawploy 는 웹 서비스만 배포하므로 이 저장소는 배포할 수 없습니다."
+   ],
+   "infrafit": {
+    "service_type": "light_web",
+    "label": "가벼운 웹",
+    "coverage": "default",
+    "unprioritized": [],
+    "criteria_order": [
+     "certainty",
+     "cost",
+     "config_burden",
+     "always_on"
+    ],
+    "why": "요청이 짧고 가끔 오는 서비스라 비용이 가장 중요하고, 요청 과금 플랫폼이 유리하다",
+    "outcome": "not_deployable"
+   },
+   "dockerfile_notes": [],
+   "project_id": "prj_demo_cli",
+   "analysis_id": "ana-20261003083743-4af0",
+   "commit_sha": null,
+   "model_id": "global.anthropic.claude-sonnet-4-6",
+   "created_at": "2026-10-03T08:38:16Z"
+  },
+  "recommendation_uri": "s3://pawploy-agent-135808950984/projects/prj_demo_cli/analysis/ana-20261003083743-4af0/recommendation.json",
+  "build_files": null,
+  "validation_notes": [
+   "웹 서버 근거가 없어 supported=false, 빌드 파일을 만들지 않음"
+  ]
+ }
+}

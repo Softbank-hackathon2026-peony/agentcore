@@ -1,0 +1,63 @@
+{
+ "seconds": 19.166619777679443,
+ "payload": {
+  "mode": "gen_terraform",
+  "project_id": "prj_demo",
+  "deploy_id": "dep-judge-1",
+  "recommendation_uri": "s3://pawploy-agent-135808950984/projects/prj_demo/analysis/ana-20261003083744-ac5e/recommendation.json"
+ },
+ "output": {
+  "status": "ok",
+  "mode": "gen_terraform",
+  "project_id": "prj_demo",
+  "deploy_id": "dep-judge-1",
+  "attempt": 1,
+  "module_uri": "s3://pawploy-agent-135808950984/projects/prj_demo/deploy/dep-judge-1/attempt-1/",
+  "targets": [
+   {
+    "cloud": "aws",
+    "architecture": "lambda",
+    "status": "ok",
+    "resources": [
+     "aws_iam_role.app — Lambda가 AWS 서비스를 사용할 수 있도록 허가하는 실행 역할",
+     "aws_iam_role_policy_attachment.logs — CloudWatch Logs에 로그를 쓸 수 있는 AWS 관리형 정책(AWSLambdaBasicExecutionRole) 연결",
+     "aws_lambda_function.app — 컨테이너 이미지로 실행되는 Lambda 함수 (micro = 메모리 512 MB, 타임아웃 30초)",
+     "aws_lambda_function_url.app — 인증 없이 HTTPS로 바로 호출할 수 있는 공개 함수 URL",
+     "aws_lambda_permission.public_url — 함수 URL 호출(lambda:InvokeFunctionUrl) 권한을 전체 공개로 허용",
+     "aws_lambda_permission.public_invoke — 함수 URL 경유 실행(lambda:InvokeFunction) 권한을 전체 공개로 허용 (직접 Invoke API는 차단)"
+    ],
+    "notes": [
+     "추천안의 size=micro 기준 메모리 512 MB, 타임아웃 30초로 설정됩니다. small(1024 MB)·medium(2048 MB)으로 변경 가능합니다.",
+     "env_names=[] 이므로 var.env는 빈 맵으로 전달해도 됩니다. PORT와 AWS_LWA_PORT는 container_port 값으로 자동 주입됩니다.",
+     "health_path='/' 이므로 health_url은 함수 URL 루트 경로를 가리킵니다.",
+     "2025-10 이후 함수 URL은 lambda:InvokeFunctionUrl과 lambda:InvokeFunction 두 권한이 모두 있어야 403 없이 동작합니다. aws_lambda_permission 두 개가 이를 처리합니다.",
+     "견본 코드와 구조·보안 설정이 동일하며, 추천안(container_port=8080, size=micro, health_path=/)에 맞게 주석만 정리했습니다."
+    ],
+    "module_uri": "s3://pawploy-agent-135808950984/projects/prj_demo/deploy/dep-judge-1/attempt-1/aws/",
+    "files": {
+     "main.tf": "# Lambda 아키텍처: 컨테이너 이미지 + 함수 URL\n# 이미지에 AWS Lambda Web Adapter가 포함되어 있어 일반 웹앱이 동작함\n# 입력: name, image_uri, container_port, size, env, health_path\n# 출력: endpoint, health_url, resource_id\n\nterraform {\n  required_providers {\n    aws = {\n      source = \"hashicorp/aws\"\n    }\n  }\n}\n\nvariable \"name\"           { type = string }\nvariable \"image_uri\"      { type = string }\nvariable \"container_port\" { type = number }\nvariable \"size\"           { type = string }\nvariable \"env\"            { type = map(string) }\nvariable \"health_path\"    { type = string }\n\nlocals {\n  # size별 Lambda 메모리 크기 (MB)\n  memory = {\n    micro  = 512\n    small  = 1024\n    medium = 2048\n  }\n}\n\n# Lambda 실행 역할 — name_prefix 는 IAM 64자 제한 때문에 38자 이하로 맞춤\nresource \"aws_iam_role\" \"app\" {\n  name_prefix = \"${substr(var.name, 0, 37)}-\"\n  assume_role_policy = jsonencode({\n    Version = \"2012-10-17\"\n    Statement = [{\n      Effect    = \"Allow\"\n      Principal = { Service = \"lambda.amazonaws.com\" }\n      Action    = \"sts:AssumeRole\"\n    }]\n  })\n}\n\n# CloudWatch Logs 쓰기만 허용하는 AWS 관리형 정책\nresource \"aws_iam_role_policy_attachment\" \"logs\" {\n  role       = aws_iam_role.app.name\n  policy_arn = \"arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole\"\n}\n\nresource \"aws_lambda_function\" \"app\" {\n  function_name = var.name\n  role          = aws_iam_role.app.arn\n  package_type  = \"Image\"\n  image_uri     = var.image_uri\n  architectures = [\"x86_64\"]\n  # micro 크기 기준 타임아웃 30초 (최대 60초)\n  timeout     = 30\n  memory_size = local.memory[var.size]\n\n  environment {\n    variables = merge(var.env, {\n      PORT         = tostring(var.container_port)\n      AWS_LWA_PORT = tostring(var.container_port) # Lambda Web Adapter가 앱으로 넘길 포트\n    })\n  }\n\n  depends_on = [aws_iam_role_policy_attachment.logs]\n}\n\n# 인증 없는 공개 함수 URL 생성\nresource \"aws_lambda_function_url\" \"app\" {\n  function_name      = aws_lambda_function.app.function_name\n  authorization_type = \"NONE\"\n}\n\n# 함수 URL 공개 호출 권한 — InvokeFunctionUrl 과 InvokeFunction 둘 다 필요\n# (하나라도 빠지면 auth type NONE이어도 403 발생)\nresource \"aws_lambda_permission\" \"public_url\" {\n  statement_id           = \"AllowPublicFunctionUrl\"\n  action                 = \"lambda:InvokeFunctionUrl\"\n  function_name          = aws_lambda_function.app.function_name\n  principal              = \"*\"\n  function_url_auth_type = \"NONE\"\n}\n\n# invoked_via_function_url 조건으로 함수 URL 경유 호출만 허용 (직접 Invoke API 차단)\nresource \"aws_lambda_permission\" \"public_invoke\" {\n  statement_id             = \"AllowPublicInvokeViaFunctionUrl\"\n  action                   = \"lambda:InvokeFunction\"\n  function_name            = aws_lambda_function.app.function_name\n  principal                = \"*\"\n  invoked_via_function_url = true\n}\n\noutput \"endpoint\" {\n  value = trimsuffix(aws_lambda_function_url.app.function_url, \"/\")\n}\n\noutput \"health_url\" {\n  value = \"${trimsuffix(aws_lambda_function_url.app.function_url, \"/\")}${var.health_path}\"\n}\n\noutput \"resource_id\" {\n  value = aws_lambda_function.app.arn\n}\n"
+    }
+   },
+   {
+    "cloud": "gcp",
+    "architecture": "cloud_run",
+    "status": "ok",
+    "resources": [
+     "google_service_account.app — 앱 전용 서비스 계정 (역할 없음). 기본 Compute 계정 대신 사용해 불필요한 프로젝트 권한을 차단합니다.",
+     "google_cloud_run_v2_service.app — Cloud Run 서비스 본체. 포트 8080, 메모리 512Mi(micro), 최대 인스턴스 1개, 요청 없을 때 CPU 과금 없음, deletion_protection=false 로 설정됩니다.",
+     "google_cloud_run_v2_service_iam_member.public — 인증 없이 누구나 서비스를 호출할 수 있도록 allUsers 에게 roles/run.invoker 역할을 부여합니다 (테스트 환경)."
+    ],
+    "notes": [
+     "승인된 추천안의 container_port=8080, size=micro, health_path=/ 를 그대로 반영했습니다. 변수 기본값은 없으며 루트 main.tf 에서 모두 전달합니다.",
+     "env_names 가 비어 있으므로 env 변수에는 빈 맵 {} 을 넘기면 됩니다. dynamic env 블록은 맵이 비어 있으면 아무것도 생성하지 않습니다.",
+     "서비스 계정 ID 는 6~30자 제한이 있어 'pawploy-' 접두사를 'pp-' 로 줄이고 30자 초과분을 잘라낸 뒤 끝 하이픈을 제거합니다.",
+     "조직 정책에서 allUsers IAM 바인딩을 금지하는 경우 google_cloud_run_v2_service_iam_member.public 적용이 실패합니다. 해당 정책 예외 처리가 필요합니다."
+    ],
+    "module_uri": "s3://pawploy-agent-135808950984/projects/prj_demo/deploy/dep-judge-1/attempt-1/gcp/",
+    "files": {
+     "main.tf": "# GCP Cloud Run 아키텍처: 컨테이너 1개를 서버리스로 실행 + 공개 URL\n# 공통 입력: name, image_uri, container_port, size, env, health_path\n# 공통 출력: endpoint, health_url, resource_id\n# 이미지는 같은 프로젝트의 Artifact Registry 에 있어야 한다\n\nterraform {\n  required_providers {\n    google = {\n      source = \"hashicorp/google\"\n    }\n  }\n}\n\nvariable \"name\"           { type = string }\nvariable \"image_uri\"      { type = string }\nvariable \"container_port\" { type = number }\nvariable \"size\"           { type = string }\nvariable \"env\"            { type = map(string) }\nvariable \"health_path\"    { type = string }\n\nlocals {\n  # size 별 메모리 한도 (최대 2Gi)\n  memory = {\n    micro  = \"512Mi\"\n    small  = \"1Gi\"\n    medium = \"2Gi\"\n  }\n  # 서비스 계정 ID: 6~30자, 끝 하이픈 제거\n  account_id = replace(substr(replace(var.name, \"pawploy-\", \"pp-\"), 0, 30), \"/-+$/\", \"\")\n}\n\n# 앱 전용 서비스 계정: 역할 없음\n# 미지정 시 Compute 기본 계정(편집자 권한)으로 실행되므로 반드시 명시\nresource \"google_service_account\" \"app\" {\n  account_id   = local.account_id\n  display_name = \"Pawploy ${var.name}\"\n}\n\n# 루트 main.tf 에서 설정된 프로젝트·리전을 읽는다\ndata \"google_client_config\" \"current\" {}\n\nresource \"google_cloud_run_v2_service\" \"app\" {\n  name     = var.name\n  location = data.google_client_config.current.region\n  ingress  = \"INGRESS_TRAFFIC_ALL\"\n\n  # false 로 설정해야 terraform destroy 가 정상 동작한다\n  deletion_protection = false\n\n  template {\n    service_account = google_service_account.app.email\n    timeout         = \"60s\"\n\n    scaling {\n      min_instance_count = 0\n      max_instance_count = 1 # 악용 방지\n    }\n\n    containers {\n      image = var.image_uri\n\n      ports {\n        # Cloud Run 이 PORT 환경변수를 자동 주입하므로 직접 넣으면 거부됨\n        container_port = var.container_port\n      }\n\n      resources {\n        limits = {\n          cpu    = \"1\"\n          memory = local.memory[var.size]\n        }\n        cpu_idle = true # 요청 없을 때 CPU 과금 안 함\n      }\n\n      dynamic \"env\" {\n        for_each = var.env\n        content {\n          name  = env.key\n          value = env.value\n        }\n      }\n    }\n  }\n}\n\n# 인증 없이 누구나 접속 (테스트 환경)\n# 조직 정책이 allUsers 를 막으면 여기서 실패한다\nresource \"google_cloud_run_v2_service_iam_member\" \"public\" {\n  name     = google_cloud_run_v2_service.app.name\n  location = google_cloud_run_v2_service.app.location\n  role     = \"roles/run.invoker\"\n  member   = \"allUsers\"\n}\n\noutput \"endpoint\" {\n  value = google_cloud_run_v2_service.app.uri\n}\n\noutput \"health_url\" {\n  value = \"${google_cloud_run_v2_service.app.uri}${var.health_path}\"\n}\n\noutput \"resource_id\" {\n  value = google_cloud_run_v2_service.app.id\n}\n"
+    }
+   }
+  ]
+ }
+}

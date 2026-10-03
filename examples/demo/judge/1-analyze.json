@@ -1,0 +1,293 @@
+{
+ "seconds": 34.40856051445007,
+ "payload": {
+  "mode": "analyze",
+  "project_id": "prj_demo",
+  "source_uri": "s3://pawploy-agent-135808950984/projects/prj_live/source/sample1/"
+ },
+ "output": {
+  "status": "ok",
+  "mode": "analyze",
+  "project_id": "prj_demo",
+  "analysis_id": "ana-20261003083744-ac5e",
+  "recommendation": {
+   "cloud": "aws",
+   "architecture": "lambda",
+   "container_port": 8080,
+   "size": "micro",
+   "health_path": "/",
+   "env": {},
+   "reason": "요청이 짧고 가끔 오는 가벼운 웹 서비스입니다. Dockerfile에 AWS Lambda Web Adapter가 이미 포함되어 있어 Lambda 배포가 바로 가능하고, 요청이 올 때만 실행되므로 항상 켜두는 서버보다 훨씬 효율적입니다. 데이터베이스나 실시간 연결 같은 제약 요소도 없어 Lambda가 가장 잘 맞습니다.",
+   "target": "aws_lambda",
+   "label": "AWS Lambda",
+   "summary": "Python 표준 라이브러리로 만든 최소 HTTP 웹 서버로, AWS Lambda Web Adapter를 포함해 Lambda와 EC2 양쪽에서 동작하도록 구성된 테스트용 웹앱입니다.",
+   "required_secrets": [],
+   "permissions": [
+    "CloudWatch Logs 쓰기 (실행 로그)"
+   ],
+   "cost": {
+    "assumptions": {
+     "test_hours": 1,
+     "monthly_requests": 100000,
+     "avg_request_seconds": 0.2
+    },
+    "currency": "USD",
+    "test_1h": 0.0,
+    "monthly": 0.19,
+    "source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/ap-northeast-2/index.json",
+    "checked": "2026-10-02"
+   },
+   "clues": [
+    {
+     "file": "Dockerfile",
+     "line": 6,
+     "finding": "AWS Lambda Web Adapter(awsguru/aws-lambda-adapter:1.1.0)를 COPY로 포함",
+     "plain": "쉽게 말하면: 이 이미지는 Lambda에서 일반 웹앱처럼 동작하도록 공식 어댑터가 이미 설치되어 있습니다.",
+     "tag": "Lambda Web Adapter"
+    },
+    {
+     "file": "Dockerfile",
+     "line": 12,
+     "finding": "CMD [\"python\", \"app.py\"] — 단일 웹 컨테이너, 별도 DB·캐시 없음",
+     "plain": "쉽게 말하면: 컨테이너가 하나뿐이고 데이터베이스 같은 부가 서비스가 없어 구성이 단순합니다.",
+     "tag": "단일 컨테이너"
+    },
+    {
+     "file": "app.py",
+     "line": 7,
+     "finding": "PORT = int(os.environ.get(\"PORT\", \"8080\")) — 포트 8080 사용",
+     "plain": "쉽게 말하면: 앱이 8080번 포트에서 요청을 받습니다.",
+     "tag": "포트 8080"
+    },
+    {
+     "file": "app.py",
+     "line": 11,
+     "finding": "do_GET 핸들러만 존재, JSON 응답 즉시 반환 — 처리 시간 매우 짧음",
+     "plain": "쉽게 말하면: 요청을 받으면 바로 JSON을 돌려주는 단순한 구조라 응답 시간이 아주 짧습니다.",
+     "tag": "짧은 요청 처리"
+    },
+    {
+     "file": "app.py",
+     "line": 15,
+     "finding": "os.environ.get(\"AWS_LAMBDA_FUNCTION_NAME\") 확인 — Lambda 환경 인식 코드 포함",
+     "plain": "쉽게 말하면: 코드 자체가 Lambda에서 실행 중인지 확인하는 로직을 갖추고 있어 Lambda 배포를 염두에 두고 만들어졌습니다.",
+     "tag": "Lambda 인식 코드"
+    }
+   ],
+   "candidates": [
+    {
+     "target": "aws_lambda",
+     "cloud": "aws",
+     "architecture": "lambda",
+     "label": "AWS Lambda",
+     "deployable": true,
+     "fit": 92,
+     "verdict": "추천",
+     "why": "요청이 짧고 가벼운 웹 서비스 기준에서 확실성·비용 모두 최상위입니다. Lambda Web Adapter가 이미 Dockerfile에 포함되어 있어 별도 설정 없이 바로 배포 가능합니다.",
+     "size_spec": "메모리 512MB",
+     "permissions": [
+      "CloudWatch Logs 쓰기 (실행 로그)"
+     ],
+     "cost": {
+      "assumptions": {
+       "test_hours": 1,
+       "monthly_requests": 100000,
+       "avg_request_seconds": 0.2
+      },
+      "currency": "USD",
+      "test_1h": 0.0,
+      "monthly": 0.19,
+      "source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/ap-northeast-2/index.json",
+      "checked": "2026-10-02"
+     },
+     "rank": 1,
+     "infrafit": {
+      "rank": 1,
+      "decided_by": {
+       "criterion": "name",
+       "over": "C2"
+      }
+     }
+    },
+    {
+     "target": "gcp_cloud_run",
+     "cloud": "gcp",
+     "architecture": "cloud_run",
+     "label": "Google Cloud Run",
+     "deployable": true,
+     "fit": 78,
+     "verdict": "적합",
+     "why": "요청 과금 방식으로 비용 면에서 유리하지만, 비용 기준에서 aws_lambda보다 한 단계 낮아 2순위입니다. Lambda Web Adapter 없이도 컨테이너 그대로 배포 가능합니다.",
+     "size_spec": "메모리 512MiB",
+     "permissions": [
+      "Artifact Registry 이미지 읽기",
+      "공개 접속 허용"
+     ],
+     "cost": {
+      "assumptions": {
+       "test_hours": 1,
+       "monthly_requests": 100000,
+       "avg_request_seconds": 0.2
+      },
+      "currency": "USD",
+      "test_1h": 0.0,
+      "monthly": 0.75,
+      "source": "https://cloud.google.com/run/pricing (Seoul asia-northeast3 = Tier 2: https://docs.cloud.google.com/run/docs/locations)",
+      "checked": "2026-10-02"
+     },
+     "rank": 2,
+     "infrafit": {
+      "rank": 2,
+      "decided_by": {
+       "criterion": "cost",
+       "over": "C3"
+      }
+     }
+    },
+    {
+     "target": "aws_ecs_fargate",
+     "cloud": "aws",
+     "architecture": "ecs_fargate",
+     "label": "AWS ECS Fargate",
+     "deployable": false,
+     "fit": 40,
+     "verdict": "과함",
+     "why": "서버 관리 없이 컨테이너를 운영할 수 있지만, 현재 배포 불가 대상이며 로드밸런서 추가 비용이 발생합니다.",
+     "size_spec": "0.25 vCPU / 0.5GB",
+     "permissions": [
+      "ECR 이미지 읽기",
+      "로드밸런서 공개"
+     ],
+     "cost": {
+      "assumptions": {
+       "test_hours": 1,
+       "monthly_requests": 100000,
+       "avg_request_seconds": 0.2
+      },
+      "currency": "USD",
+      "test_1h": 0.0142,
+      "monthly": 10.36,
+      "source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonECS/current/ap-northeast-2/index.json",
+      "checked": "2026-10-02"
+     },
+     "rank": 3
+    },
+    {
+     "target": "aws_ec2",
+     "cloud": "aws",
+     "architecture": "ec2",
+     "label": "AWS EC2",
+     "deployable": true,
+     "fit": 35,
+     "verdict": "과함",
+     "why": "항상 켜진 서버라 가끔 오는 요청에는 비용 대비 효율이 낮습니다. 실시간 연결이나 오래 걸리는 작업이 없어 EC2의 장점을 살리기 어렵습니다.",
+     "size_spec": "t3.micro",
+     "permissions": [
+      "ECR 이미지 읽기",
+      "외부 접속 80번 포트만 열림"
+     ],
+     "cost": {
+      "assumptions": {
+       "test_hours": 1,
+       "monthly_requests": 100000,
+       "avg_request_seconds": 0.2
+      },
+      "currency": "USD",
+      "test_1h": 0.013,
+      "monthly": 9.49,
+      "source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "checked": "2026-10-02"
+     },
+     "rank": 4,
+     "infrafit": {
+      "rank": 4,
+      "decided_by": {
+       "criterion": "cost",
+       "over": "C5"
+      }
+     }
+    },
+    {
+     "target": "gcp_compute_engine",
+     "cloud": "gcp",
+     "architecture": "compute_engine",
+     "label": "Google Compute Engine",
+     "deployable": false,
+     "fit": 30,
+     "verdict": "낭비",
+     "why": "항상 켜진 VM이라 가벼운 웹 서비스에는 비용 낭비입니다. 또한 현재 배포 불가 대상입니다.",
+     "size_spec": "e2-micro",
+     "permissions": [
+      "Artifact Registry 이미지 읽기",
+      "외부 접속 80번 포트"
+     ],
+     "cost": {
+      "assumptions": {
+       "test_hours": 1,
+       "monthly_requests": 100000,
+       "avg_request_seconds": 0.2
+      },
+      "currency": "USD",
+      "test_1h": 0.0107,
+      "monthly": 7.84,
+      "source": "https://cloud.google.com/products/compute/pricing/general-purpose#e2-machine-types (E2 shared-core, Seoul asia-northeast3, Default)",
+      "checked": "2026-10-02"
+     },
+     "rank": 5,
+     "infrafit": {
+      "rank": 3,
+      "decided_by": {
+       "criterion": "cost",
+       "over": "C4"
+      }
+     }
+    }
+   ],
+   "supported": true,
+   "warnings": [
+    "InfraFit: 가벼운 웹 유형으로 판단 — 확실성 → 비용 → 설정 부담 → 상시 응답 순으로 비교 (유형 근거 없음 → 기본 순서)",
+    "InfraFit: 추천 대상 aws_lambda (cp:aws/lambda/function-url) — 갈린 기준: 동률 (이름순) (요청 처리 시간 A2 는 코드로 확인하지 못한 가정값: 1초 미만).",
+    "요청 처리 시간(A2)은 코드에서 직접 측정할 수 없어 '1초 미만'으로 가정했습니다. 실제로 오래 걸리는 작업이 있다면 Lambda 30초 제한을 초과할 수 있으니 확인이 필요합니다."
+   ],
+   "infrafit": {
+    "service_type": "light_web",
+    "label": "가벼운 웹",
+    "coverage": "default",
+    "unprioritized": [],
+    "criteria_order": [
+     "certainty",
+     "cost",
+     "config_burden",
+     "always_on"
+    ],
+    "why": "요청이 짧고 가끔 오는 서비스라 비용이 가장 중요하고, 요청 과금 플랫폼이 유리하다",
+    "recommended_target": "aws_lambda",
+    "outcome": "recommended"
+   },
+   "dockerfile_notes": [
+    "기존 Dockerfile(Dockerfile:2) 의 python:3.12-slim 베이스 이미지를 그대로 유지하고 --platform=linux/amd64 를 추가했습니다.",
+    "Lambda Web Adapter COPY 줄(기존 Dockerfile:6)은 지시에 따라 제거했습니다. Pawploy가 자동으로 삽입합니다.",
+    "외부 의존성 파일(requirements.txt 등)이 프로젝트에 없고, app.py(line 1~5)가 json·os·socket·http.server 등 Python 표준 라이브러리만 사용하므로 pip install 단계를 추가하지 않았습니다.",
+    "app.py(line 27)의 ThreadingHTTPServer가 0.0.0.0:PORT 로 바인딩하므로 운영용 서버 요건을 충족합니다. 별도 WSGI 서버 불필요.",
+    "ENV PORT=8080 으로 기본 포트를 선언하고, 런타임에 PORT 환경변수를 주입하면 Lambda·EC2·Cloud Run 모두 동일 이미지로 동작합니다.",
+    ".env·키 파일 COPY 없음. COPY 대상은 app.py 단일 파일입니다.",
+    "Lambda Web Adapter 줄을 1.1.0 하나로 맞춤 (EC2·Cloud Run에서는 무시됨)"
+   ],
+   "project_id": "prj_demo",
+   "analysis_id": "ana-20261003083744-ac5e",
+   "commit_sha": null,
+   "model_id": "global.anthropic.claude-sonnet-4-6",
+   "created_at": "2026-10-03T08:38:15Z"
+  },
+  "recommendation_uri": "s3://pawploy-agent-135808950984/projects/prj_demo/analysis/ana-20261003083744-ac5e/recommendation.json",
+  "build_files": {
+   "attempt": 1,
+   "uri_prefix": "s3://pawploy-agent-135808950984/projects/prj_demo/build/ana-20261003083744-ac5e/attempt-1/",
+   "dockerfile": "# syntax=docker/dockerfile:1\nFROM --platform=linux/amd64 python:3.12-slim\nCOPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0 /lambda-adapter /opt/extensions/lambda-adapter\n\n# Lambda Web Adapter는 Pawploy가 자동으로 삽입합니다\n\nWORKDIR /app\nCOPY app.py .\n\nENV PORT=8080\nEXPOSE 8080\n\nCMD [\"python\", \"app.py\"]\n",
+   "buildspec": "version: 0.2\nenv:\n  exported-variables:\n    - ECR_IMAGE_URI\n    - GCP_IMAGE_URI\nphases:\n  pre_build:\n    commands:\n      - mkdir -p /tmp/src && cd /tmp/src\n      - case \"$SOURCE_URI\" in */) aws s3 cp --recursive \"$SOURCE_URI\" . ;; *.zip) aws s3 cp \"$SOURCE_URI\" /tmp/src.zip && unzip -q /tmp/src.zip -d . ;; *) aws s3 cp \"$SOURCE_URI\" /tmp/src.tgz && tar -xzf /tmp/src.tgz -C . ;; esac\n      - if [ \"$(ls -A | wc -l)\" = \"1\" ] && [ -d \"$(ls -A)\" ]; then cd \"$(ls -A)\"; fi\n      - aws s3 cp \"${BUILD_FILES_URI}Dockerfile.pawploy\" ./Dockerfile.pawploy\n      - aws s3 cp \"${BUILD_FILES_URI}dockerignore\" ./Dockerfile.pawploy.dockerignore\n      - echo \"$PWD\" > /tmp/build_dir\n      - aws ecr get-login-password --region \"$AWS_REGION\" | docker login --username AWS --password-stdin \"${ECR_REPO_URI%%/*}\"\n      - if [ -n \"$GCP_AR_REPO\" ]; then aws secretsmanager get-secret-value --secret-id \"$GCP_SA_KEY_SECRET\" --query SecretString --output text | docker login -u _json_key --password-stdin \"https://${GCP_AR_REPO%%/*}\"; fi\n  build:\n    commands:\n      - cd \"$(cat /tmp/build_dir)\"\n      - DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -f Dockerfile.pawploy -t \"$ECR_REPO_URI:$IMAGE_TAG\" .\n  post_build:\n    commands:\n      - test \"$CODEBUILD_BUILD_SUCCEEDING\" = \"1\"\n      - docker push \"$ECR_REPO_URI:$IMAGE_TAG\"\n      - export ECR_IMAGE_URI=\"$(docker inspect --format='{{index .RepoDigests 0}}' \"$ECR_REPO_URI:$IMAGE_TAG\")\"\n      - if [ -n \"$GCP_AR_REPO\" ]; then docker tag \"$ECR_REPO_URI:$IMAGE_TAG\" \"$GCP_AR_REPO:$IMAGE_TAG\" && docker push \"$GCP_AR_REPO:$IMAGE_TAG\" && export GCP_IMAGE_URI=\"$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' \"$GCP_AR_REPO:$IMAGE_TAG\" | grep \"$GCP_AR_REPO\" | head -1)\"; fi\n      - echo \"ECR_IMAGE_URI=$ECR_IMAGE_URI GCP_IMAGE_URI=$GCP_IMAGE_URI\"\n"
+  },
+  "validation_notes": [
+   "환경변수 제외: PORT"
+  ]
+ }
+}

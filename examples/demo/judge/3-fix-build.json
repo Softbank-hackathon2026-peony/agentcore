@@ -1,0 +1,30 @@
+{
+ "seconds": 15.405608654022217,
+ "payload": {
+  "mode": "fix_build",
+  "project_id": "prj_demo",
+  "analysis_id": "ana-demo-fixbuild",
+  "attempt": 1,
+  "source_uri": "s3://pawploy-agent-135808950984/projects/prj_live/source/sample1/",
+  "failed_phase": "BUILD",
+  "build_log": "#6 extracting sha256:e360d85fdc0f3910a4fe48ba2bb0865d5e618392ea8abfa424e66575e45273c0 0.3s done\n#6 extracting sha256:5e62c0470a0973ad9561440c8a37984c3252eda1dd19e00ca7e76a37b62b5dc7\n#6 extracting sha256:5e62c0470a0973ad9561440c8a37984c3252eda1dd19e00ca7e76a37b62b5dc7 done\n#6 DONE 1.6s\n\n#7 [stage-0 2/5] COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0 /lambda-adapter /opt/extensions/lambda-adapter\n#7 DONE 0.3s\n\n#8 [stage-0 3/5] WORKDIR /app\n#8 DONE 0.0s\n\n#9 [stage-0 4/5] COPY app.py .\n#9 DONE 0.1s\n\n#10 [stage-0 5/5] RUN pip install --no-cache-dir -r requirements-missing.txt\n#10 1.258 \n#10 1.258 [notice] A new release of pip is available: 25.0.1 -> 26.2.1\n#10 1.258 [notice] To update, run: pip install --upgrade pip\n#10 1.258 ERROR: Could not open requirements file: [Errno 2] No such file or directory: 'requirements-missing.txt'\n#10 ERROR: process \"/bin/sh -c pip install --no-cache-dir -r requirements-missing.txt\" did not complete successfully: exit code: 1\n------\n > [stage-0 5/5] RUN pip install --no-cache-dir -r requirements-missing.txt:\n1.258 \n1.258 [notice] A new release of pip is available: 25.0.1 -> 26.2.1\n1.258 [notice] To update, run: pip install --upgrade pip\n1.258 ERROR: Could not open requirements file: [Errno 2] No such file or directory: 'requirements-missing.txt'\n------\n\n \u001b[33m1 warning found (use docker --debug to expand):\n\u001b[0m - FromPlatformFlagConstDisallowed: FROM --platform flag should not use constant value \"linux/amd64\" (line 3)\nDockerfile.pawploy:8\n--------------------\n   6 |     WORKDIR /app\n   7 |     COPY app.py .\n   8 | >>> RUN pip install --no-cache-dir -r requirements-missing.txt\n   9 |     \n  10 |     ENV PORT=8080\n--------------------\nERROR: failed to build: failed to solve: process \"/bin/sh -c pip install --no-cache-dir -r requirements-missing.txt\" did not complete successfully: exit code: 1\n\n[Container] 2026/10/03 02:42:55.746603 Command did not exit successfully DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -f Dockerfile.pawploy -t \"$ECR_REPO_URI:$IMAGE_TAG\" . exit status 1\n[Container] 2026/10/03 02:42:55.758379 Phase complete: BUILD State: FAILED\n[Container] 2026/10/03 02:42:55.758397 Phase context status code: COMMAND_EXECUTION_ERROR Message: Error while executing command: DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -f Dockerfile.pawploy -t \"$ECR_REPO_URI:$IMAGE_TAG\" .. Reason: exit status 1\n[Container] 2026/10/03 02:42:55.796212 Entering phase POST_BUILD\n[Container] 2026/10/03 02:42:55.796983 Running command test \"$CODEBUILD_BUILD_SUCCEEDING\" = \"1\"\n\n[Container] 2026/10/03 02:42:55.803042 Command did not exit successfully test \"$CODEBUILD_BUILD_SUCCEEDING\" = \"1\" exit status 1\n[Container] 2026/10/03 02:42:55.813214 Phase complete: POST_BUILD State: FAILED\n[Container] 2026/10/03 02:42:55.813224 Phase context status code: COMMAND_EXECUTION_ERROR Message: Error while executing command: test \"$CODEBUILD_BUILD_SUCCEEDING\" = \"1\". Reason: exit status 1\n[Container] 2026/10/03 02:42:55.860912 Set report auto-discover timeout to 5 seconds\n[Container] 2026/10/03 02:42:55.860962 Expanding base directory path:  .\n[Container] 2026/10/03 02:42:55.863317 Assembling file list\n[Container] 2026/10/03 02:42:55.863326 Expanding .\n[Container] 2026/10/03 02:42:55.865639 Expanding file paths for base directory .\n[Container] 2026/10/03 02:42:55.865648 Assembling file list\n[Container] 2026/10/03 02:42:55.865650 Expanding **/*\n[Container] 2026/10/03 02:42:55.868102 No matching auto-discover report paths found\n[Container] 2026/10/03 02:42:55.868113 Report auto-discover file discovery took 0.007201 seconds\n[Container] 2026/10/03 02:42:55.868120 Phase complete: UPLOAD_ARTIFACTS State: SUCCEEDED\n[Container] 2026/10/03 02:42:55.868132 Phase context status code:  Message: \n\n",
+  "dockerfile": "# EC2 · Lambda · Cloud Run 모두에서 동작하는 이미지\n# Lambda Web Adapter는 Pawploy 빌드 시스템이 자동으로 삽입합니다.\nFROM --platform=linux/amd64 python:3.12-slim\nCOPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0 /lambda-adapter /opt/extensions/lambda-adapter\n\nWORKDIR /app\nCOPY app.py .\nRUN pip install --no-cache-dir -r requirements-missing.txt\n\nENV PORT=8080\nEXPOSE 8080\n\nCMD [\"python\", \"app.py\"]\n"
+ },
+ "output": {
+  "mode": "fix_build",
+  "project_id": "prj_demo",
+  "analysis_id": "ana-demo-fixbuild",
+  "attempt": 1,
+  "status": "ok",
+  "cause": "Dockerfile에 `pip install -r requirements-missing.txt` 명령이 있지만, 프로젝트에 requirements 파일이 존재하지 않습니다. 또한 실제 Dockerfile(원본)에는 해당 RUN 명령 자체가 없으며, app.py는 표준 라이브러리만 사용하므로 외부 패키지 설치가 불필요합니다.",
+  "changes": [
+   "존재하지 않는 requirements-missing.txt를 참조하는 `RUN pip install --no-cache-dir -r requirements-missing.txt` 줄을 삭제했습니다. app.py는 json, os, socket, http.server 등 Python 표준 라이브러리만 사용하므로 pip install이 필요 없습니다."
+  ],
+  "container_port": 8080,
+  "build_files": {
+   "attempt": 2,
+   "uri_prefix": "s3://pawploy-agent-135808950984/projects/prj_demo/build/ana-demo-fixbuild/attempt-2/",
+   "dockerfile": "# EC2 · Lambda · Cloud Run 모두에서 동작하는 이미지\n# Lambda Web Adapter는 Pawploy 빌드 시스템이 자동으로 삽입합니다.\nFROM --platform=linux/amd64 python:3.12-slim\nCOPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0 /lambda-adapter /opt/extensions/lambda-adapter\n\nWORKDIR /app\nCOPY app.py .\n\nENV PORT=8080\nEXPOSE 8080\n\nCMD [\"python\", \"app.py\"]\n"
+  }
+ }
+}
