@@ -7,7 +7,7 @@ import json
 import posixpath
 import re
 
-from . import catalog, config, units
+from . import buildfiles, catalog, config, units
 from .errors import AgentError
 from .schemas import AnalysisOut, DockerfileFix, DockerfileOut, LLMRecommendation
 from .source import SourceTree, is_secret
@@ -163,8 +163,10 @@ def _tools(src: SourceTree):
 DOCKERFILE_RULES = (
     "- 하나의 이미지가 AWS Lambda(Lambda Web Adapter), EC2, Cloud Run 모두에서 동작해야 한다.\n"
     "  Lambda Web Adapter COPY 줄은 코드가 정해진 버전으로 넣으니 직접 쓰지 마라.\n"
-    "- linux/amd64, 앱은 환경변수 PORT 의 포트에서 0.0.0.0 으로 요청을 받아야 한다.\n"
-    "- 프로젝트에 Dockerfile이 있으면 그것을 기반으로 하라.\n"
+    "- linux/amd64, 앱은 추천 포트에서 0.0.0.0 으로 요청을 받아야 한다.\n"
+    "- 기존 Dockerfile과 고정 리슨 포트를 최대한 유지하라. Worker가 container_port를 전달하므로 "
+    "PORT 환경변수를 읽게 하려고 nginx 설정이나 실행 명령을 다시 쓰지 마라.\n"
+    "- 새 서버를 작성할 때만 환경변수 PORT를 사용하라.\n"
     "- 의존성 설치는 실제 의존성 파일을 사용하고, 개발용 서버(예: flask run --debug) 대신 운영용 실행 명령을 써라.\n"
     "- .env 나 키 파일을 COPY 하지 마라. 빌드 컨텍스트 루트는 프로젝트 루트다."
 )
@@ -262,6 +264,10 @@ class StrandsBrain:
         # 추천과 Dockerfile 을 한 번에 받는다 (예전에는 같은 대화에서 한 번 더 불러 왕복이 하나 더 들었다)
         prompt += "\n\n## Dockerfile (같은 답의 dockerfile 필드)\n추천과 함께 Dockerfile 도 만들어라.\n" + DOCKERFILE_RULES
         rec: AnalysisOut = self._run(agent, prompt, AnalysisOut)
+        existing = buildfiles.existing_dockerfile(src, rec.container_port)
+        if existing is not None:
+            rec.container_port = existing.container_port
+            return rec, existing
         if rec.dockerfile.strip():
             return rec, DockerfileOut(dockerfile=rec.dockerfile, container_port=rec.container_port,
                                       notes=rec.dockerfile_notes)

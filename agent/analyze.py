@@ -73,7 +73,14 @@ def run(payload: dict, brain, store: Store) -> dict:
     build_prefix = f"projects/{project_id}/build/{analysis_id}/attempt-1/"
     files = {}
     if dockerfile is not None:
-        files = {buildfiles.DOCKERFILE_NAME: dockerfile, "dockerignore": buildfiles.DOCKERIGNORE,
+        ignore = buildfiles.DOCKERIGNORE
+        if src.exists("Dockerfile") and df.dockerfile.replace("\r\n", "\n") == src.read_text("Dockerfile", limit=buildfiles.MAX_DOCKERFILE_CHARS + 1).replace("\r\n", "\n"):
+            # Preserve project build-context exclusions when reusing its Dockerfile.
+            for path in ("Dockerfile.dockerignore", ".dockerignore"):
+                if src.exists(path):
+                    ignore = src.read_text(path) + "\n" + ignore
+                    break
+        files = {buildfiles.DOCKERFILE_NAME: dockerfile, "dockerignore": ignore,
                  "buildspec.yml": buildfiles.buildspec()}
         for name, text in files.items():
             store.put_text(build_prefix + name, text)

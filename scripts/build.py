@@ -11,6 +11,7 @@ import json
 import re
 import sys
 import time
+from pathlib import Path
 
 import boto3
 
@@ -25,14 +26,14 @@ def read_buildspec(build_files_uri: str) -> str:
     return body.read().decode("utf-8")
 
 
-def start(source_uri: str, build_files_uri: str, image_tag: str) -> str:
+def start(source_uri: str, build_files_uri: str, image_tag: str, buildspec: str | None = None) -> str:
     cb = boto3.client("codebuild", region_name=REGION)
     env = [{"name": "SOURCE_URI", "value": source_uri, "type": "PLAINTEXT"},
            {"name": "BUILD_FILES_URI", "value": build_files_uri, "type": "PLAINTEXT"},
            {"name": "IMAGE_TAG", "value": image_tag, "type": "PLAINTEXT"}]
     # 프로젝트에 박힌 buildspec 은 컨테이너 1개용이라, 항상 그 앱의 buildspec 으로 덮어쓴다
     return cb.start_build(projectName=PROJECT, environmentVariablesOverride=env,
-                          buildspecOverride=read_buildspec(build_files_uri))["build"]["id"]
+                          buildspecOverride=buildspec if buildspec is not None else read_buildspec(build_files_uri))["build"]["id"]
 
 
 def wait(build_id: str) -> dict:
@@ -63,6 +64,8 @@ def main():
     ap.add_argument("--source")
     ap.add_argument("--build-files")
     ap.add_argument("--tag")
+    ap.add_argument("--buildspec", help="로컬 buildspec override (프로젝트 설정·S3 변경 없이 비교)")
+    ap.add_argument("--result", help="phase 타임스탬프·build ID를 저장할 로컬 JSON 파일")
     a = ap.parse_args()
     if a.analyze_response:
         d = json.load(open(a.analyze_response, encoding="utf-8"))
@@ -78,7 +81,15 @@ def main():
 
     print(f"[빌드] {PROJECT}  tag={tag}\n  source={source}\n  build_files={build_files}")
     t = time.time()
-    b = wait(start(source, build_files, tag))
+    override = Path(a.buildspec).read_text(encoding="utf-8") if a.buildspec else None
+    build_id = start(source, build_files, tag, override)
+    print(f"  build_id={build_id}", flush=True)
+    b = wait(build_id)
+    if a.result:
+        Path(a.result).write_text(json.dumps(b, default=str, ensure_ascii=False, indent=2), encoding="utf-8")
+    for p in b.get("phases", []):
+        if p.get("endTime") and p.get("startTime"):
+            print(f"  {p['phaseType']}: {(p['endTime'] - p['startTime']).total_seconds():.3f}s")
     print(f"[결과] {b['buildStatus']} ({time.time() - t:.0f}초)")
     exported = {v["name"]: v.get("value") for v in b.get("exportedEnvironmentVariables") or []}
     for k, v in exported.items():
