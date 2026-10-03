@@ -1,14 +1,15 @@
-"""analyze 속도 개선 (오프라인): 핵심 파일 미리 넣기, 추천+Dockerfile 한 번에, 이미지별 Dockerfile 동시 생성."""
+"""analyze 속도 개선 (오프라인): 핵심 파일 미리 넣기, 이미지별 Dockerfile 동시 생성.
+
+실제 모델 동작(추천+Dockerfile 한 번에, 캐싱)은 테스트 런타임에서 확인한다 (scripts/compare_runtimes.py)."""
 import threading
 from pathlib import Path
 
 from agent import brain as brain_mod
 from agent import source
-from agent.file_model import FileModel
 from agent.handler import handle
 from agent.scan import scan
 from agent.storage import LocalStore
-from tests.fakes import GOOD_DOCKERFILE, FakeBrain, recommendation
+from tests.fakes import FakeBrain, recommendation
 
 FIX = Path(__file__).parent / "fixtures"
 
@@ -33,49 +34,6 @@ def test_preload_respects_budget_and_prefix():
     _, auth = brain_mod.preload_block(src, sc, 60_000, prefix="services/auth/")
     assert len(small) < len(all_) <= brain_mod.PRELOAD_MAX_FILES
     assert auth and all(p.startswith("services/auth/") for p in auth)
-
-
-class ScriptedModel(FileModel):
-    """정해진 답을 차례로 돌려주는 모델. 받은 요청을 남긴다."""
-    def __init__(self, answers):
-        super().__init__()
-        self.answers, self.requests = list(answers), []
-
-    async def answer(self, req):
-        self.requests.append(req)
-        return self.answers.pop(0)
-
-
-def _out(name, **fields):
-    return {"tool_calls": [{"name": name, "input": fields}]}
-
-
-def _rec_fields(**over):
-    return {**recommendation(env={}).model_dump(), **over}
-
-
-def _run_brain(monkeypatch, answers):
-    model = ScriptedModel(answers)
-    monkeypatch.setattr(brain_mod, "_model", lambda: model)
-    src = source.load(str(FIX / "sample_app"))
-    rec, df = brain_mod.StrandsBrain().analyze(src, scan(src), None)
-    return model, rec, df
-
-
-def test_analyze_gets_recommendation_and_dockerfile_in_one_call(monkeypatch):
-    model, rec, df = _run_brain(monkeypatch, [
-        _out("AnalysisOut", **_rec_fields(dockerfile=GOOD_DOCKERFILE, dockerfile_notes=["샘플 기반"]))])
-    assert len(model.requests) == 1                       # 예전: 추천 1번 + Dockerfile 1번
-    assert rec.target == "aws_lambda" and df.dockerfile == GOOD_DOCKERFILE and df.notes == ["샘플 기반"]
-    first = model.requests[0]["messages"][0]["content"][0]["text"]
-    assert "## 미리 읽은 파일" in first and '<file path="app.py">' in first and "## Dockerfile" in first
-
-
-def test_analyze_falls_back_to_second_call_when_dockerfile_empty(monkeypatch):
-    model, rec, df = _run_brain(monkeypatch, [
-        _out("AnalysisOut", **_rec_fields()),
-        _out("DockerfileOut", dockerfile=GOOD_DOCKERFILE, container_port=8080, notes=[])])
-    assert len(model.requests) == 2 and df.dockerfile == GOOD_DOCKERFILE
 
 
 def test_multi_image_dockerfiles_are_generated_concurrently(tmp_path):

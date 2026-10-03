@@ -62,9 +62,6 @@ Worker의 루트 main.tf가 이미 하는 일 (모듈에서 절대 하지 마라
 
 
 def _model():
-    if config.LLM == "file":
-        from .file_model import FileModel
-        return FileModel()
     from strands.models import BedrockModel, CacheConfig
     # 캐싱: 에이전트 루프는 턴마다 시스템 프롬프트·스캔·앞선 도구 결과를 다시 보내므로 그 앞부분을 재사용한다
     cache = {"cache_config": CacheConfig(strategy="auto")} if config.PROMPT_CACHE else {}

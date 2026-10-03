@@ -16,5 +16,3 @@ INVENTORY_TIMEOUT = int(os.environ.get("PAWPLOY_INVENTORY_TIMEOUT", "60"))
 PRELOAD_CHARS = int(os.environ.get("PAWPLOY_PRELOAD_CHARS", "60000"))
 # Bedrock 프롬프트 캐싱 (턴마다 다시 보내는 앞부분 재사용). 0 이면 끈다.
 PROMPT_CACHE = os.environ.get("PAWPLOY_PROMPT_CACHE", "1") != "0"
-# 모델 자리. bedrock(기본) / file (로컬: 요청·응답을 PAWPLOY_LLM_DIR 의 파일로 주고받음, agent/file_model.py)
-LLM = os.environ.get("PAWPLOY_LLM", "bedrock")

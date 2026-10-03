@@ -9,7 +9,6 @@ work/
 evals/.cache/
 evals/results/
 .tools/
-.local-llm/
 
 # 커버리지·SonarCloud 스캔 산출물
 .coverage
