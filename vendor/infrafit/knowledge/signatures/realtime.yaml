@@ -3,10 +3,15 @@ signatures:
     component: "rt:lib/socketio/no-adapter"
     role: realtime
     status: confirmed
-    when: {any: [{dependency: socket.io}]}
+    # Python 서버(python-socketio, 그 위의 Flask-SocketIO)도 같은 Socket.IO 프로토콜·방(room) 모델이다
+    when: {any: [{dependency: socket.io}, {dependency: python-socketio}, {dependency: flask-socketio}]}
     refine:
       - component: "rt:lib/socketio/redis-adapter"
-        when: {any: [{dependency: "@socket.io/redis-adapter"}]}
+        when:
+          any:
+            - {dependency: "@socket.io/redis-adapter"}
+            # python-socketio 의 Redis 메시지 큐(RedisManager), Flask-SocketIO message_queue="redis://…"
+            - {code: {glob: "**/*.py", regex: "\\b(?:Async)?RedisManager\\s*\\(|\\bmessage_queue\\s*=\\s*['\"]rediss?://"}}
   - id: SIG-RT-WS
     component: "rt:lib/ws/default"
     role: realtime

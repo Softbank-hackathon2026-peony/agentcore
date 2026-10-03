@@ -612,6 +612,44 @@ def _socketio(snap: Snapshot) -> list[Raw]:
     return out
 
 
+_PY_SOCKETIO_SERVERS = {"flask_socketio": {"SocketIO"}, "socketio": {"Server", "AsyncServer"}}
+
+
+def _py_socketio(snap: Snapshot) -> list[Raw]:
+    """Python Socket.IO 서버: Flask-SocketIO `SocketIO(app)`(옵션 `path`), python-socketio `socketio.Server(`·
+    `AsyncServer(`(가져온 이름·별칭 포함). 클라이언트(`socketio.Client`)는 아니다. 경로는 `path`, 없으면 `/socket.io`."""
+    out: list[Raw] = []
+    for rel in _code_files(snap, "**/*.py"):
+        text = snap.read(rel)
+        if "socketio" not in text:
+            continue
+        try:
+            tree = ast.parse(text)
+        except (SyntaxError, ValueError, RecursionError):
+            continue
+        classes: set[str] = set()                      # 바로 부르는 이름: SocketIO, S(별칭), Server
+        modules: dict[str, set[str]] = {}              # 모듈 이름(별칭) → 그 모듈의 서버 클래스
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module in _PY_SOCKETIO_SERVERS:
+                classes |= {a.asname or a.name for a in node.names if a.name in _PY_SOCKETIO_SERVERS[node.module]}
+            elif isinstance(node, ast.Import):
+                for a in node.names:
+                    if a.name in _PY_SOCKETIO_SERVERS:
+                        modules[a.asname or a.name] = _PY_SOCKETIO_SERVERS[a.name]
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            f = node.func
+            server = (isinstance(f, ast.Name) and f.id in classes) or \
+                (isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.attr in modules.get(f.value.id, ()))
+            if not server:
+                continue
+            path = next((k.value.value for k in node.keywords if k.arg == "path" and isinstance(k.value, ast.Constant)
+                         and isinstance(k.value.value, str)), None)
+            out.append(("WEBSOCKET", path or "/socket.io", rel, node.lineno, "socket.io"))
+    return out
+
+
 def _assign(rel: str, webs: list[WorkloadInfo]) -> tuple[WorkloadInfo, bool]:
     """(워크로드, 근거로 정했는가). web 워크로드가 여럿일 때 쓴다. 아무 근거도 없어 첫 워크로드로 보낸 것은 추측이다."""
     segments = set(PurePosixPath(rel).parts)
@@ -864,7 +902,7 @@ def extract_endpoints(snap: Snapshot, workloads: list[WorkloadInfo], routes: lis
     if manifests is None:
         manifests = parse_manifests(snap)
     found = sorted(set(_python(snap) + _django(snap) + _express(snap, manifests) + _next(snap)
-                       + _spring(snap, manifests) + _spring_websocket(snap, manifests) + _socketio(snap)),
+                       + _spring(snap, manifests) + _spring_websocket(snap, manifests) + _socketio(snap) + _py_socketio(snap)),
                    key=lambda r: (r[2], r[3], r[0], r[1], r[4]))
     # 같은 (메서드, 경로, 파일, 줄)은 하나만 둔다
     seen: set[tuple[str, str, str, int]] = set()
