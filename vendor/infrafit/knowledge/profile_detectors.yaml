@@ -20,7 +20,8 @@ dimensions:
   # 진입점만 있고 스케줄·루프 근거가 없는 batch 워크로드(실행하고 끝나는 배치·CLI). 상시 실행을 요구하지 않는다.
   A1:
     shape: set
-    values: ["웹", "워커", "정기 작업", "실시간 연결", "일회성 실행"]
+    # "리버스 프록시"는 S2가 내지 않는다(프록시는 앱 워크로드가 아님). S3가 reverse-proxy 워크로드 범위에 붙인다(CAP-PROXY-001).
+    values: ["웹", "워커", "정기 작업", "실시간 연결", "일회성 실행", "리버스 프록시"]
     from_kind: {web: "웹", worker: "워커", scheduled: "정기 작업", realtime: "실시간 연결", batch: "일회성 실행"}
   A2:
     shape: ordered
@@ -55,15 +56,60 @@ dimensions:
     shape: kinds
     values: ["없음", "있음"]
     default: {value: "없음", source: detector}
+  # D2 평시 동시성(dimensions.md 어휘). 저장소가 밝힌 확장 설정(아래 scaling.D2)이 있으면 그 값, 없으면 가정 낮음
+  D2:
+    shape: ordered
+    values: ["낮음", "중간", "높음"]
+    default:
+      value: "낮음"
+      source: assumption
+      reason: "평시 동시 접속은 코드에 없다. 레플리카·오토스케일 설정도 없고 사용자 집단·트래픽 자료가 없어 소규모(낮음)로 가정한다"
+  # D3 폭증 형태(dimensions.md 어휘). 부하 테스트 스크립트가 폭증·이벤트를 직접 말할 때만 탐지(scaling.D3)
+  D3:
+    shape: ordered
+    values: ["없음", "예고된 이벤트", "예고 없는 폭증"]
+    applies_to: [web, realtime]
+    default:
+      value: "없음"
+      source: assumption
+      reason: "폭증 형태는 도메인(오픈 시각·선착순·재난)에서 정해지는데 코드·부하 테스트에 폭증을 밝힌 근거가 없어 없음으로 가정한다"
+  # D6 확장 요구: dimensions.md 표에 없어 여기서 더한 차원(A1 "일회성 실행"과 같은 방식).
+  # 저장소의 배포 설정이 밝힌 인스턴스 수(인벤토리 workloads[].scaling: 환경 중 최댓값)를 규칙이 비교할 값으로 옮긴다.
+  #   단일 인스턴스: 레플리카 설정이 없거나 min=max=1
+  #   고정 다중:     오토스케일 없이 레플리카 ≥ 2(Deployment·StatefulSet replicas, compose deploy.replicas)
+  #   자동 확장:     HPA(autoscaling/*)·KEDA ScaledObject가 min < max로 확장
+  # 순서(ordered)는 앱 집계에서 자동 확장 > 고정 다중 > 단일 인스턴스. 숫자(min·max)는 인벤토리 scaling에서 읽는다.
+  D6:
+    shape: ordered
+    values: ["단일 인스턴스", "고정 다중", "자동 확장"]
+    applies_to: [web, worker, realtime]
+    default: {value: "단일 인스턴스", source: detector}
 
 # 코드로 알 수 없는 값: 앱 집계 범위에 가정으로 둔다(origin: domain-default)
+# (D2는 dimensions에 둔다: 워크로드마다 확장 설정으로 정하고, 없을 때만 가정)
 assumptions:
-  - key: D2
-    value: "낮음"
-    reason: "평시 동시 접속은 코드에 없다. 사용자 집단·트래픽 자료가 없어 소규모(낮음)로 가정한다"
   - key: G3
     value: "높음"
     reason: "예산 민감도는 코드에 없다. 고정비가 큰 구성을 피하도록 예산 민감(높음)으로 가정한다"
+
+# 인벤토리 workloads[].scaling → 차원(profile/detectors.py _scaling_observations)
+scaling:
+  # D6 값: 오토스케일(autoscale) → auto, min ≥ 2 → fixed, 나머지(min=max=1 설정) → single
+  D6: {auto: "자동 확장", fixed: "고정 다중", single: "단일 인스턴스"}
+  # D2: 레플리카 근거(evidence)가 있고 min ≥ min_replicas 또는 autoscale이면 이 값(dimensions.md 어휘).
+  # 저장소가 여러 인스턴스·자동 확장을 설정했다 = 평시 한 인스턴스로 부족한 동시성을 예상한다. 그보다 큰 값(높음)은
+  # 설정 숫자만으로 정하지 않는다(코드에 사용자 수가 없다).
+  D2: {value: "중간", min_replicas: 2}
+  # D3: 부하 테스트 스크립트(scaling.load_tests) 본문이 폭증·이벤트를 직접 말할 때만(위에서부터 먼저 맞는 값).
+  # 부하 테스트가 있다는 사실만으로는 D2·D3를 바꾸지 않는다. 엔드포인트 이름(쿠폰·티켓 API 등)과 헷갈리는 낱말은 쓰지 않는다.
+  load_tests:
+    - {dimension: D3, value: "예고 없는 폭증", regex: '(?i)폭증|급증|재난|속보|\bspike\b|\bsurge\b|\bdisaster\b'}
+    - {dimension: D3, value: "예고된 이벤트", regex: '(?i)선착순|오픈\s*이벤트|티켓\s*오픈|\bflash[\s_-]?sale\b|\bticketing\b|\blaunch[\s_-]?event\b'}
+
+# 앱 워크로드가 모두 batch(일회성 실행)이면 profile.batch_only.value = true(S4가 not_deployable로 낸다).
+# 정적 프런트엔드가 있으면 배포할 사이트가 있으므로 아니다.
+batch_only:
+  reason: "사람이 실행하는 도구: 앱 워크로드가 모두 실행하고 끝나는 배치·CLI(일회성 실행)이고 상시 실행·요청 수신 진입점이 없다"
 
 # 인벤토리 범위의 구성 요소 → 차원(component는 fnmatch 패턴, role이 있으면 그 역할의 범위만)
 components:
@@ -156,12 +202,21 @@ code:
     scope: workload
     glob: ["**/*.py"]
     regex: '\basyncio\.(?:create_task|ensure_future)\(|\bloop\.create_task\(|\bthreading\.Thread\(|^\s*from\s+threading\s+import\s+.*\bThread\b'
+  # @Async는 붙은 메서드를 다른 파일(테스트 제외)에서 부를 때만 근거다(call_site_outside_file). 같은 클래스 안 호출은
+  # 스프링 프록시를 거치지 않아 비동기로 돌지 않고, 부르는 곳이 없으면 응답 후 작업이 아니다.
   - id: PD-A4-SPRING-ASYNC
     dimension: A4
     value: "있음"
     scope: workload
     glob: ["**/*.java", "**/*.kt"]
-    regex: '^\s*@Async\b|\bCompletableFuture\.runAsync\('
+    regex: '^\s*@(?:org\.springframework\.scheduling\.annotation\.)?Async\b'
+    call_site_outside_file: true
+  - id: PD-A4-JVM-RUNASYNC
+    dimension: A4
+    value: "있음"
+    scope: workload
+    glob: ["**/*.java", "**/*.kt"]
+    regex: '\bCompletableFuture\.runAsync\('
   # Node: 응답 전에 await하지 않는 Promise(문장 첫머리 호출), 응답 뒤 실행 API
   - id: PD-A4-NODE-UNAWAITED
     dimension: A4

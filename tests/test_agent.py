@@ -92,7 +92,7 @@ def test_scan_sample_app():
     assert s["dockerfiles"] == ["Dockerfile"]
     assert 8080 in [p["port"] for p in s["port_hints"]]
     assert "PORT" in s["env_names"]
-    assert [w for w in s["warnings"] if not w.startswith("InfraFit: 추천 대상")] == []
+    assert [w for w in s["warnings"] if not w.startswith("InfraFit: 추천 대상") and "유형으로 판단" not in w] == []
 
 
 def test_scan_multi_service_warns():
@@ -167,6 +167,8 @@ def test_analyze_multi_service_runs_as_compose(tmp_path):
     df = (tmp_path / f"projects/prj_demo/build/{out['analysis_id']}/attempt-1/Dockerfile.pawploy.api").read_text()
     assert buildfiles.LWA_LINE not in df and "ENV PORT=8000" in df
     assert "dockerfile" not in out["build_files"]
+    # InfraFit 2순위는 api=Lambda + worker=Fargate 섞인 조합 → Lambda 후보 하나의 순위로 붙이지 않음
+    assert "infrafit" not in next(c for c in rec["candidates"] if c["target"] == "aws_lambda")
 
 
 def test_analyze_compose_without_inventory_still_blocked(tmp_path, monkeypatch):
@@ -509,7 +511,7 @@ def test_inventory_recommendation_fixtures():
     reco = s["inventory"]["summary"]["recommendation"]
     assert "stage_error" not in s["inventory"]
     assert reco["recommended"]["target"] == "aws_lambda" and reco["recommended"]["deployable"] is True
-    assert reco["recommended"]["assignment"] == {"w-app": "cp:aws/lambda/function-url"}
+    assert reco["recommended"]["assignment"] == {"w-root": "cp:aws/lambda/function-url"}
     assert 1 <= len(reco["top"]) <= 5 and reco["top"][0] == reco["recommended"]
     assert set(reco["dimensions"]) == set(inventory.APP_DIMENSIONS)
     assert reco["dimensions"]["A2"]["assumed"] is True and reco["dimensions"]["A2"]["why"]
@@ -518,20 +520,103 @@ def test_inventory_recommendation_fixtures():
     m = scan(source.load(MULTI))
     reco = m["inventory"]["summary"]["recommendation"]
     rec = reco["recommended"]
-    assert rec["target"] == "aws_ec2" and rec["assignment"]["w-app"] == "cp:aws/ec2/docker-compose"
-    assert set(rec["assignment"]) == {"w-app", "ds-postgresql", "svc-redis"}
+    assert rec["target"] == "aws_ec2" and rec["assignment"]["w-api"] == "cp:aws/ec2/docker-compose"
+    assert set(rec["assignment"]) == {"w-api", "w-worker", "ds-postgresql", "svc-redis"}
     assert "monthly_baseline_usd" not in rec                # 화면 비용은 cost.estimate(prices.json) 하나만
     lam = next(r for r in reco["rejected"] if r["target"] == "aws_lambda")
+    assert reco["app_scope"] == "w-app"                         # 앱 집계 범위 (워크로드 하나의 값이 아님)
+    assert reco["dimensions"]["A1"]["value"] == ["웹", "워커"]
     why = lam["reasons"][0]
     assert why["rule"] == "CAP-ALWAYSON-001" and why["dimension"] == "A1"
-    assert why["dimension_value"] == ["웹", "워커"] and why["capability_value"] is False
+    assert why["scope"] == "w-worker"                          # 위반한 워크로드 범위의 값
+    assert why["dimension_value"] == ["워커"] and why["capability_value"] is False
     assert why["source"]["url"].startswith("https://") and why["source"]["quote"]
     tree = source.load(MULTI)
     for at in reco["dimensions"]["A1"]["at"]:                  # 근거는 실제 파일·줄
         path, _, ln = at.partition(":")
         assert tree.exists(path) and 1 <= int(ln) <= len(tree.lines(path))
     warn = next(w for w in m["warnings"] if w.startswith("InfraFit: 추천 대상"))
-    assert "aws_ec2" in warn and "탈락: aws_lambda(CAP-ALWAYSON-001" in warn
+    assert "aws_ec2" in warn and "탈락: aws_lambda(CAP-ALWAYSON-001: w-worker A1=워커 / CP.always_on=false)" in warn
+    mixed = [c for c in reco["top"] if c.get("mixed")]            # 워크로드마다 다른 컴퓨트 (api=Lambda, worker=Fargate)
+    assert mixed and all(len(c["targets"]) >= 2 for c in mixed)
+    assert all(c["targets"] == [c["target"]] for c in reco["top"] if not c.get("mixed"))
+
+    # 서비스 유형별 순위 (InfraFit f51cbe4)
+    rk = reco["ranking"]
+    assert rk["service_type"] in {"realtime", "long_request", "stateful", "background", "light_web"}
+    assert rk["criteria_order"][0] == "certainty" and rk["why"]
+    assert all("topology" in c for c in reco["top"])
+    assert any(w.startswith("InfraFit: ") and "유형으로 판단" in w for w in m["warnings"])
+
+
+SOCKETIO = str(Path(__file__).parent / "fixtures" / "code_socketio")
+
+
+def test_infrafit_ranking_reaches_analyze_response(tmp_path):
+    out = handle({"mode": "analyze", "project_id": "prj_ws", "source_uri": SOCKETIO},
+                 brain=FakeBrain(rec=recommendation(target="aws_ec2")), store=LocalStore(str(tmp_path)))
+    rec = out["recommendation"]
+    assert rec["infrafit"]["service_type"] == "realtime"
+    assert rec["infrafit"]["criteria_order"][:2] == ["certainty", "always_on"]
+    assert rec["infrafit"]["recommended_target"] != "aws_lambda"      # 웹소켓 능력 모름 → 1순위 아님 (QA 3)
+    # aws_ec2 는 InfraFit 6순위라 요약 top(5)에 없다 → infrafit 필드 없음. top 안의 대상(gcp_cloud_run, 3순위)으로 확인
+    cr = next(c for c in rec["candidates"] if c["target"] == "gcp_cloud_run")
+    assert cr["infrafit"]["rank"] >= 1 and cr["infrafit"]["decided_by"]["criterion"] == "certainty"
+    assert "monthly_baseline_usd" not in cr["infrafit"]                 # 비용은 화면 cost 하나만 (PR #5)
+    assert "infrafit" not in next(c for c in rec["candidates"] if c["target"] == "aws_ec2")
+    assert any("실시간 유형으로 판단" in w for w in rec["warnings"])
+
+
+def test_attach_infrafit_skips_mixed_and_aliases_ec2_once():
+    from agent import analyze as an
+    reco = {"top": [{"id": "C1", "rank": 1, "target": "aws_lambda", "targets": ["aws_lambda", "aws_ecs_fargate"],
+                     "mixed": True},
+                    {"id": "C2", "rank": 2, "target": "aws_ec2", "targets": ["aws_ec2"]}]}
+    cands = [{"target": t} for t in ("aws_lambda", "aws_ec2")]
+    an._attach_infrafit(cands, reco)
+    assert "infrafit" not in cands[0]                      # 섞인 조합의 순위는 Lambda 하나의 순위가 아님
+    assert cands[1]["infrafit"]["rank"] == 2
+    cands = [{"target": t} for t in ("aws_ec2_compose", "aws_ec2")]
+    an._attach_infrafit(cands, reco)
+    assert cands[0]["infrafit"]["rank"] == 2 and "infrafit" not in cands[1]
+
+
+def test_infrafit_view_carries_worker_override():
+    from agent import analyze as an
+    o = {"infrafit_target": "aws_lambda", "why": "요청 처리 시간 A2=수 분 인데 Worker 의 aws_lambda 요청 상한은 30초"}
+    view = an._infrafit_view({"recommended": {"target": "aws_ec2"}, "worker_override": o})
+    assert view["recommended_target"] == "aws_ec2" and view["worker_override"] == o
+    assert "worker_override" not in an._infrafit_view({"recommended": {"target": "aws_ec2"}})
+
+
+def _reco_warning(reco: dict) -> str:
+    from agent.scan import _recommendation_warnings
+    return _recommendation_warnings({"summary": {"recommendation": reco}})[-1]
+
+
+def test_recommendation_warning_override_unverified_and_tie_labels():
+    rec = {"target": "gcp_cloud_run", "assignment": {"w-app": "cp:gcp/cloud-run/x"}, "deployable": True,
+           "unverified": True}
+    o = {"infrafit_target": "aws_lambda", "why": "A2"}
+    w = _reco_warning({"recommended": rec, "worker_override": o})
+    assert w.startswith("InfraFit 1순위 aws_lambda 제외") and "추천 대상 gcp_cloud_run" in w
+    assert w.count("1순위") == 1 and "확인 필요" in w
+    rec = {**rec, "unverified": False, "decided_by": {"criterion": "name"}}
+    assert "갈린 기준: 동률 (이름순)" in _reco_warning({"recommended": rec})
+    rec["decided_by"] = {"criterion": "unknown_count"}
+    assert "갈린 기준: 동률 (모름 수)" in _reco_warning({"recommended": rec})
+    rej = [{"component": "cp:aws/lambda/function-url", "target": "aws_lambda", "reasons": [
+        {"rule": "R", "dimension": "A2", "dimension_value": "수 분", "scope": "w-root",
+         "capability": "CP.max", "capability_value": 900}]}]
+    w = _reco_warning({"recommended": rec, "rejected": rej, "app_scope": "w-app"})
+    assert "aws_lambda(R: A2=수 분 / CP.max=900)" in w             # 워크로드가 하나면 범위를 적지 않음
+
+
+def test_brain_prompt_mentions_ranking():
+    import inspect
+    from agent import brain
+    src = inspect.getsource(brain)
+    assert "ranking" in src and "unverified" in src
 
 
 def _broken_vendor(tmp_path, stage_file: str, body: str):
@@ -591,6 +676,21 @@ def test_inventory_summary_with_recommendation_bounded():
     r = s["recommendation"]
     assert r["recommended"]["id"] == "C1" and r["top"] and len(r["top"]) <= 5
     assert all(len(x["reasons"]) <= 3 for x in r["rejected"])
+
+
+def test_bound_recommendation_shortens_ranking_why():
+    long = "Q" * 400
+    block = {"recommended": None, "top": [{"id": "C1", "assignment": {"w-app": "cp:" + "x" * 3000}}],
+             "rejected": [], "dimensions": {"A1": {"value": "v", "why": long}},
+             "ranking": {"service_type": "light_web", "why": "W" * 2000}}
+    out = inventory._bound_recommendation(block)
+    assert len(out["ranking"]["why"]) <= 120
+    assert inventory._size(out) <= inventory.MAX_RECOMMENDATION_BYTES
+
+
+def test_compose_board_recommendation_within_cap():
+    reco = scan(source.load(str(FIX / "compose_board")))["inventory"]["summary"]["recommendation"]
+    assert inventory._size(reco) <= inventory.MAX_RECOMMENDATION_BYTES
 
 
 def test_inventory_outcome_detail_is_text():

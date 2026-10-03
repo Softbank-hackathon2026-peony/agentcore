@@ -48,6 +48,18 @@
         "checked_at": {
           "type": "string",
           "format": "date"
+        },
+        "basis": {
+          "type": "string",
+          "enum": [
+            "official",
+            "derived"
+          ],
+          "description": "official: 공급자 인용이 값을 직접 말함. derived: 인용(전제)에서 한 단계로 이끈 값(정의상/유도)"
+        },
+        "reasoning": {
+          "type": "string",
+          "description": "basis=derived일 때 전제에서 값을 이끈 한 문장"
         }
       },
       "additionalProperties": false,
@@ -227,6 +239,42 @@
         },
         "status": {
           "$ref": "#/$defs/FactStatus"
+        },
+        "scaling": {
+          "type": "object",
+          "description": "확장 요구(레플리카·HPA·KEDA·compose deploy.replicas). 환경마다 정한 min·max의 최댓값. evidence가 비면 레플리카 설정 없음(min=max=1). load_tests는 부하 테스트 스크립트(웹·실시간 워크로드에만)",
+          "properties": {
+            "min": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "max": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "autoscale": {
+              "type": "boolean"
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              }
+            },
+            "load_tests": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "min",
+            "max",
+            "autoscale",
+            "evidence"
+          ]
         }
       },
       "additionalProperties": false,
@@ -938,6 +986,36 @@
           "items": {
             "$ref": "#/$defs/Resolution"
           }
+        },
+        "batch_only": {
+          "type": "object",
+          "description": "앱 워크로드가 모두 batch(실행하고 끝나는 CLI·배치)이고 정적 프런트엔드도 없으면 value=true: 상시 배포 대상이 아니라 사람이 실행하는 도구(S4 not_deployable 근거)",
+          "properties": {
+            "value": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "workloads": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ScopeId"
+              }
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Evidence"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "value",
+            "workloads",
+            "evidence"
+          ]
         }
       },
       "additionalProperties": false,
@@ -1052,6 +1130,38 @@
           "type": "array",
           "items": {
             "type": "string"
+          }
+        },
+        "derived_passes": {
+          "type": "array",
+          "description": "유도 값(정의상/유도)으로 통과한 규칙의 설명",
+          "items": {
+            "type": "object",
+            "properties": {
+              "rule": {
+                "$ref": "#/$defs/RuleId"
+              },
+              "capability_key": {
+                "type": "string"
+              },
+              "actual": {
+                "$ref": "#/$defs/Value"
+              },
+              "source": {
+                "$ref": "#/$defs/Source"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "rule",
+              "capability_key",
+              "actual",
+              "source",
+              "message"
+            ]
           }
         },
         "is_current": {
@@ -1319,6 +1429,192 @@
             "$ref": "#/$defs/ScopeId"
           },
           "description": "현재 구성 요소(BaaS 등)를 바꾸지 않고 그대로 배정한 데이터 범위"
+        },
+        "topology": {
+          "type": "string",
+          "enum": [
+            "vm-compose",
+            "services",
+            "kubernetes"
+          ],
+          "description": "배포 형태: vm-compose(워크로드 전부 VM 한 대 + docker compose), services(워크로드마다 서비스형 플랫폼), kubernetes(클러스터 하나에 워크로드 전부)"
+        },
+        "placement": {
+          "type": "array",
+          "description": "워크로드(compute 범위)마다 배치: 구성 요소, AgentCore 대상, 최소 레플리카(scaling.min, 없으면 1)",
+          "items": {
+            "type": "object",
+            "properties": {
+              "scope": {
+                "$ref": "#/$defs/ScopeId"
+              },
+              "component": {
+                "$ref": "#/$defs/ComponentId"
+              },
+              "target": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "min_replicas": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "scope",
+              "component",
+              "target",
+              "min_replicas"
+            ]
+          }
+        },
+        "derived_facts": {
+          "type": "array",
+          "description": "이 후보의 판정이 기댄 유도 값(정의상/유도): 범위·구성 요소·규칙과 reasoning",
+          "items": {
+            "type": "object",
+            "properties": {
+              "scope": {
+                "$ref": "#/$defs/ScopeId"
+              },
+              "component": {
+                "$ref": "#/$defs/ComponentId"
+              },
+              "rule": {
+                "$ref": "#/$defs/RuleId"
+              },
+              "capability_key": {
+                "type": "string"
+              },
+              "actual": {
+                "$ref": "#/$defs/Value"
+              },
+              "source": {
+                "$ref": "#/$defs/Source"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "scope",
+              "component",
+              "rule",
+              "capability_key",
+              "actual",
+              "source",
+              "message"
+            ]
+          }
+        },
+        "criteria": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "certainty",
+            "cost",
+            "always_on",
+            "request_headroom",
+            "scaling",
+            "data_safety",
+            "config_burden"
+          ],
+          "properties": {
+            "certainty": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "evidence_unknown",
+                "unknown_cost_components",
+                "unknown_count"
+              ],
+              "properties": {
+                "evidence_unknown": {
+                  "type": "boolean"
+                },
+                "unknown_cost_components": {
+                  "type": "integer"
+                },
+                "unknown_count": {
+                  "type": "integer"
+                }
+              }
+            },
+            "cost": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "monthly_usd",
+                "tied_with_cheapest"
+              ],
+              "properties": {
+                "monthly_usd": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "tied_with_cheapest": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "always_on": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "request_headroom": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "scaling": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "data_safety": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "config_burden": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "decided_by": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "criterion",
+            "over"
+          ],
+          "properties": {
+            "criterion": {
+              "type": "string",
+              "enum": [
+                "certainty",
+                "cost",
+                "always_on",
+                "request_headroom",
+                "scaling",
+                "data_safety",
+                "config_burden",
+                "unknown_count",
+                "name"
+              ]
+            },
+            "over": {
+              "type": "string",
+              "pattern": "^C[0-9]+$"
+            }
+          }
         }
       },
       "additionalProperties": false,
@@ -2742,6 +3038,9 @@
             "message",
             "current"
           ]
+        },
+        "ranking": {
+          "$ref": "#/$defs/Ranking"
         }
       },
       "additionalProperties": false,
@@ -3255,6 +3554,130 @@
         "evidence",
         "status"
       ]
+    },
+    "Ranking": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "service_type",
+        "label",
+        "coverage",
+        "matched",
+        "unprioritized",
+        "default_reason",
+        "criteria_order",
+        "why",
+        "refs",
+        "scope"
+      ],
+      "properties": {
+        "service_type": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "coverage": {
+          "type": "string",
+          "enum": [
+            "full",
+            "partial",
+            "default"
+          ]
+        },
+        "matched": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "by"
+            ],
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "by": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "dimension",
+                    "value",
+                    "at"
+                  ],
+                  "properties": {
+                    "dimension": {
+                      "type": "string"
+                    },
+                    "value": {},
+                    "at": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "unprioritized": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "default_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "criteria_order": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "certainty",
+              "cost",
+              "always_on",
+              "request_headroom",
+              "scaling",
+              "data_safety",
+              "config_burden"
+            ]
+          }
+        },
+        "why": {
+          "type": "string"
+        },
+        "refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "service_types",
+            "criteria"
+          ],
+          "properties": {
+            "service_types": {
+              "type": "integer"
+            },
+            "criteria": {
+              "type": "integer"
+            }
+          }
+        }
+      }
     }
   },
   "description": "infrafit 결과와 단계 출력. 단계 출력은 $defs의 Intake, Inventory, Profile, Fit, Recommendation, Decision, Changes, VerifyStatic, VerifyDynamic으로 검증한다."

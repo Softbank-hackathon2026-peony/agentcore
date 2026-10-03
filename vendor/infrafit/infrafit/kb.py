@@ -114,3 +114,9 @@ def iter_conditions(cond: dict) -> Iterator[dict]:
 def profile_detectors() -> dict:
     """S2 프로필 탐지 지식(knowledge/profile_detectors.yaml)."""
     return _load("profile_detectors.yaml")
+
+
+@lru_cache(maxsize=1)
+def ranking() -> dict:
+    """S4 서비스 유형별 순위(knowledge/ranking.yaml)."""
+    return _load("ranking.yaml")

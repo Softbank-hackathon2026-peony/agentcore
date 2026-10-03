@@ -57,10 +57,14 @@ class WorkloadInfo:
     framework: str = ""  # 코드에서 찾은 웹 프레임워크(Spring: spring-mvc·spring-webflux). 출력에는 쓰지 않는다
     framework_evidence: dict | None = None  # 프레임워크를 정한 의존성 줄(Spring 웹 스타터)
     schedule_evidence: dict | None = None  # 배치 진입점을 실행하는 GitHub Actions 스케줄의 cron 줄
+    scaling: dict | None = None  # 확장 요구(detect/scaling.py): {min, max, autoscale, evidence, load_tests?}
 
     def to_dict(self) -> dict:
-        return {"id": self.id, "kind": self.kind, "name": self.name,
-                "entrypoint": self.entrypoint, "status": self.status}
+        out = {"id": self.id, "kind": self.kind, "name": self.name,
+               "entrypoint": self.entrypoint, "status": self.status}
+        if self.scaling is not None:
+            out["scaling"] = self.scaling
+        return out
 
 
 def is_worker_command(text: str) -> bool:

@@ -240,6 +240,9 @@ def _suspicious_instructions(src: SourceTree, paths: list[str], limit: int = 10)
     return found
 
 
+TIE_LABELS = {"name": "동률 (이름순)", "unknown_count": "동률 (모름 수)"}   # ranking.yaml 기준이 아닌 마지막 비교
+
+
 def _recommendation_warnings(inv: dict) -> list[str]:
     if inv.get("stage_error"):
         err = inv["stage_error"]
@@ -247,14 +250,35 @@ def _recommendation_warnings(inv: dict) -> list[str]:
     reco = inv["summary"].get("recommendation")
     if not reco:
         return []
+    from .inventory import ranking_labels
+    labels = ranking_labels()
+    lines = []
+    rk = reco.get("ranking") or {}
+    if rk.get("service_type"):
+        order = " → ".join(labels["criteria"].get(c, c) for c in rk.get("criteria_order") or [])
+        line = f"InfraFit: {rk.get('label') or rk['service_type']} 유형으로 판단 — {order} 순으로 비교"
+        if rk.get("coverage") == "partial" and rk.get("unprioritized"):
+            line += " (우선 고려하지 않은 특성: " + ", ".join(labels["types"].get(t, t) for t in rk["unprioritized"]) + ")"
+        elif rk.get("coverage") == "default":
+            line += " (유형 근거 없음 → 기본 순서)"
+        lines.append(line)
     rec = reco.get("recommended")
     if rec:
         compute = next((c for c in rec["assignment"].values() if c.startswith("cp:")), "?")
-        head = f"InfraFit: 추천 대상 {rec.get('target') or '?'} ({compute})"
-        if reco.get("worker_override"):
-            o = reco["worker_override"]
-            head = (f"InfraFit 1순위 {o['infrafit_target']} 제외 (Worker 기준: {o['why']}). " + head
-                    if not rec.get("worker_limit") else head + f" — Worker 기준으로는 안 됨: {o['why']}")
+        target = "+".join(rec.get("targets") or []) if rec.get("mixed") else rec.get("target") or "?"
+        override = reco.get("worker_override") if not rec.get("worker_limit") else None
+        if rec.get("unverified"):                    # 1순위를 바꿨으면 "1순위" 를 두 번 쓰지 않는다
+            head = (f"InfraFit: {'추천 대상' if override else '1순위'} {target} ({compute}) 는 탐지한 요구에 대한 "
+                    "플랫폼 능력이 확인되지 않았습니다 (확인 필요)")
+        else:
+            head = f"InfraFit: 추천 대상 {target} ({compute})"
+            crit = (rec.get("decided_by") or {}).get("criterion")
+            if crit:
+                head += f" — 갈린 기준: {TIE_LABELS.get(crit) or labels['criteria'].get(crit, crit)}"
+        if override:
+            head = f"InfraFit 1순위 {override['infrafit_target']} 제외 (Worker 기준: {override['why']}). " + head
+        elif reco.get("worker_override"):
+            head += f" — Worker 기준으로는 안 됨: {reco['worker_override']['why']}"
         if not rec.get("deployable"):
             head += " — 지금 Worker가 배포할 수 없는 대상"
         a2 = (reco.get("dimensions") or {}).get("A2") or {}
@@ -268,20 +292,25 @@ def _recommendation_warnings(inv: dict) -> list[str]:
         head = "InfraFit: 조건을 모두 만족하는 컴퓨트 후보가 없습니다"
     rejected = reco.get("rejected") or []
     seen = [r.get("target") for r in rejected] + [(rec or {}).get("target")]
+    first = rec or next(iter(reco.get("top") or []), None) or {}
+    one_scope = len([c for c in (first.get("assignment") or {}).values() if str(c).startswith("cp:")]) == 1
     reasons = []
     for r in rejected:
         why = r["reasons"][0] if r.get("reasons") else {}
         if "rule" in why:
             dv = why.get("dimension_value")
             dv = ",".join(map(str, dv)) if isinstance(dv, list) else dv
-            why_s = f"{why['rule']}: {why.get('dimension')}={dv} / {why.get('capability')}={json.dumps(why.get('capability_value'), ensure_ascii=False)}"
+            # 워크로드가 여럿일 때만 위반한 범위를 적는다 (앱 범위 값과 다를 수 있음)
+            where = f"{why['scope']} " if why.get("scope") not in (None, reco.get("app_scope")) and not one_scope else ""
+            why_s = (f"{why['rule']}: {where}{why.get('dimension')}={dv} / "
+                     f"{why.get('capability')}={json.dumps(why.get('capability_value'), ensure_ascii=False)}")
         else:
             why_s = why.get("detail", "?")[:80]
         label = r.get("target") or r["component"]
         if seen.count(r.get("target")) > 1:         # 같은 대상의 다른 방식(예: Cloud Run 요청/인스턴스 과금)
             label += "/" + r["component"].rsplit("/", 1)[-1]
         reasons.append(f"{label}({why_s})")
-    return [head + (". 탈락: " + "; ".join(reasons[:4]) if reasons else ".")]
+    return lines + [head + (". 탈락: " + "; ".join(reasons[:4]) if reasons else ".")]
 
 
 def _line_of(src: SourceTree, path: str, needle: str) -> int:

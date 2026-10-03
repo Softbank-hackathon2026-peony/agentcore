@@ -1,0 +1,52 @@
+# S4 서비스 유형별 순위(설계 docs/superpowers/specs/2026-10-03-infrafit-service-type-ranking-design.md).
+#
+# 다루는 경우의 수를 선언한다(scope). 이 밖은 coverage(partial|default)로 출력에 표시한다.
+# 순위는 사전식이고(설계 §9.7, 가중합 없음) 유형마다 기준 순서(order)만 다르다. 첫 기준은 항상 certainty.
+# service_types 는 위에서부터 검사해 처음 맞는 하나를 쓴다. when 은 근거 있는 차원 값(source: detector)만 본다.
+# when 연산자: {dimension, equals} | {dimension, in} | {dimension, kinds}(B1·B2·E2 의 kinds 교집합)
+#             | {datastores: true}(인벤토리 데이터 저장소가 하나 이상) | {any: [...]} | default(마지막 유형만)
+# refs 는 docs/research/considerations/*.md 항목 ID(근거 문서).
+
+scope: {service_types: 5, criteria: 7}
+cost_tie_ratio: 0.15
+
+criteria:
+  - {id: certainty, label: 확실성, better: lower}
+  - {id: cost, label: 비용, better: lower}
+  - {id: always_on, label: 상시 응답, capability: CP.always_on, better: lower}
+  - {id: request_headroom, label: 처리 시간 여유, capability: CP.max_request_seconds, better: lower}
+  - {id: scaling, label: 확장, capability: CP.horizontal_scaling, better: lower}
+  - {id: data_safety, label: 데이터 안전, capability: DS.colocated_vm, better: lower}
+  - {id: config_burden, label: 설정 부담, better: lower}
+
+service_types:
+  - id: realtime
+    label: 실시간
+    when: {any: [{dimension: A3, equals: "장시간 양방향(웹소켓)"}, {dimension: A1, in: ["실시간 연결"]}]}
+    order: [certainty, always_on, scaling, cost, config_burden]
+    why: "연결이 끊기지 않아야 하는 서비스라 비용보다 상시 실행과 연결 수 확장이 먼저다"
+    refs: [T-006, W-001, T-016]
+  - id: long_request
+    label: 장시간 처리
+    when: {any: [{dimension: A2, in: ["수십 초", "수 분", "그 이상"]}, {dimension: E2, kinds: ["llm-api"]}]}
+    order: [certainty, request_headroom, cost, always_on, config_burden]
+    why: "요청이 플랫폼 시간 상한에 걸리면 실패하므로, 필요한 처리 시간보다 한 단계 여유 있는 플랫폼이 먼저다"
+    refs: [W-011, W-080, C-060]
+  - id: stateful
+    label: 상태 저장
+    when: {any: [{dimension: B1, equals: "있음"}, {dimension: B2, equals: "있음"}, {datastores: true}]}
+    order: [certainty, data_safety, cost, config_burden]
+    why: "데이터를 잃으면 되돌릴 수 없으므로 관리형 저장소(백업·내구성)가 비용보다 먼저다"
+    refs: [T-009, C-028, COST-098]
+  - id: background
+    label: 백그라운드
+    when: {any: [{dimension: A1, in: ["워커", "정기 작업"]}, {dimension: B3, equals: "있음"}, {dimension: A4, equals: "있음"}]}
+    order: [certainty, always_on, cost, config_burden]
+    why: "요청이 없을 때도 작업이 돌아야 하므로 상시 실행이 비용보다 먼저다"
+    refs: [C-093, W-018, T-013]
+  - id: light_web
+    label: 가벼운 웹
+    when: default
+    order: [certainty, cost, config_burden, always_on]
+    why: "요청이 짧고 가끔 오는 서비스라 비용이 가장 중요하고, 요청 과금 플랫폼이 유리하다"
+    refs: [COST-068, T-016, COST-008]

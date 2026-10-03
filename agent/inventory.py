@@ -31,7 +31,7 @@ from .source import SourceTree, is_secret
 CODE_ROOT = Path(__file__).resolve().parent.parent        # 배포 zip 루트 (의존성도 여기 설치됨)
 VENDOR_DIR = CODE_ROOT / "vendor" / "infrafit"
 MAX_SUMMARY_BYTES = 10000                                  # 요약 전체 (S1 + recommendation)
-MAX_RECOMMENDATION_BYTES = 4000                            # 그중 recommendation 블록
+MAX_RECOMMENDATION_BYTES = 4500                            # 그중 recommendation 블록
 MAX_DEPLOY_UNITS_BYTES = 3000                              # 그중 deploy_units 블록
 APP_DIMENSIONS = ("A1", "A2", "A3", "A4", "B1", "B2", "B3", "E2")
 ENV_EXAMPLE_FILES = {".env.example", ".env.sample", ".env.template", "env.example"}
@@ -303,20 +303,36 @@ def _targets() -> dict[str, str]:
         return {}
 
 
+@lru_cache(maxsize=1)
+def ranking_labels() -> dict:
+    """vendor knowledge/ranking.yaml 의 기준·유형 한국어 라벨. 파일이 없으면 빈 표."""
+    import yaml
+    path = VENDOR_DIR / "knowledge" / "ranking.yaml"
+    try:
+        cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return {"criteria": {c["id"]: c.get("label", c["id"]) for c in cfg.get("criteria") or []},
+                "types": {t["id"]: t.get("label", t["id"]) for t in cfg.get("service_types") or []}}
+    except (OSError, yaml.YAMLError, KeyError, TypeError, AttributeError):   # 라벨이 없어도 요약은 만든다
+        return {"criteria": {}, "types": {}}
+
+
 def _short(text, n: int = 160) -> str:
     text = " ".join(str(text or "").split())
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
 def _app_scope(profile: dict, reco: dict) -> str | None:
-    """추천 1순위 조합에서 컴퓨트(cp:)가 배정된 범위. 없으면 앱 집계 범위(aggregated_from 있는 w-*)."""
+    """앱 집계 범위(워크로드 w-* 를 합친 행이 있는 w-*, 보통 w-app). 없으면 1순위 조합에서 컴퓨트(cp:)가 배정된 범위."""
+    dims = [d for d in profile.get("dimensions") or [] if str(d.get("scope", "")).startswith("w-")]
+    agg = sorted({d["scope"] for d in dims if d.get("aggregated_from")             # 엔드포인트(ep-)를 합친 행은 제외
+                  and all(str(a).startswith("w-") and a != d["scope"] for a in d["aggregated_from"])})
+    if agg:
+        return agg[0]
     for cand in reco.get("candidates") or []:
         for scope, comp in (cand.get("assignment") or {}).items():
             if str(comp).startswith("cp:"):
                 return scope
-    dims = [d for d in profile.get("dimensions") or [] if str(d.get("scope", "")).startswith("w-")]
-    agg = sorted({d["scope"] for d in dims if d.get("aggregated_from")})
-    scopes = agg or sorted({d["scope"] for d in dims})
+    scopes = sorted({d["scope"] for d in dims})
     return scopes[0] if scopes else None
 
 
@@ -329,16 +345,27 @@ def _dim_value(v):
 def _candidate(c: dict) -> dict:
     targets = _targets()
     assignment = c.get("assignment") or {}
-    compute = next((comp for comp in assignment.values() if str(comp).startswith("cp:")), None)
-    target = targets.get(compute)
-    out = {"id": c.get("id"), "rank": c.get("rank"), "target": target,
+    placed = [p.get("target") or targets.get(p.get("component")) for p in c.get("placement") or []]
+    if not any(placed):                              # placement 가 없으면 assignment 의 컴퓨트로
+        placed = [targets.get(comp) for comp in assignment.values() if str(comp).startswith("cp:")]
+    distinct = list(dict.fromkeys(t for t in placed if t))
+    target = distinct[0] if distinct else None       # 호환용: 첫 대상
+    out = {"id": c.get("id"), "rank": c.get("rank"), "target": target, "targets": distinct,
            "deployable": catalog.is_deployable(target) if target else False,
            "assignment": assignment,
            "unknown_count": c.get("unknown_count", 0)}
+    if len(distinct) > 1:                            # 워크로드마다 다른 컴퓨트 (예: api=Lambda, worker=Fargate)
+        out["mixed"] = True
     if c.get("transforms"):
         out["transforms"] = c["transforms"]
     if c.get("external_scopes"):                     # 바꾸지 않고 그대로 쓰는 외부 서비스(BaaS 등)
         out["external_scopes"] = c["external_scopes"]
+    if c.get("topology"):
+        out["topology"] = c["topology"]
+    if c.get("decided_by"):
+        out["decided_by"] = c["decided_by"]
+    if ((c.get("criteria") or {}).get("certainty") or {}).get("evidence_unknown"):
+        out["unverified"] = True                      # 탐지한 요구에 대한 플랫폼 능력을 모름 (확인 필요)
     return out
 
 
@@ -361,11 +388,18 @@ def worker_limit(target: str | None, dims: dict) -> str | None:
     return None
 
 
+def _worker_why(c: dict | None, dims: dict) -> str | None:
+    """조합에 놓인 대상 중 하나라도 Worker 상한에 걸리면 그 이유."""
+    return next(filter(None, (worker_limit(t, dims) for t in (c or {}).get("targets") or [])), None)
+
+
 def recommendation_summary(profile: dict, fit: dict, reco: dict) -> dict:
     scope = _app_scope(profile, reco)
     reasons_by_assumption = {a.get("key"): a.get("reason") for a in profile.get("assumptions") or []}
     dims, dim_values = {}, {}
+    by_scope: dict[str, dict] = {}                     # 범위별 차원 값 (탈락 근거는 위반한 범위의 값으로)
     for d in profile.get("dimensions") or []:
+        by_scope.setdefault(d.get("scope"), {})[d.get("dimension")] = _dim_value(d.get("value"))
         if d.get("scope") != scope or d.get("dimension") not in APP_DIMENSIONS:
             continue
         row = {"value": _dim_value(d.get("value"))}
@@ -381,7 +415,7 @@ def recommendation_summary(profile: dict, fit: dict, reco: dict) -> dict:
     targets = _targets()
     rejected, seen = [], set()
 
-    def add_reason(component: str, v: dict | None, detail: str | None = None):
+    def add_reason(component: str, v: dict | None, detail: str | None = None, cell_scope: str | None = None):
         entry = next((r for r in rejected if r["component"] == component), None)
         if entry is None:
             entry = {"component": component, "target": targets.get(component), "reasons": []}
@@ -392,11 +426,14 @@ def recommendation_summary(profile: dict, fit: dict, reco: dict) -> dict:
                 return
             seen.add(key)
             src = v.get("source") or {}
-            entry["reasons"].append({
-                "rule": v.get("rule"), "dimension": v.get("dimension"),
-                "dimension_value": dim_values.get(v.get("dimension")),
-                "capability": v.get("capability_key"), "capability_value": v.get("actual"),
-                "source": {"url": src.get("ref") or src.get("url"), "quote": _short(src.get("quote"), 140)}})
+            dim = v.get("dimension")
+            reason = {"rule": v.get("rule"), "dimension": dim,
+                      "dimension_value": (by_scope.get(cell_scope) or {}).get(dim, dim_values.get(dim)),
+                      "capability": v.get("capability_key"), "capability_value": v.get("actual"),
+                      "source": {"url": src.get("ref") or src.get("url"), "quote": _short(src.get("quote"), 140)}}
+            if cell_scope:
+                reason["scope"] = cell_scope
+            entry["reasons"].append(reason)
         elif detail:
             entry["reasons"].append({"detail": _short(detail, 160)})
 
@@ -406,7 +443,7 @@ def recommendation_summary(profile: dict, fit: dict, reco: dict) -> dict:
     for cell in fit.get("matrix") or []:            # S4 가 조합으로 못 만든 컴퓨트 탈락도 놓치지 않게
         if cell.get("result") == "infeasible" and str(cell.get("candidate", "")).startswith("cp:"):
             for v in cell.get("violations") or []:
-                add_reason(cell["candidate"], v)
+                add_reason(cell["candidate"], v, cell_scope=cell.get("scope"))
     for entry in rejected:
         entry["reasons"] = entry["reasons"][:3]
 
@@ -414,18 +451,22 @@ def recommendation_summary(profile: dict, fit: dict, reco: dict) -> dict:
     rec = next((c for c in cands if c.get("id") == reco.get("recommended")), None)
     top = [_candidate(c) for c in cands[:5]]
     for c in top:
-        why = worker_limit(c["target"], dim_values)
+        why = _worker_why(c, dim_values)
         if why:
             c["worker_limit"] = why
     out = {"recommended": _candidate(rec) if rec else None,
            "top": top,
            "rejected": rejected,
            "app_scope": scope, "dimensions": dims}
-    first_why = worker_limit((out["recommended"] or {}).get("target"), dim_values)
+    first_why = _worker_why(out["recommended"], dim_values)
     if first_why:                                     # InfraFit 1순위가 우리 Worker 설정으로는 안 됨 → 다음 후보
         nxt = next((c for c in top if not c.get("worker_limit") and c["id"] != out["recommended"]["id"]), None)
         out["worker_override"] = {"infrafit_target": out["recommended"]["target"], "why": first_why}
         out["recommended"] = dict(nxt) if nxt else {**out["recommended"], "worker_limit": first_why}
+    rk = reco.get("ranking")
+    if isinstance(rk, dict):
+        out["ranking"] = {k: rk[k] for k in ("service_type", "label", "coverage", "unprioritized",
+                                              "criteria_order", "why") if k in rk}
     if reco.get("no_feasible"):
         out["no_feasible"] = True
     if reco.get("outcome"):                           # recommended | no_feasible | static_only | not_deployable
@@ -454,4 +495,6 @@ def _bound_recommendation(block: dict) -> dict:
         if _size(block) <= MAX_RECOMMENDATION_BYTES:
             break
         d.pop("why", None)
+    if _size(block) > MAX_RECOMMENDATION_BYTES and "ranking" in block:
+        block["ranking"]["why"] = _short(block["ranking"].get("why"), 120)
     return block
