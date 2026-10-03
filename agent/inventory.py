@@ -334,13 +334,31 @@ def _candidate(c: dict) -> dict:
     out = {"id": c.get("id"), "rank": c.get("rank"), "target": target,
            "deployable": catalog.is_deployable(target) if target else False,
            "assignment": assignment,
-           "monthly_baseline_usd": (c.get("cost") or {}).get("monthly_baseline_usd"),
            "unknown_count": c.get("unknown_count", 0)}
     if c.get("transforms"):
         out["transforms"] = c["transforms"]
     if c.get("external_scopes"):                     # 바꾸지 않고 그대로 쓰는 외부 서비스(BaaS 등)
         out["external_scopes"] = c["external_scopes"]
     return out
+
+
+# InfraFit A2 값 → 플랫폼이 견뎌야 하는 요청 시간(초). InfraFit rules.yaml 의 A2 규칙과 같은 기준 (수십 초 → 60초 이상, 수 분 → 600초 이상)
+A2_REQUIRED_SECONDS = {"수십 초": 60, "수 분": 600, "그 이상": float("inf")}
+A3_WEBSOCKET = "장시간 양방향"
+
+
+def worker_limit(target: str | None, dims: dict) -> str | None:
+    """InfraFit 은 플랫폼 상한으로 판정한다. 우리 Worker 가 그 대상에 정한 상한으로는 안 되는 이유 (없으면 None)."""
+    limit = catalog.WORKER_REQUEST_SECONDS.get(target or "")
+    if limit is None:
+        return None
+    a2, a3 = str(dims.get("A2") or ""), str(dims.get("A3") or "")
+    need = next((s for v, s in A2_REQUIRED_SECONDS.items() if a2.startswith(v)), 0)
+    if need > limit:
+        return f"요청 처리 시간 A2={a2} 인데 Worker 의 {target} 요청 상한은 {limit}초"
+    if a3.startswith(A3_WEBSOCKET):
+        return f"웹소켓(A3={a3})은 Worker 의 {target} 에서 쓸 수 없음 (요청 상한 {limit}초, 연결 유지 불가)"
+    return None
 
 
 def recommendation_summary(profile: dict, fit: dict, reco: dict) -> dict:
@@ -394,10 +412,20 @@ def recommendation_summary(profile: dict, fit: dict, reco: dict) -> dict:
 
     cands = reco.get("candidates") or []
     rec = next((c for c in cands if c.get("id") == reco.get("recommended")), None)
+    top = [_candidate(c) for c in cands[:5]]
+    for c in top:
+        why = worker_limit(c["target"], dim_values)
+        if why:
+            c["worker_limit"] = why
     out = {"recommended": _candidate(rec) if rec else None,
-           "top": [_candidate(c) for c in cands[:5]],
+           "top": top,
            "rejected": rejected,
            "app_scope": scope, "dimensions": dims}
+    first_why = worker_limit((out["recommended"] or {}).get("target"), dim_values)
+    if first_why:                                     # InfraFit 1순위가 우리 Worker 설정으로는 안 됨 → 다음 후보
+        nxt = next((c for c in top if not c.get("worker_limit") and c["id"] != out["recommended"]["id"]), None)
+        out["worker_override"] = {"infrafit_target": out["recommended"]["target"], "why": first_why}
+        out["recommended"] = dict(nxt) if nxt else {**out["recommended"], "worker_limit": first_why}
     if reco.get("no_feasible"):
         out["no_feasible"] = True
     if reco.get("outcome"):                           # recommended | no_feasible | static_only | not_deployable

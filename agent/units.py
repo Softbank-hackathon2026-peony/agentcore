@@ -4,7 +4,7 @@ InfraFit 이 S1 에서 찾은 "같이 떠야 하는 컨테이너 묶음"을 코�
 - check: id·이미지·빌드 컨텍스트·Dockerfile 이 실제로 있는지, 포트가 정수인지, entry 가 있는지 (LLM 없음)
 - apply_fixes: LLM 이 채운 빈 값(포트·운영용 명령·빌드 단계·entry)을 코드가 다시 검사해서 반영하고 warnings 에 남긴다
 - prepare_run: 운영 배포용 변환 (코드). compose 원본에서 named volume·헬스체크·depends_on 조건을 읽고,
-  저장소 경로 bind mount 는 버리고, DB 비밀번호는 배포 때 만드는 값(passwords)으로, 사용자 비밀값은 이름만 남긴다.
+  저장소 경로 bind mount 는 버리고(레지스트리 이미지면 그 파일을 COPY 한 이미지를 만들고), 실행 명령의 $PORT 는 포트로 바꾸고, DB 비밀번호는 배포 때 만드는 값(passwords)으로, 사용자 비밀값은 이름만 남긴다.
   결과는 각 서비스의 `run` 에 들어가고, compose.py 가 이것만 보고 compose.yaml.tftpl 을 만든다 (소스 없이 다시 렌더 가능).
 
 사용자 compose 파일은 데이터로만 읽는다 (yaml.safe_load). 값은 그대로 실행하지 않고 compose.py 가 따옴표·이스케이프해서 쓴다.
@@ -14,7 +14,7 @@ import re
 import shlex
 
 from . import analyze as rules   # 환경변수 이름·비밀값 규칙 (analyze 와 같은 것을 씀)
-from .source import SourceTree, normalize
+from .source import SourceTree, is_secret, normalize
 
 # Worker job.IMAGE_ID_RE 와 같음 (images 키 = 이미지 id). compose 서비스 이름도 같은 규칙으로 받는다
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
@@ -253,7 +253,12 @@ def apply_fixes(units: dict, fixes, src: SourceTree) -> tuple[list[str], list[st
                 rejected.append(f"AI 보완 거절 ({label}): 이미 정해진 포트 {svc['ports']} 를 바꿀 수 없음")
             elif not svc["ports"]:
                 svc["ports"] = [port]
-                applied.append(f"AI 보완 (코드 확인): {fid} 포트 → {port} — {why}")
+                at = _port_evidence(units, svc, port, src)
+                if at:
+                    applied.append(f"AI 보완 (코드 확인): {fid} 포트 → {port} (근거 {at}) — {why}")
+                else:
+                    applied.append(f"AI 보완 (근거 없음, 확인 필요): {fid} 포트 → {port} — 코드·Dockerfile 에서 이 포트를 "
+                                   f"찾지 못했습니다. 이 컨테이너가 실제로 이 포트를 듣는지 확인하세요 ({why})")
                 _resolve(units, f"containers.{fid}.ports", f"datastores.{fid}.ports")
         elif field in ("command", "entrypoint"):
             c = containers.get(fid)
@@ -303,6 +308,30 @@ def apply_fixes(units: dict, fixes, src: SourceTree) -> tuple[list[str], list[st
         else:
             rejected.append(f"AI 보완 거절: 모르는 항목 {field}")
     return applied, rejected
+
+
+def _port_evidence(units: dict, svc: dict, port: int, src: SourceTree) -> str | None:
+    """LLM 이 채운 포트가 실제로 적힌 곳 (실행 명령, 그 이미지의 Dockerfile·코드에서 포트 문맥의 줄) → 'file:line' 또는 None."""
+    word = re.compile(rf"(?<![0-9]){port}(?![0-9])")
+    if word.search(" ".join(str(svc.get(k) or "") for k in ("command", "entrypoint"))):
+        return "실행 명령"
+    images = {i["id"]: i for i in units["images"]}
+    img = images.get(svc.get("image") or svc.get("build_image") or "")
+    if img is None:
+        return None
+    ctx = img["context"]
+    paths = [p for p in src.paths() if not ctx or p.startswith(ctx + "/")]
+    if img.get("dockerfile"):
+        paths = [img["dockerfile"], *paths]
+    context = re.compile(r"port|listen|bind|expose|serve|host|:\s*\d|=\s*\d", re.I)
+    files = [p for p in dict.fromkeys(paths)
+             if p == img.get("dockerfile") or posixpath.splitext(p)[1].lower() in CODE_EXTS | {".toml", ".json", ".yml",
+                                                                                               ".yaml", ".ini", ".cfg"}]
+    for p in files[:MAX_CODE_FILES]:
+        for n, line in enumerate(src.lines(p), 1):
+            if word.search(line) and context.search(line):
+                return f"{p}:{n}"
+    return None
 
 
 def _resolve(units: dict, *fields: str) -> None:
@@ -388,18 +417,33 @@ def prepare_run(units: dict, src: SourceTree) -> tuple[list[str], list[str]]:
                 continue
             env[name] = [{"secret": name}]
             secrets.append(name)
-        volumes, bind_targets = [], []
+        volumes, bind_targets, copies = [], [], []
+        # 빌드 없이 레지스트리 이미지를 쓰는 서비스(nginx:1.27-alpine + 설정 파일 마운트 등)는 이미지 안에 그 파일이 없다.
+        # 마운트를 그냥 빼면 설정이 사라지므로, 저장소 파일을 COPY 하는 이미지를 따로 만든다 (_bake)
+        registry = not svc.get("build_image") if svc["id"] in stores else bool(svc.get("registry_image"))
         for v in r.get("volumes") or []:
-            kept, target = _volume(v)
+            kept, target, source = _volume(v)
             if kept:
                 volumes.append(kept)
                 if ":" in kept and not kept.startswith("/"):
                     named.add(kept.split(":", 1)[0])
+            elif target and registry and (path := _repo_path(src, units, source)):
+                copies.append({"from": path, "to": target})
+            elif target and registry:
+                bind_targets.append(target)
+                notes.append(f"{sid}: 저장소 폴더 마운트({source or '?'} → {target})를 이미지에 넣을 수 없어 뺍니다 "
+                             "(저장소 밖·저장소 루트 전체·없는 경로·비밀 파일). 그 파일이 없으면 이 컨테이너가 제대로 동작하지 않을 수 있습니다")
             elif target:
                 bind_targets.append(target)
                 notes.append(f"{sid}: 저장소 폴더 마운트({target})는 운영 배포에서 뺍니다 (이미지 안의 파일을 씀)")
             else:
                 notes.append(f"{sid}: 읽을 수 없는 volumes 항목을 뺐습니다")
+        if copies:
+            notes.append(_bake(units, svc, copies))
+        for key in ("command", "entrypoint"):
+            if svc.get(key):
+                svc[key], cmd_notes = _expand_command(svc, svc[key], env)
+                notes += [f"{sid}.{key}: {n}" for n in cmd_notes]
         hc = _healthcheck(r.get("healthcheck"), bind_targets)
         if r.get("healthcheck") and hc is None:
             notes.append(f"{sid}: 저장소 파일(마운트)에 기대는 헬스체크라 뺐습니다")
@@ -455,23 +499,70 @@ def _raw_env(raw) -> dict[str, str]:
     return out
 
 
-def _volume(v) -> tuple[str | None, str | None]:
-    """(남길 volume 문자열, 버린 bind mount 의 컨테이너 경로). named volume·익명 volume 만 남긴다."""
+def _volume(v) -> tuple[str | None, str | None, str | None]:
+    """(남길 volume 문자열, 버린 bind mount 의 컨테이너 경로, 그 mount 의 호스트 경로). named volume·익명 volume 만 남긴다."""
     if isinstance(v, dict):
         target = str(v.get("target") or "")
         if v.get("type") == "volume" and VOLUME_NAME_RE.match(str(v.get("source") or "")) and target.startswith("/"):
-            return f"{v['source']}:{target}", None
-        return None, target or None
+            return f"{v['source']}:{target}", None, None
+        return None, target or None, (str(v.get("source") or "") or None) if v.get("type") == "bind" else None
     if not isinstance(v, str):
-        return None, None
+        return None, None, None
     parts = v.split(":")
     if len(parts) == 1:
-        return (v, None) if v.startswith("/") and _plain_path(v) else (None, None)
+        return ((v, None, None) if v.startswith("/") and _plain_path(v) else (None, None, None))
     source, target = parts[0], parts[1]
     mode = parts[2] if len(parts) > 2 else ""
     if VOLUME_NAME_RE.match(source) and target.startswith("/") and _plain_path(target):
-        return f"{source}:{target}" + (f":{mode}" if mode in ("ro", "rw") else ""), None
-    return None, target if target.startswith("/") else None
+        return f"{source}:{target}" + (f":{mode}" if mode in ("ro", "rw") else ""), None, None
+    return None, (target if target.startswith("/") else None), source
+
+
+def _repo_path(src: SourceTree, units: dict, source: str | None) -> str | None:
+    """bind mount 의 호스트 경로(compose 파일 기준 상대 경로) → 저장소 안 경로. 저장소 밖·없는 경로·비밀 파일이면 None."""
+    if not source or source.startswith(("/", "~", "$")) or not re.fullmatch(r"[A-Za-z0-9_./@+-]+", source):
+        return None
+    base = posixpath.dirname((units.get("source") or {}).get("path") or "")
+    path = normalize(posixpath.normpath(posixpath.join(base, source)))
+    if not path or path.startswith(("..", "-")) or path == ".":
+        return None
+    files = [p for p in src.paths() if p == path or p.startswith(path + "/")]
+    if not files or any(is_secret(p) for p in files):
+        return None
+    return path
+
+
+def _bake(units: dict, svc: dict, copies: list[dict]) -> str:
+    """레지스트리 이미지 + 저장소 파일 COPY 이미지를 images 에 더하고, 서비스가 그 이미지를 쓰게 바꾼다 → 알림 문구."""
+    taken = {i["id"] for i in units["images"]}
+    iid = next(n for n in (f"{svc['id']}-baked", *(f"{svc['id']}-baked{k}" for k in range(2, 99))) if n not in taken)
+    is_store = "registry_image" not in svc
+    base = svc["image"] if is_store else svc.pop("registry_image")
+    units["images"].append({"id": iid, "context": "", "base": base, "copies": copies})
+    svc["build_image" if is_store else "image"] = iid
+    moved = ", ".join(f"{c['from']} → {c['to']}" for c in copies)
+    return (f"{svc['id']}: 저장소 파일 마운트({moved})는 운영 서버에 저장소가 없어 쓸 수 없으므로, {base} 에 그 파일을 "
+            f"COPY 한 이미지({iid})를 만들어 씁니다")
+
+
+def _expand_command(svc: dict, text: str, env: dict) -> tuple[str, list[str]]:
+    """실행 명령의 $PORT 같은 변수는 compose 가 *서버*(호스트) 환경변수로 바꿔서 빈 값이 된다 (exec 형식이라 컨테이너 셸도 거치지 않음).
+    PORT 는 듣는 포트로, compose 에 값이 있는 환경변수는 그 값으로 바꾼다. 모르는 변수는 알린다."""
+    notes = []
+
+    def sub(m):
+        name = m.group(1) or m.group(2)
+        if name == "PORT" and svc["ports"]:
+            notes.append(f"${name} → {svc['ports'][0]} (듣는 포트)")
+            return str(svc["ports"][0])
+        parts = env.get(name)
+        if parts and all(isinstance(p, str) for p in parts):
+            notes.append(f"${name} → 환경변수 값")
+            return shlex.quote("".join(parts))           # 값에 공백이 있어도 인자 나누기가 바뀌지 않게
+        notes.append(f"${name} 는 배포 서버에 없는 값이라 빈 문자열이 됩니다. 명령에 값을 직접 쓰세요")
+        return m.group(0)
+
+    return re.sub(r"(?<!\$)\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))", sub, text), notes
 
 
 def _plain_path(p: str) -> bool:

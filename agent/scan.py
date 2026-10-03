@@ -158,7 +158,7 @@ def scan(src: SourceTree, inventory: bool = True) -> dict:
 
     warnings = []
     if len(compose_services) > 1:
-        warnings.append(f"docker compose 서비스가 {len(compose_services)}개입니다 ({', '.join(compose_services[:6])}). "
+        warnings.append(f"docker compose 서비스가 {len(compose_services)}개입니다 ({', '.join(compose_services[:6])}{', …' if len(compose_services) > 6 else ''}). "
                         "같이 떠야 하는 컨테이너는 InfraFit deploy_units 로 묶어 서버 1대(aws_ec2_compose)에 함께 띄웁니다.")
     if k8s:
         warnings.append("Kubernetes 매니페스트가 있습니다. 쿠버네티스로 배포하지는 않고 컨테이너 구성만 참고합니다.")
@@ -249,12 +249,17 @@ def _recommendation_warnings(inv: dict) -> list[str]:
         return []
     rec = reco.get("recommended")
     if rec:
-        cost = rec.get("monthly_baseline_usd")
-        cost_s = f"월 기본 ${cost}" if cost is not None else "월 기본 비용 모름"
         compute = next((c for c in rec["assignment"].values() if c.startswith("cp:")), "?")
-        head = f"InfraFit: 추천 대상 {rec.get('target') or '?'} ({compute}, {cost_s})"
+        head = f"InfraFit: 추천 대상 {rec.get('target') or '?'} ({compute})"
+        if reco.get("worker_override"):
+            o = reco["worker_override"]
+            head = (f"InfraFit 1순위 {o['infrafit_target']} 제외 (Worker 기준: {o['why']}). " + head
+                    if not rec.get("worker_limit") else head + f" — Worker 기준으로는 안 됨: {o['why']}")
         if not rec.get("deployable"):
             head += " — 지금 Worker가 배포할 수 없는 대상"
+        a2 = (reco.get("dimensions") or {}).get("A2") or {}
+        if a2.get("assumed"):
+            head += f" (요청 처리 시간 A2 는 코드로 확인하지 못한 가정값: {a2.get('value')})"
     elif reco.get("outcome") == "static_only":
         head = "InfraFit: 정적 사이트만 있어 컴퓨트를 고를 필요가 없습니다 (" + reco.get("outcome_detail", "")[:150] + ")"
     elif reco.get("outcome") == "not_deployable":

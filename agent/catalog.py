@@ -54,6 +54,9 @@ TARGETS: dict[str, dict] = {
 }
 
 SIZES = ("micro", "small", "medium")
+# 우리 Worker 모듈이 정한 요청 상한 (Terraform-worker modules/lambda timeout=30, modules/cloud_run timeout="60s").
+# InfraFit 은 플랫폼 상한(Lambda 900초 등)으로 판정하므로 추천을 쓸 때 이 값으로 한 번 더 거른다 (inventory.worker_limit)
+WORKER_REQUEST_SECONDS = {"aws_lambda": 30, "gcp_cloud_run": 60}
 # 컨테이너 여러 개를 한 번에 실행하는 대상. 컨테이너가 1개인 앱의 후보에는 넣지 않는다
 MULTI_CONTAINER = {"aws_ec2_compose"}
 

@@ -185,9 +185,13 @@ def test_vote_transforms_and_checked_llm_fixes(tmp_path):
     assert s["vote"]["ports"] == ["80:80"] and "ports" not in s["result"]
     assert all("volumes" not in s[k] for k in ("vote", "result", "redis"))          # 소스·헬스체크 스크립트 마운트 제거
     assert s["db"]["volumes"] == ["db-data:/var/lib/postgresql/data"]
-    assert "healthcheck" not in s["redis"] and "healthcheck" not in s["db"]         # 마운트한 스크립트에 기대던 헬스체크
+    # 공식 이미지(redis·postgres)에 마운트하던 저장소 스크립트는 이미지에 COPY 해서 헬스체크를 그대로 쓴다
+    assert {"redis-baked", "db-baked"} <= set(t["images"]) and 'images["redis-baked"]' in template
+    assert s["redis"]["healthcheck"]["test"] == "/healthchecks/redis.sh"
+    assert any("COPY 한 이미지(redis-baked)" in w for w in rec["warnings"])
+    assert out["build_files"]["images"]["redis-baked"]["generated"] is True
     assert s["vote"]["healthcheck"]["test"] == ["CMD", "curl", "-f", "http://localhost"]
-    assert s["worker"]["depends_on"] == {"redis": {"condition": "service_started"}, "db": {"condition": "service_started"}}
+    assert s["worker"]["depends_on"] == {"redis": {"condition": "service_healthy"}, "db": {"condition": "service_healthy"}}
     assert s["db"]["environment"] == {"POSTGRES_USER": "postgres", "POSTGRES_PASSWORD": "postgres"}
     assert t["passwords"] == [] and pw == {}                                        # passwords["db"] 를 만들지 않음
     assert "networks" not in s["vote"] and "build" not in template
@@ -302,7 +306,8 @@ def test_buildspec_images_loop_with_fake_docker(tmp_path):
     assert f"build --platform linux/amd64 -f vote/Dockerfile --target final -t {ECR}:prj-abc123-vote vote" in log
     assert f"build --platform linux/amd64 -f result/Dockerfile -t {ECR}:prj-abc123-result result" in log
     digests = json.loads(res.stdout.split("RESULT=")[1])
-    assert digests == {i: f"{ECR}@sha256:abc" for i in ("vote", "result", "worker")}
+    assert f"build --platform linux/amd64 -f Dockerfile.pawploy.redis-baked -t {ECR}:prj-abc123-redis-baked ." in log
+    assert digests == {i: f"{ECR}@sha256:abc" for i in ("vote", "result", "worker", "redis-baked", "db-baked")}
     assert "**/*.pem" in (work / "vote" / ".dockerignore").read_text()
 
 
@@ -322,7 +327,7 @@ def test_fix_build_one_image_overrides_project_dockerfile(tmp_path):
     assert imgs["vote"] == out["build_files"]["images"]["vote"]
     a2 = tmp_path / f"projects/prj_demo/build/{out['analysis_id']}/attempt-2"
     assert {p.name for p in a2.iterdir()} == {"Dockerfile.pawploy.result", "images.json", "images.tsv", "buildspec.yml",
-                                              "dockerignore"}
+                                              "dockerignore", "Dockerfile.pawploy.redis-baked", "Dockerfile.pawploy.db-baked"}
     assert Path(VOTE, "result", "Dockerfile").read_text() == before                # 소스는 그대로
     assert buildfiles.LWA_LINE not in (a2 / "Dockerfile.pawploy.result").read_text()
 
@@ -354,3 +359,88 @@ def test_fix_terraform_compose_only_main_tf_changes(tmp_path):
     assert any("compose.yaml.tftpl 은 코드가 만드는 파일" in c for c in res["changes"])
     res = handle({**p, "attempt": 2, "recommendation": out["recommendation"]}, brain=FakeBrain(), store=store)
     assert res["status"] == "ok" and res["files"]["compose.yaml.tftpl"] == template   # 추천안으로 다시 렌더
+
+
+# ---------- QA 2026-10-03 (prj-qa-c2·c6) ----------
+
+CELERY = str(FIX / "procfile_celery")       # Flask + Celery, Procfile web/worker/beat, compose 없음, 코드만 Redis 를 씀
+NGINX_CONF = str(FIX / "compose_nginx_conf")  # 공식 nginx 이미지 + 저장소 설정 파일 bind mount (build 없음)
+
+
+def test_code_only_redis_is_flagged_not_called_managed(tmp_path):
+    fixes = [UnitFix(field="port", id="web", value="8000", why="gunicorn 기본"),
+             UnitFix(field="entry", id="web", value="8000", why="웹 프로세스")]
+    out, _, _ = _analyze(tmp_path, CELERY, fixes)
+    rec = out["recommendation"]
+    du = rec["deploy_units"]
+    assert du["datastores"] == []                                             # compose 가 없어 Redis 컨테이너가 없다
+    missing = [w for w in rec["warnings"] if "redis 컨테이너가 없습니다" in w]
+    assert len(missing) == 1 and "requirements.txt:3" in missing[0]
+    assert not any("관리형" in w for w in rec["warnings"])                   # 띄우지도 않는 저장소를 "컨테이너로 띄운다"고 하지 않음
+    # $PORT 는 compose 가 서버 환경변수로 바꿔 빈 값이 되므로 듣는 포트로 바꾼다
+    web = next(c for c in du["containers"] if c["id"] == "web")
+    assert web["command"] == "gunicorn app:app --bind 0.0.0.0:8000"
+    assert any("web.command: $PORT → 8000" in w for w in rec["warnings"])
+    # 코드에 없는 포트를 AI 가 채우면 "코드 확인"이라 하지 않는다
+    assert any(w.startswith("AI 보완 (근거 없음, 확인 필요): web 포트 → 8000") for w in rec["warnings"])
+    assert not any(w.startswith("AI 보완 (코드 확인): web 포트") for w in rec["warnings"])
+    assert len(rec["candidates"]) <= 5
+
+
+def test_registry_image_config_mount_is_baked_into_image(tmp_path):
+    out, store, _ = _analyze(tmp_path, NGINX_CONF)
+    rec = out["recommendation"]
+    du = rec["deploy_units"]
+    nginx = next(c for c in du["containers"] if c["id"] == "nginx")
+    assert nginx["image"] == "nginx-baked" and "registry_image" not in nginx
+    img = out["build_files"]["images"]["nginx-baked"]
+    assert img == {"dockerfile": "Dockerfile.pawploy.nginx-baked", "generated": True, "context": "", "target": None,
+                   "port": 80}
+    bdir = tmp_path / f"projects/prj_demo/build/{out['analysis_id']}/attempt-1"
+    assert (bdir / "Dockerfile.pawploy.nginx-baked").read_text().splitlines()[1:] == [
+        "FROM nginx:1.27-alpine", 'COPY ["nginx/nginx.conf", "/etc/nginx/conf.d/default.conf"]']
+    assert not any("nginx: 저장소 폴더 마운트" in w for w in rec["warnings"])
+    template = _gen(store, rec)["targets"][0]["files"]["compose.yaml.tftpl"]
+    assert 'images["nginx-baked"]' in template and "nginx:1.27-alpine" not in template
+
+
+def test_bind_mount_outside_repo_is_still_dropped(tmp_path):
+    work = tmp_path / "src"
+    shutil.copytree(NGINX_CONF, work)
+    compose_file = work / "docker-compose.yml"
+    compose_file.write_text(compose_file.read_text().replace("./nginx/nginx.conf", "./nginx/missing.conf"))
+    out, _, _ = _analyze(tmp_path, str(work))
+    rec = out["recommendation"]
+    nginx = next(c for c in rec["deploy_units"]["containers"] if c["id"] == "nginx")
+    assert nginx["registry_image"] == "nginx:1.27-alpine"
+    assert any("nginx: 저장소 폴더 마운트(./nginx/missing.conf → /etc/nginx/conf.d/default.conf)를 이미지에 넣을 수 없어" in w
+               for w in rec["warnings"])
+
+
+def test_compose_literal_env_is_not_a_required_secret(tmp_path):
+    brain = _brain(BOARD_FIXES, required_secrets=["REDIS_URL", "OPENAI_API_KEY"])
+    out, _, _ = _analyze(tmp_path, BOARD, brain=brain)
+    secrets = out["recommendation"]["required_secrets"]
+    assert "REDIS_URL" not in secrets                                         # compose 에 redis://redis:6379/0 이 들어감
+    assert "OPENAI_API_KEY" in secrets
+
+
+def test_worker_limit_replaces_infrafit_first_choice():
+    reco = {"recommended": "C1", "candidates": [
+        {"id": "C1", "rank": 1, "assignment": {"w-app": "cp:aws/lambda/function-url"}},
+        {"id": "C2", "rank": 2, "assignment": {"w-app": "cp:gcp/cloud-run/request-billing"}},
+        {"id": "C3", "rank": 3, "assignment": {"w-app": "cp:aws/ec2/docker-compose"}}]}
+
+    def summary(a2, a3):
+        profile = {"dimensions": [{"scope": "w-app", "dimension": "A2", "value": a2},
+                                  {"scope": "w-app", "dimension": "A3", "value": a3}]}
+        return inventory.recommendation_summary(profile, {"matrix": []}, reco)
+
+    s = summary("1초 미만", "짧은 HTTP")
+    assert s["recommended"]["target"] == "aws_lambda" and "worker_override" not in s
+    s = summary("수십 초", "짧은 HTTP")                                         # InfraFit 은 Lambda 900초로 통과시킴
+    assert s["recommended"]["target"] == "gcp_cloud_run"                       # Worker: Lambda 30초 < 60, Cloud Run 60초
+    assert s["worker_override"]["infrafit_target"] == "aws_lambda" and "30초" in s["worker_override"]["why"]
+    s = summary("1초 미만", "장시간 양방향(웹소켓)")
+    assert s["recommended"]["target"] == "aws_ec2"
+    assert [bool(c.get("worker_limit")) for c in s["top"]] == [True, True, False]
