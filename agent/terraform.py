@@ -21,7 +21,7 @@ from pathlib import Path
 from . import compose, config, source
 from .analyze import _need
 from .errors import AgentError
-from .schemas import TfFile
+from .schemas import TfFile, TerraformOut
 from .storage import Store
 
 REF_DIR = Path(__file__).with_name("tf_reference")
@@ -89,6 +89,23 @@ def reference(architecture: str) -> str:
     for name in REFERENCES[architecture]:
         parts.append(f"### 견본 파일 {name}\n```\n{(REF_DIR / name).read_text(encoding='utf-8')}\n```")
     return "\n\n".join(parts)
+
+
+def standard_module(architecture: str) -> TerraformOut:
+    """Use the reviewed module; Worker binds all application values at runtime.
+
+    The caller still runs check_files before saving. Compose has its own renderer.
+    """
+    descriptions = {
+        "ec2": ["EC2 서버 1대: HTTP 80만 공개, ECR 읽기 전용 역할, CPU 크레딧 standard"],
+        "lambda": ["Lambda 컨테이너 함수, 로그 전용 역할, 공개 함수 URL 및 호출 권한"],
+        "cloud_run": ["Cloud Run 서비스, 권한 없는 앱 전용 계정, 공개 URL, 최대 인스턴스 1개"],
+    }
+    files = [TfFile(name="main.tf" if name.endswith(".tf") else name,
+                    content=(REF_DIR / name).read_text(encoding="utf-8"))
+             for name in REFERENCES[architecture]]
+    return TerraformOut(files=files, resources=descriptions[architecture],
+                        notes=["검증된 표준 모듈 사용: 이미지·포트·크기·환경변수·헬스체크는 Worker가 입력합니다."])
 
 
 def check_files(files: list[TfFile], architecture: str) -> tuple[list[TfFile], list[str], list[str]]:

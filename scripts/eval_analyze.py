@@ -11,6 +11,8 @@ import argparse
 import json
 import os
 import re
+import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -57,7 +59,15 @@ def resolve(src: str) -> Path:
             subprocess.run(["git", "init", "-q", str(tmp)], check=True)
             subprocess.run(["git", "-C", str(tmp), "fetch", "-q", "--depth", "1", url, sha], check=True)
             subprocess.run(["git", "-C", str(tmp), "checkout", "-q", "FETCH_HEAD"], check=True)
-            subprocess.run(["rm", "-rf", str(tmp / ".git")], check=True)
+            git_dir = (tmp / ".git").resolve()
+            if not git_dir.is_relative_to(CACHE.resolve()):
+                raise ValueError(f"평가 캐시 밖의 경로: {git_dir}")
+            def remove_readonly(func, path, error):
+                if not Path(path).resolve().is_relative_to(git_dir):
+                    raise ValueError(f"평가 git 캐시 밖의 경로: {path}")
+                os.chmod(path, stat.S_IWRITE)
+                func(path)
+            shutil.rmtree(git_dir, onexc=remove_readonly)
             tmp.rename(dest)
         return dest
     raise ValueError(f"알 수 없는 source: {src}")
@@ -76,7 +86,8 @@ def run_case(case: dict, brain, offline: bool) -> dict:
             res = analyze.run({"project_id": "eval", "source_uri": str(path), "analysis_id": f"eval-{case['id']}"},
                               brain, NullStore())
             out["recommendation"] = res["recommendation"]
-            out["dockerfile"] = res["build_files"]["dockerfile"]
+            files = res.get("build_files") or {}
+            out["dockerfile"] = files.get("dockerfile", "")
             out["validation_notes"] = res["validation_notes"]
         except AgentError as e:
             out["error"] = {"code": e.code, "message": e.message}

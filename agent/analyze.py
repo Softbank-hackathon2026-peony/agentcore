@@ -51,7 +51,7 @@ def run(payload: dict, brain, store: Store) -> dict:
     if units.is_multi(du):
         return _run_multi(payload, brain, store, src, scan, rec, du, analysis_id)
 
-    recommendation, notes = validate(rec, src, scan)
+    recommendation, notes = validate(rec, src, scan, buildfiles.lambda_unfit_base(df.dockerfile if df else None))
     port = recommendation["container_port"]
     dockerfile, fixes = None, []
     if no_server_evidence(scan):
@@ -73,7 +73,16 @@ def run(payload: dict, brain, store: Store) -> dict:
     build_prefix = f"projects/{project_id}/build/{analysis_id}/attempt-1/"
     files = {}
     if dockerfile is not None:
-        files = {buildfiles.DOCKERFILE_NAME: dockerfile, "dockerignore": buildfiles.DOCKERIGNORE,
+        ignore = buildfiles.DOCKERIGNORE
+        original = (src.read_text("Dockerfile", limit=buildfiles.MAX_DOCKERFILE_CHARS + 1)
+                    if src.exists("Dockerfile") else None)
+        if original is not None and df.dockerfile.replace("\r\n", "\n") == original.replace("\r\n", "\n"):
+            # Preserve project build-context exclusions when reusing its Dockerfile.
+            for path in ("Dockerfile.dockerignore", ".dockerignore"):
+                if src.exists(path):
+                    ignore = src.read_text(path) + "\n" + ignore
+                    break
+        files = {buildfiles.DOCKERFILE_NAME: dockerfile, "dockerignore": ignore,
                  "buildspec.yml": buildfiles.buildspec()}
         for name, text in files.items():
             store.put_text(build_prefix + name, text)
@@ -111,8 +120,10 @@ def no_server_evidence(scan: dict) -> bool:
     return not (s.get("endpoints") or {}).get("total")
 
 
-def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tuple[dict, list[str]]:
-    """LLM 출력을 허용 목록·실제 파일과 대조해서 고친다. 고친 내용은 notes로 남긴다. (컨테이너 1개)"""
+def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict,
+             unfit_base: str | None = None) -> tuple[dict, list[str]]:
+    """LLM 출력을 허용 목록·실제 파일과 대조해서 고친다. 고친 내용은 notes로 남긴다. (컨테이너 1개)
+    unfit_base: Dockerfile 마지막 베이스가 Lambda 에서 못 뜨는 웹 서버 이미지면 그 이름 (buildfiles.lambda_unfit_base)."""
     notes: list[str] = []
     warnings = list(dict.fromkeys([*scan["warnings"], *rec.warnings]))
 
@@ -129,15 +140,22 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
 
     reco = ((scan.get("inventory") or {}).get("summary") or {}).get("recommendation") or {}
     ws_at = _websocket_evidence(reco)
+    # Lambda 에서 못 도는 이유 (코드가 확인한 것). 웹소켓, 또는 읽기 전용 파일시스템에서 죽는 웹 서버 이미지
+    no_lambda = None
+    if ws_at is not None:
+        no_lambda = ("WebSocket 불가", f"웹소켓 연결이 필요한데({', '.join(ws_at[:2]) or '코드'})", "웹소켓")
+    elif unfit_base:
+        no_lambda = ("웹 서버 이미지 불가", f"{unfit_base} 이미지는 시작할 때 캐시 폴더를 만드는데", f"{unfit_base} 이미지")
     ws_reason_prefix, ws_swap = "", None
-    if ws_at is not None and target in NO_WEBSOCKET:
+    if no_lambda and target in NO_WEBSOCKET:
         old, target = target, _websocket_fallback(reco, rec)
-        where = ", ".join(ws_at[:2]) or "코드"
-        warnings.append(f"웹소켓 연결이 필요한데({where}) {catalog.TARGETS[old]['label']} 는 WebSocket 을 지원하지 않아 "
+        short, why_long, cause = no_lambda
+        detail = "WebSocket 을 지원하지 않아" if ws_at is not None else "파일시스템이 읽기 전용이라 실행할 수 없어"
+        warnings.append(f"{why_long} {catalog.TARGETS[old]['label']} 는 {detail} "
                         f"{catalog.TARGETS[target]['label']}({target}) 로 바꿨습니다.")
-        notes.append(f"웹소켓을 탐지({where})했는데 추천 대상 {old} 는 WebSocket 불가 → {target} 로 변경")
-        ws_reason_prefix = f"(코드 검사: 웹소켓 때문에 {old} 대신 {target}) "
-        ws_swap = f"코드 검사: 웹소켓 때문에 {catalog.TARGETS[old]['label']} 대신 선택. "
+        notes.append(f"{cause} 때문에 추천 대상 {old} 불가({short}) → {target} 로 변경")
+        ws_reason_prefix = f"(코드 검사: {cause} 때문에 {old} 대신 {target}) "
+        ws_swap = f"코드 검사: {cause} 때문에 {catalog.TARGETS[old]['label']} 대신 선택. "
 
     health = _health(rec, notes)
     env, secrets_needed = _env(rec, notes)
@@ -150,14 +168,14 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
             continue
         seen.add(c.target)
         verdict, why = c.verdict, c.why
-        if ws_at is not None and c.target in NO_WEBSOCKET:
-            verdict, why = "부적합", "WebSocket 불가 — " + why
+        if no_lambda and c.target in NO_WEBSOCKET:
+            verdict, why = "부적합", f"{no_lambda[0]} — " + why
         candidates.append(_candidate(c.target, c.fit, verdict, why, rec.size))
     for tid in catalog.TARGETS:        # LLM이 빠뜨린 대상도 표시 (적합도 없음)
         if tid not in seen and tid not in catalog.MULTI_CONTAINER:
-            no_ws = ws_at is not None and tid in NO_WEBSOCKET
-            candidates.append(_candidate(tid, None, "부적합" if no_ws or not catalog.is_deployable(tid) else "적합",
-                                         ("WebSocket 불가 — " if no_ws else "") + "모델이 평가하지 않음", rec.size))
+            blocked = bool(no_lambda) and tid in NO_WEBSOCKET
+            candidates.append(_candidate(tid, None, "부적합" if blocked or not catalog.is_deployable(tid) else "적합",
+                                         (f"{no_lambda[0]} — " if blocked else "") + "모델이 평가하지 않음", rec.size))
     if ws_swap:                        # 코드가 고른 대상은 1순위, 모델이 매긴 평가(낭비 등)는 이 선택과 맞지 않으니 덮어쓴다
         i = next(i for i, c in enumerate(candidates) if c["target"] == target)
         chosen = candidates.pop(i)

@@ -51,6 +51,50 @@ def baked_dockerfile(base: str, copies: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def existing_dockerfile(src, preferred_port: int):
+    """Reuse an unambiguous root production Dockerfile with a literal exposed TCP port.
+
+    EXPOSE is evidence, not a guarantee that the server listens. Ambiguous ports,
+    build arguments and development commands still need model inspection.
+    Normalization downstream retains secret checks and the pinned Lambda adapter.
+    """
+    from .schemas import DockerfileOut
+    if not src.exists("Dockerfile"):
+        return None
+    text = src.read_text("Dockerfile", limit=MAX_DOCKERFILE_CHARS + 1)
+    if len(text) > MAX_DOCKERFILE_CHARS:
+        return None
+    lines = text.splitlines()
+    stages = _instr_idx(lines, _FROM)
+    if not stages or _instr_idx(lines, re.compile(r"^\s*ARG\b", re.I)):
+        return None
+    if re.search(r"--reload\b|--debug\b|\bnodemon\b", text):
+        return None
+    ports = []
+    for s, e in _instructions(lines):
+        if s <= stages[-1]:
+            continue
+        instr = _joined(lines, s, e)
+        m = re.match(r"^EXPOSE\s+(.+?)(?:\s+#.*)?$", instr, re.I)
+        if m:
+            for token in m.group(1).split():
+                if not re.fullmatch(r"[0-9]+(?:/tcp)?", token):
+                    return None
+                port = int(token.split('/')[0])
+                if not 1 <= port <= 65535:
+                    return None
+                ports.append(port)
+    ports = list(dict.fromkeys(ports))
+    # The conventional HTTP+HTTPS pair has one clear HTTP entry point.
+    port = 80 if set(ports) == {80, 443} else (preferred_port if preferred_port in ports else None)
+    if port is None and len(ports) == 1:
+        port = ports[0]
+    if port is None:
+        return None
+    return DockerfileOut(dockerfile=text, container_port=port,
+                         notes=[f"기존 Dockerfile 유지 (고정 포트 {port}); PORT용 서버 설정 재작성 생략"])
+
+
 def normalize_dockerfile(text: str, port: int | None, lambda_adapter: bool = True) -> tuple[str, list[str]]:
     """규칙을 강제한 Dockerfile과, 코드가 고친 내용 목록을 돌려준다.
     여러 컨테이너(ec2_compose) 이미지는 Lambda 에서 돌지 않으므로 lambda_adapter=False, 포트를 모르면 port=None.
@@ -143,6 +187,28 @@ def _instr_idx(lines: list[str], pattern: re.Pattern) -> list[int]:
     return [s for s, e in _instructions(lines) if pattern.match(_joined(lines, s, e))]
 
 
+# Lambda 는 파일시스템이 읽기 전용(/tmp 만 쓰기)이고 루트가 아니라서, 시작할 때 캐시·PID 폴더를 만드는 웹 서버 이미지는 바로 죽는다
+# (운영 E2E 2026-10-03: nginx:stable-alpine → mkdir /var/cache/nginx/client_temp: Read-only file system)
+_LAMBDA_UNFIT_BASE = re.compile(r"(?:^|/)(nginx|nginx-unprivileged|openresty|httpd|php)(?::|@|$)", re.I)
+
+
+def lambda_unfit_base(text: str | None) -> str | None:
+    """마지막 스테이지 베이스 이미지가 Lambda 에서 못 뜨는 웹 서버 이미지면 그 이미지 이름, 아니면 None.
+    php 는 -apache 변형만 (php-fpm·cli 는 웹 서버를 따로 띄우지 않으므로 여기서 판단하지 않는다)."""
+    if not text:
+        return None
+    lines = text.replace("\r\n", "\n").split("\n")
+    froms = [(s, e) for s, e in _instructions(lines) if _FROM.match(_joined(lines, s, e))]
+    if not froms:
+        return None
+    parts = [p for p in _joined(lines, *froms[-1]).split()[1:] if not p.startswith("--")]
+    image = parts[0] if parts else ""
+    m = _LAMBDA_UNFIT_BASE.search(image)
+    if not m or (m.group(1).lower() == "php" and "apache" not in image.lower()):
+        return None
+    return image
+
+
 def _drop_instr(lines: list[str], pattern: re.Pattern) -> list[str]:
     drop = {k for s, e in _instructions(lines) if pattern.match(_joined(lines, s, e)) for k in range(s, e + 1)}
     return [l for k, l in enumerate(lines) if k not in drop]
@@ -190,30 +256,60 @@ def buildspec() -> str:
     """
     return f"""version: 0.2
 env:
+  shell: bash
   exported-variables:
     - ECR_IMAGE_URI
     - GCP_IMAGE_URI
 phases:
   pre_build:
     commands:
-      - mkdir -p /tmp/src && cd /tmp/src
-      - case "$SOURCE_URI" in */) aws s3 cp --recursive "$SOURCE_URI" . ;; *.zip) aws s3 cp "$SOURCE_URI" /tmp/src.zip && unzip -q /tmp/src.zip -d . ;; *) aws s3 cp "$SOURCE_URI" /tmp/src.tgz && tar -xzf /tmp/src.tgz -C . ;; esac
-      - if [ "$(ls -A | wc -l)" = "1" ] && [ -d "$(ls -A)" ]; then cd "$(ls -A)"; fi
-      - aws s3 cp "${{BUILD_FILES_URI}}{DOCKERFILE_NAME}" ./{DOCKERFILE_NAME}
-      - aws s3 cp "${{BUILD_FILES_URI}}dockerignore" ./{DOCKERFILE_NAME}.dockerignore
-      - echo "$PWD" > /tmp/build_dir
-      - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "${{ECR_REPO_URI%%/*}}"
-      - if [ -n "$GCP_AR_REPO" ]; then aws secretsmanager get-secret-value --secret-id "$GCP_SA_KEY_SECRET" --query SecretString --output text | docker login -u _json_key --password-stdin "https://${{GCP_AR_REPO%%/*}}"; fi
+      - |
+        set -o pipefail
+        login_registries() {{
+        (aws ecr get-login-password --region "$AWS_REGION" | docker --config /tmp/pawploy-ecr login --username AWS --password-stdin "${{ECR_REPO_URI%%/*}}") & ecr_pid=$!
+        gcp_pid=""
+        if [ -n "$GCP_AR_REPO" ]; then
+          (aws secretsmanager get-secret-value --secret-id "$GCP_SA_KEY_SECRET" --query SecretString --output text | docker --config /tmp/pawploy-gcp login -u _json_key --password-stdin "https://${{GCP_AR_REPO%%/*}}") & gcp_pid=$!
+        fi
+        failed=0
+        wait "$ecr_pid" || failed=1
+        if [ -n "$gcp_pid" ]; then wait "$gcp_pid" || failed=1; fi
+        test "$failed" = 0
+        }}
+        login_registries & login_pid=$!
+        mkdir -p /tmp/src && cd /tmp/src || exit 1
+        case "$SOURCE_URI" in */) aws s3 cp --recursive "$SOURCE_URI" . --only-show-errors ;; *.zip) aws s3 cp "$SOURCE_URI" /tmp/src.zip --only-show-errors && unzip -q /tmp/src.zip -d . ;; *) aws s3 cp "$SOURCE_URI" /tmp/src.tgz --only-show-errors && tar -xzf /tmp/src.tgz -C . ;; esac || exit 1
+        if [ "$(ls -A | wc -l)" = "1" ] && [ -d "$(ls -A)" ]; then cd "$(ls -A)" || exit 1; fi
+        aws s3 cp --recursive "${{BUILD_FILES_URI}}" /tmp/pawploy/ --exclude "*" --include "Dockerfile.pawploy" --include "dockerignore" --only-show-errors || exit 1
+        cp /tmp/pawploy/Dockerfile.pawploy ./Dockerfile.pawploy && cp /tmp/pawploy/dockerignore ./Dockerfile.pawploy.dockerignore || exit 1
+        echo "$PWD" > /tmp/build_dir
+        wait "$login_pid" || exit 1
+        config_dir="${{DOCKER_CONFIG:-$HOME/.docker}}"
+        mkdir -p "$config_dir" || exit 1
+        configs=(/tmp/pawploy-ecr/config.json)
+        if [ -f "$config_dir/config.json" ]; then configs=("$config_dir/config.json" "${{configs[@]}}"); fi
+        if [ -n "$GCP_AR_REPO" ]; then configs+=(/tmp/pawploy-gcp/config.json); fi
+        jq -s 'reduce .[] as $item ({{}}; . * $item)' "${{configs[@]}}" > "$config_dir/config.json.pawploy" && chmod 600 "$config_dir/config.json.pawploy" && mv "$config_dir/config.json.pawploy" "$config_dir/config.json"
   build:
     commands:
       - cd "$(cat /tmp/build_dir)"
-      - DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -f {DOCKERFILE_NAME} -t "$ECR_REPO_URI:$IMAGE_TAG" .
+      - DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -f Dockerfile.pawploy -t "$ECR_REPO_URI:$IMAGE_TAG" .
   post_build:
     commands:
       - test "$CODEBUILD_BUILD_SUCCEEDING" = "1"
-      - docker push "$ECR_REPO_URI:$IMAGE_TAG"
-      - export ECR_IMAGE_URI="$(docker inspect --format='{{{{index .RepoDigests 0}}}}' "$ECR_REPO_URI:$IMAGE_TAG")"
-      - if [ -n "$GCP_AR_REPO" ]; then docker tag "$ECR_REPO_URI:$IMAGE_TAG" "$GCP_AR_REPO:$IMAGE_TAG" && docker push "$GCP_AR_REPO:$IMAGE_TAG" && export GCP_IMAGE_URI="$(docker inspect --format='{{{{range .RepoDigests}}}}{{{{println .}}}}{{{{end}}}}' "$GCP_AR_REPO:$IMAGE_TAG" | grep "$GCP_AR_REPO" | head -1)"; fi
+      - |
+        gcp_pid=""
+        if [ -n "$GCP_AR_REPO" ]; then
+          docker tag "$ECR_REPO_URI:$IMAGE_TAG" "$GCP_AR_REPO:$IMAGE_TAG" || exit 1
+          docker push "$GCP_AR_REPO:$IMAGE_TAG" & gcp_pid=$!
+        fi
+        docker push "$ECR_REPO_URI:$IMAGE_TAG" & ecr_pid=$!
+        failed=0
+        wait "$ecr_pid" || failed=1
+        if [ -n "$gcp_pid" ]; then wait "$gcp_pid" || failed=1; fi
+        test "$failed" = 0
+      - export ECR_IMAGE_URI="$(docker inspect --format='{{{{range .RepoDigests}}}}{{{{println .}}}}{{{{end}}}}' "$ECR_REPO_URI:$IMAGE_TAG" | grep -F "$ECR_REPO_URI@sha256:" | head -1)"; test -n "$ECR_IMAGE_URI"
+      - if [ -n "$GCP_AR_REPO" ]; then export GCP_IMAGE_URI="$(docker inspect --format='{{{{range .RepoDigests}}}}{{{{println .}}}}{{{{end}}}}' "$GCP_AR_REPO:$IMAGE_TAG" | grep -F "$GCP_AR_REPO@sha256:" | head -1)"; test -n "$GCP_IMAGE_URI"; fi
       - echo "ECR_IMAGE_URI=$ECR_IMAGE_URI GCP_IMAGE_URI=$GCP_IMAGE_URI"
 """
 

@@ -58,6 +58,9 @@ def _run_brain(monkeypatch, answers):
     model = ScriptedModel(answers)
     monkeypatch.setattr(brain_mod, "_model", lambda: model)
     src = source.load(str(FIX / "sample_app"))
+    # These cases exercise model generation/fallback for apps without a Dockerfile.
+    src = source.SourceTree({p: (FIX / "sample_app" / p).read_bytes()
+                             for p in src.paths() if p != "Dockerfile"})
     rec, df = brain_mod.StrandsBrain().analyze(src, scan(src), None)
     return model, rec, df
 

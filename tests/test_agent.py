@@ -11,7 +11,7 @@ from agent import buildfiles, source
 from agent.errors import AgentError
 from agent.handler import handle
 from agent.scan import scan
-from agent.schemas import DockerfileFix
+from agent.schemas import DockerfileFix, DockerfileOut
 from agent.storage import LocalStore
 from tests.fakes import FakeBrain, recommendation
 
@@ -820,3 +820,39 @@ def test_example_buildspecs_match_templates():
     root = Path(__file__).resolve().parent.parent / "examples"
     assert (root / "buildspec.yml").read_text(encoding="utf-8") == buildfiles.buildspec()
     assert (root / "buildspec-images.yml").read_text(encoding="utf-8") == buildfiles.buildspec_images()
+
+
+# ---- Lambda 에서 못 뜨는 웹 서버 이미지 (운영 E2E 2026-10-03: nginx → Read-only file system) ----
+
+@pytest.mark.parametrize("dockerfile,expected", [
+    ("FROM nginx:stable-alpine\nCOPY . /usr/share/nginx/html\n", "nginx:stable-alpine"),
+    ("FROM node:20 AS build\nRUN npm ci\nFROM nginxinc/nginx-unprivileged:1.27\nCOPY --from=build /a /b\n",
+     "nginxinc/nginx-unprivileged:1.27"),
+    ("FROM \\\n  --platform=linux/amd64 httpd:2.4\n", "httpd:2.4"),
+    ("FROM php:8.3-apache\n", "php:8.3-apache"),
+    ("FROM nginx:1.27 AS build\nFROM python:3.12-slim\nCMD [\"python\", \"app.py\"]\n", None),   # 마지막 스테이지만
+    ("FROM php:8.3-fpm\n", None),
+    ("FROM python:3.12-slim\n", None),
+    (None, None),
+])
+def test_lambda_unfit_base(dockerfile, expected):
+    assert buildfiles.lambda_unfit_base(dockerfile) == expected
+
+
+def test_nginx_image_replaces_lambda_with_next_deployable(tmp_path):
+    df = DockerfileOut(dockerfile="FROM nginx:stable-alpine\nCOPY index.html /usr/share/nginx/html/\nEXPOSE 80\n",
+                       container_port=80, notes=[])
+    out = handle({"mode": "analyze", "project_id": "prj_nginx", "source_uri": SAMPLE},
+                 brain=FakeBrain(rec=recommendation(target="aws_lambda"), df=df), store=LocalStore(str(tmp_path)))
+    rec = out["recommendation"]
+    assert rec["target"] != "aws_lambda"
+    assert any("nginx:stable-alpine" in w and "읽기 전용" in w for w in rec["warnings"])
+    lam = next(c for c in rec["candidates"] if c["target"] == "aws_lambda")
+    assert lam["verdict"] == "부적합" and lam["why"].startswith("웹 서버 이미지 불가")
+    assert rec["candidates"][0]["target"] == rec["target"] and rec["candidates"][0]["verdict"] == "추천"
+
+
+def test_python_image_keeps_lambda(tmp_path):
+    out = handle({"mode": "analyze", "project_id": "prj_py", "source_uri": SAMPLE},
+                 brain=FakeBrain(rec=recommendation(target="aws_lambda")), store=LocalStore(str(tmp_path)))
+    assert out["recommendation"]["target"] == "aws_lambda"
