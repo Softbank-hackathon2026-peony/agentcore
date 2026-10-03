@@ -734,9 +734,11 @@ def test_unverified_outcome_summary_and_warning():
     assert block["outcome_detail"] == "조건을 만족하는지 확인하지 못한 후보만 남았다"
     assert block["unknown_capabilities"] == ["CP.websocket", "CP.long_poll"]     # 별도 키 (outcome_detail 은 문장만)
     w = _reco_warning(block)
-    assert w.startswith("InfraFit: 조건 충족을 확인한 후보가 없습니다 (확인 못 한 능력: CP.websocket, CP.long_poll). "
-                        "조건을 만족하는지 확인하지 못한 후보만 남았다")
+    # InfraFit 기본 message 는 앞 문장과 같은 말이라 붙이지 않는다
+    assert w == "InfraFit: 조건 충족을 확인한 후보가 없습니다 (확인 못 한 능력: CP.websocket, CP.long_poll)."
     assert "조건을 모두 만족하는 컴퓨트 후보가 없습니다" not in w
+    w = _reco_warning({**block, "outcome_detail": "다른 설명"})
+    assert w == "InfraFit: 조건 충족을 확인한 후보가 없습니다 (확인 못 한 능력: CP.websocket, CP.long_poll). 다른 설명."
     from agent import analyze as an
     view = an._infrafit_view(block)
     assert view["outcome"] == "unverified" and view["unknown_capabilities"] == ["CP.websocket", "CP.long_poll"]

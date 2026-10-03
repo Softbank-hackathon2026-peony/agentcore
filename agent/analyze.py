@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 from . import buildfiles, catalog, compose, config, cost, source, units
 from .errors import AgentError
-from .scan import scan as run_scan
+from .scan import STORE_WARNING, scan as run_scan
 from .schemas import LLMRecommendation
 from .storage import Store
 
@@ -212,6 +212,7 @@ def validate_multi(rec: LLMRecommendation, src: source.SourceTree, scan: dict, d
     notes: list[str] = []
     warnings = list(dict.fromkeys([*scan["warnings"], *rec.warnings]))
     u, check_notes, problems = units.check(du, src)
+    warnings = _drop_bundled_stores(warnings, scan, u)
     notes += check_notes
     applied, rejected = units.apply_fixes(u, rec.unit_fixes, src)
     notes += rejected
@@ -277,6 +278,28 @@ def validate_multi(rec: LLMRecommendation, src: source.SourceTree, scan: dict, d
         "deploy_units": u,
         **_infrafit_field(reco),
     }, notes
+
+
+SQL_IMAGES = ("postgres", "mysql", "mariadb")
+
+
+def _drop_bundled_stores(warnings: list[str], scan: dict, u: dict) -> list[str]:
+    """스캔의 '외부 데이터베이스/캐시가 필요해 보입니다' 에서 이번 묶음에 컨테이너로 들어간 저장소는 뺀다.
+    저장소 이름은 레지스트리 이미지 이름, 없으면(프로젝트 Dockerfile 로 빌드: build_image) InfraFit 범위 id(ds-postgresql → postgresql)."""
+    names = {str(d.get("image") or "").split("@")[0].split(":")[0].rsplit("/", 1)[-1] for d in u["datastores"]}
+    names |= {str(d.get("datastore") or "").split("-", 1)[-1] for d in u["datastores"] if d.get("datastore")}
+    names -= {""}
+    left = [n for n in scan.get("datastores") or [] if n != "sqlite"
+            and not any(n.startswith(i) or i.startswith(n) for i in names)
+            and not (n == "sql" and any(i.startswith(SQL_IMAGES) for i in names))]
+    out = []
+    for w in warnings:
+        if w.startswith(STORE_WARNING):
+            if not left:
+                continue
+            w = STORE_WARNING + ", ".join(left)
+        out.append(w)
+    return list(dict.fromkeys(out))
 
 
 def _infrafit_view(reco: dict) -> dict | None:

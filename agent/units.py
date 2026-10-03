@@ -44,8 +44,14 @@ def from_scan(scan: dict) -> dict | None:
 
 
 def is_multi(du: dict | None) -> bool:
-    """컨테이너 2개 이상이거나 데이터 저장소 컨테이너가 있으면 여러 컨테이너 배포 (ec2_compose)."""
-    return bool(du) and (len(du.get("containers") or []) > 1 or bool(du.get("datastores")))
+    """앱 컨테이너 2개 이상이면 여러 컨테이너 배포 (ec2_compose). compose·k8s 에 적힌 저장소 컨테이너는 앱이 1개여도 여러 컨테이너로
+    보지만, InfraFit 이 코드 경로(source.kind == "code")에서 만든 저장소 컨테이너는 앱 컨테이너가 2개 이상일 때만 센다
+    (승인 스펙: 컨테이너 1개 앱은 그대로 Lambda·Cloud Run·EC2, 저장소 주소는 required_secrets)."""
+    if not du:
+        return False
+    if len(du.get("containers") or []) > 1:
+        return True
+    return bool(du.get("datastores")) and (du.get("source") or {}).get("kind") != "code"
 
 
 # ---------------- 검사 ----------------

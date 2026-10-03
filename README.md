@@ -190,7 +190,7 @@ Main Server 는 `start_build(projectName="pawploy-build", buildspecOverride=<응
 
 ## 여러 컨테이너 (`ec2_compose`)
 
-팀 계약 `one-click-deploy-agent/docs/superpowers/specs/2026-10-03-multi-container-contract.md` 2~4절. InfraFit `deploy_units`(compose → k8s → 코드 순)에 **컨테이너 2개 이상 또는 데이터 저장소 컨테이너**가 있으면 이 경로로 갑니다.
+팀 계약 `one-click-deploy-agent/docs/superpowers/specs/2026-10-03-multi-container-contract.md` 2~4절. InfraFit `deploy_units`(compose → k8s → 코드 순)에 **앱 컨테이너 2개 이상, 또는 compose·k8s 에 적힌 데이터 저장소 컨테이너**가 있으면 이 경로로 갑니다. 코드 경로(`source.kind: code`)에서 InfraFit 이 만든 저장소 컨테이너는 앱 컨테이너가 2개 이상일 때만 셉니다 — 컨테이너 1개 앱(예: Flask + 코드만 Redis)은 단일 경로(Lambda·Cloud Run·EC2) 그대로이고 저장소 주소는 `required_secrets` 로 받습니다 (`units.is_multi`).
 
 | 단계 | 방식 | 내용 |
 |---|---|---|
@@ -211,7 +211,7 @@ Main Server 는 `start_build(projectName="pawploy-build", buildspecOverride=<응
 `analyze` 스캔 단계에서 [InfraFit](vendor/infrafit/SOURCE) S0~S4(S1 인벤토리, S2 프로필, S3 적합성, S4 추천; 규칙 기반, LLM 없음)를 함께 돌려 `scan.inventory` 로 넘깁니다.
 LLM 프롬프트에는 target 을 `recommendation` 1순위 대상으로 따르고(다르면 이유를 warnings 에), 탈락 이유를 candidates 의 why 에 반영하고, candidates 의 why 는 `ranking` 의 기준 순서로 설명하고, `unverified: true` 후보는 확정적으로 추천하지 말고 warnings 에 확인 필요로 적고(1순위가 unverified 면 target 은 그대로 따르되 warnings 에 확인 필요; `outcome: unverified` 면 top 1순위를 따르고 `unknown_capabilities` 를 확인 필요로), 비용 숫자는 쓰지 말고, candidate(확정 아님) 사실은 단정하지 말고, required_secrets 는 `external_services.secrets` 와 `env_names` 를 모두 보고 정하라고 적었습니다. `analyze` 검사 로직은 그대로입니다.
 
-- 코드 경로 저장소 (029e195): compose·k8s 가 없어도 코드가 쓰는 Redis 는 `redis:7-alpine` 저장소 컨테이너(id `redis`)로 묶음에 들어가고, 앱 컨테이너는 `depends_on: [redis]`, 코드가 loopback 기본값으로 읽는 환경변수(`os.environ.get("REDIS_URL", "redis://localhost:6379/0")`)에 `redis://redis:6379/0` 을 넣음(못 넣으면 `unresolved containers.<id>.env`). 비밀번호가 필요한 저장소(postgres 등)는 컨테이너 없이 `unresolved datastores.<범위>` → 묶음에 없는 저장소 경고. Procfile `beat`·`celery … beat` 는 `scheduled` 컨테이너
+- 코드 경로 저장소 (029e195): compose·k8s 가 없어도 코드가 쓰는 Redis 는 `redis:7-alpine` 저장소 컨테이너(id `redis`)로 묶음에 들어가고, 앱 컨테이너는 `depends_on: [redis]`, 코드가 loopback 기본값으로 읽는 환경변수(`os.environ.get("REDIS_URL", "redis://localhost:6379/0")`)에 `redis://redis:6379/0` 을 넣음(못 넣으면 `unresolved containers.<id>.env`). 비밀번호가 필요한 저장소(postgres 등)는 컨테이너 없이 `unresolved datastores.<범위>` → 묶음에 없는 저장소 경고. 이 저장소 컨테이너로 여러 컨테이너 경로가 되는 것은 앱 컨테이너가 2개 이상일 때뿐 (예: Procfile web·worker·beat). 여러 컨테이너 경로에서는 스캔 경고 `외부 데이터베이스/캐시가 필요해 보입니다: …` 에서 묶음에 컨테이너로 든 저장소(이미지 이름, 없으면 InfraFit 범위 id)를 빼고, 다 들어 있으면 그 경고를 지움. Procfile `beat`·`celery … beat` 는 `scheduled` 컨테이너
 - `deploy_units`: 결과 최상위 `inventory.deploy_units` 에 InfraFit 것 **전체**(근거 포함, 코드가 검사·렌더에 씀), 프롬프트용 `summary.deploy_units` 는 이름·구조만(3KB 이하, 전체 10KB 안에 포함). 프롬프트에는 전체를 넣지 않음
 - 내용 (`status: ok` 일 때 `summary`, 전체 10KB 이하): `workloads`, `endpoints`(총 개수·워크로드별 개수·앞 25개 `METHOD route @file:line`·노출), `datastores`, `external_services`, `environments`, `compute`(현재 컴퓨트 컴포넌트), `request_paths`(홉 + 명시된 timeout/body 설정), `unmapped`. 넘치면 긴 목록부터 줄이고 `truncated` 에 표시. 모든 file:line 은 inventory.json 근거 그대로.
 - `summary.recommendation` (4.5KB 이하 = `MAX_RECOMMENDATION_BYTES` 4500, recommendation.json + fit.json + profile.json): `recommended`·`top`(상위 5개) — 각 `target`(capabilities.yaml 의 컴퓨트 구성 요소 `target` = 배포 대상 id, 호환용으로 첫 대상), `targets`(placement 순서의 서로 다른 대상), `mixed: true`(워크로드마다 다른 컴퓨트, 예: api=Lambda + worker=Fargate), `deployable`, `assignment`(범위별 구성 요소 id), `topology`, `decided_by`(바로 아래 후보와 갈린 기준), `unverified: true`(탐지한 요구에 대한 플랫폼 능력을 모름, 확인 필요) + `unknown_capabilities`(InfraFit 후보 `unknown` 의 능력 이름, 중복 없이 최대 3), `worker_limit`(우리 Worker 상한 Lambda 30초·Cloud Run 60초로는 안 되는 이유, 1순위가 그러면 `worker_override` 와 함께 다음 후보로 바꿈 — unverified 후보로는 바꾸지 않고, 바꿀 후보가 없으면 1순위에 `worker_limit` 표시), `unknown_count`; `ranking` — `service_type`, `label`, `coverage`, `unprioritized`, `criteria_order`, `why` (InfraFit 서비스 유형별 비교 기준 순서); `rejected` — 탈락 컴퓨트별 이유 최대 3개(`rule`, `dimension`·`dimension_value`, `scope`(위반한 워크로드 범위, 값도 그 범위의 것), `capability`·`capability_value`, `source.url`·짧은 `quote`); `app_scope`(앱 집계 범위, 보통 `w-app`) 와 `dimensions`(A1~A4, B1~B3, E2 값·근거 file:line, 가정이면 `assumed: true` + `why`); 후보가 없으면 `no_feasible: true`; `outcome`·`outcome_detail`(문장); 모든 후보가 능력 확인 필요면 InfraFit 은 `recommended: null`, `outcome: "unverified"` → 요약 `unknown_capabilities`(확인 못 한 능력, 별도 키) + 경고 `InfraFit: 조건 충족을 확인한 후보가 없습니다 (확인 못 한 능력: …)`. 넘치면 탈락 근거 인용 → 후보 수 → 탈락 수 → 차원 `why` → `ranking.why`(120자) 순으로 줄임.
@@ -238,7 +238,7 @@ QA(실제 런타임 시나리오 검증) 방법·시나리오 목록·결과: [d
 
 ```bash
 python -m venv .venv && .venv/Scripts/pip install -r requirements.txt -r requirements-dev.txt
-.venv/Scripts/python -m pytest -q                 # 오프라인 테스트 146개 (모델·AWS 호출 없음)
+.venv/Scripts/python -m pytest -q                 # 오프라인 테스트 149개 (모델·AWS 호출 없음)
 WORKER_REPO=<Terraform-worker 체크아웃> .venv/Scripts/python -m pytest -q   # Worker 규칙과 직접 대조 (+33, Worker main)
 AWS_PROFILE=peony .venv/Scripts/python -m agent.app   # 로컬 서버 → POST http://localhost:8080/invocations
 ```
