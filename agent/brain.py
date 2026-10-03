@@ -222,7 +222,11 @@ class StrandsBrain:
             "1순위가 unverified 면 target 은 그대로 따르되 warnings 에 확인 필요를 적어라. "
             "recommendation.outcome 이 unverified 면 recommended 가 없다(모든 후보가 능력 확인 필요): target 은 top 1순위를 "
             "따르고 warnings 에 unknown_capabilities 를 확인 필요로 적어라. "
-            "required_secrets 는 inventory 의 external_services.secrets 와 스캔의 env_names 를 모두 보고 정하라.\n\n"
+            "required_secrets 는 inventory 의 external_services.secrets 와 스캔의 env_names 를 모두 보고 정하라.\n"
+            "출력 설명은 간결하게: candidates의 why는 핵심 적합/탈락 이유 한 문장(가능하면 60자 이내), "
+            "reason은 핵심 선택 이유 1~2문장, dockerfile_notes는 핵심 변경만 최대 2개로 적어라. "
+            "보안 경고·필수 비밀 변수·실제 파일 근거는 생략하지 마라. "
+            "파일 확인이 끝나면 일반 텍스트로 답을 반복하지 말고 구조화 출력 도구로 최종 답을 제출하라.\n\n"
             f"## 스캔 결과\n{json.dumps(scan_view, ensure_ascii=False, indent=1)}\n\n"
             f"## 파일 트리\n" + "\n".join(scan["tree"])
         )
