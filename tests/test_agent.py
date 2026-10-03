@@ -569,6 +569,44 @@ def test_infrafit_ranking_reaches_analyze_response(tmp_path):
     assert any("실시간 유형으로 판단" in w for w in rec["warnings"])
 
 
+def _analyze_ws(tmp_path, source_uri, target):
+    out = handle({"mode": "analyze", "project_id": "prj_ws", "source_uri": source_uri},
+                 brain=FakeBrain(rec=recommendation(target=target)), store=LocalStore(str(tmp_path)))
+    return out["recommendation"]
+
+
+def test_detected_websocket_replaces_lambda_with_next_deployable(tmp_path):
+    rec = _analyze_ws(tmp_path, SOCKETIO, "aws_lambda")
+    assert rec["target"] == "aws_ec2" and rec["architecture"] == "ec2"
+    assert any("WebSocket" in w and "server.js:6" in w for w in rec["warnings"])
+    assert rec["reason"].startswith("(코드 검사: 웹소켓 때문에 aws_lambda 대신 aws_ec2)")
+    lam = next(c for c in rec["candidates"] if c["target"] == "aws_lambda")
+    assert lam["verdict"] == "부적합" and lam["why"].startswith("WebSocket 불가")
+    assert rec["candidates"][0]["target"] == "aws_ec2"
+
+
+def test_no_websocket_keeps_lambda(tmp_path):
+    rec = _analyze_ws(tmp_path, SAMPLE, "aws_lambda")
+    assert rec["target"] == "aws_lambda"
+    assert not any("WebSocket" in w for w in rec["warnings"])
+    assert not rec["reason"].startswith("(코드 검사")
+
+
+def test_detected_websocket_leaves_cloud_run_alone(tmp_path):
+    rec = _analyze_ws(tmp_path, SOCKETIO, "gcp_cloud_run")
+    assert rec["target"] == "gcp_cloud_run"
+    assert not any("웹소켓 연결이 필요한데" in w for w in rec["warnings"])
+
+
+def test_websocket_evidence_needs_confirmed_a3_row():
+    from agent import analyze as an
+    ws = "장시간 양방향(웹소켓)"
+    assert an._websocket_evidence({"dimensions": {"A3": {"value": ws, "at": ["a.js:1", "b.js:2", "c.js:3"]}}}) == ["a.js:1", "b.js:2", "c.js:3"]
+    assert an._websocket_evidence({"dimensions": {"A3": {"value": ws, "assumed": True, "why": "가정"}}}) is None
+    assert an._websocket_evidence({"dimensions": {"A3": {"value": "단발 요청", "at": ["a.js:1"]}}}) is None
+    assert an._websocket_evidence({}) is None
+
+
 def test_attach_infrafit_skips_mixed_and_aliases_ec2_once():
     from agent import analyze as an
     reco = {"top": [{"id": "C1", "rank": 1, "target": "aws_lambda", "targets": ["aws_lambda", "aws_ecs_fargate"],

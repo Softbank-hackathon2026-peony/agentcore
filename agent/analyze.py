@@ -24,6 +24,9 @@ SECRET_VALUE = re.compile(r"AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|\bsk-[A-Za-z0-9_\-
 RESERVED_ENV = {"PORT", "AWS_LWA_PORT", "AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
 MULTI_TARGET = "aws_ec2_compose"
 COMPOSE_COMPUTE = "cp:aws/ec2/docker-compose"      # InfraFit capabilities.yaml 의 같은 실행기
+# 웹소켓(연결을 오래 유지)을 쓸 수 없는 대상. catalog.TARGETS 의 limits "WebSocket 불가" 와 같은 기준
+NO_WEBSOCKET = {"aws_lambda"}
+WEBSOCKET_VALUE = "장시간 양방향(웹소켓)"            # InfraFit 차원 A3 의 값
 MAX_CANDIDATES = 5                                 # 화면 규격: 1~5순위
 
 
@@ -123,6 +126,17 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
         notes.append(f"추천 대상 {target}은 지금 배포 불가 → {fallback}로 변경")
         target = fallback
 
+    reco = ((scan.get("inventory") or {}).get("summary") or {}).get("recommendation") or {}
+    ws_at = _websocket_evidence(reco)
+    ws_reason_prefix = ""
+    if ws_at is not None and target in NO_WEBSOCKET:
+        old, target = target, _websocket_fallback(reco, rec)
+        where = ", ".join(ws_at[:2]) or "코드"
+        warnings.append(f"웹소켓 연결이 필요한데({where}) {catalog.TARGETS[old]['label']} 는 WebSocket 을 지원하지 않아 "
+                        f"{catalog.TARGETS[target]['label']}({target}) 로 바꿨습니다.")
+        notes.append(f"웹소켓을 탐지({where})했는데 추천 대상 {old} 는 WebSocket 불가 → {target} 로 변경")
+        ws_reason_prefix = f"(코드 검사: 웹소켓 때문에 {old} 대신 {target}) "
+
     health = _health(rec, notes)
     env, secrets_needed = _env(rec, notes)
     clues = _clues(rec, src, notes)
@@ -133,7 +147,10 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
         if c.target in seen or c.target in catalog.MULTI_CONTAINER:
             continue
         seen.add(c.target)
-        candidates.append(_candidate(c.target, c.fit, c.verdict, c.why, rec.size))
+        verdict, why = c.verdict, c.why
+        if ws_at is not None and c.target in NO_WEBSOCKET:
+            verdict, why = "부적합", "WebSocket 불가 — " + why
+        candidates.append(_candidate(c.target, c.fit, verdict, why, rec.size))
     for tid in catalog.TARGETS:        # LLM이 빠뜨린 대상도 표시 (적합도 없음)
         if tid not in seen and tid not in catalog.MULTI_CONTAINER:
             candidates.append(_candidate(tid, None, "부적합" if not catalog.is_deployable(tid) else "적합",
@@ -141,7 +158,6 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
     candidates = candidates[:MAX_CANDIDATES]
     for i, c in enumerate(candidates, 1):
         c["rank"] = i
-    reco = ((scan.get("inventory") or {}).get("summary") or {}).get("recommendation") or {}
     _attach_infrafit(candidates, reco)
 
     t = catalog.TARGETS[target]
@@ -154,7 +170,7 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
     return {
         # ↓ Terraform Worker가 읽는 필드
         "cloud": t["cloud"], "architecture": t["architecture"], "container_port": rec.container_port,
-        "size": rec.size, "health_path": health, "env": env, "reason": rec.reason,
+        "size": rec.size, "health_path": health, "env": env, "reason": ws_reason_prefix + rec.reason,
         # ↓ 화면·사용자 검토용
         "target": target, "label": t["label"], "summary": rec.summary,
         "required_secrets": sorted(set(secrets_needed)), "permissions": t["permissions"],
@@ -162,6 +178,25 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
         "supported": supported, "warnings": warnings,
         **_infrafit_field(reco),
     }, notes
+
+
+def _websocket_evidence(reco: dict) -> list[str] | None:
+    """InfraFit 이 웹소켓(A3)을 근거와 함께 탐지했으면 그 근거(file:line) 목록, 아니면 None. 가정값은 탐지가 아니다."""
+    a3 = (reco.get("dimensions") or {}).get("A3") or {}
+    if a3.get("value") != WEBSOCKET_VALUE or a3.get("assumed"):
+        return None
+    return list(a3.get("at") or [])
+
+
+def _websocket_fallback(reco: dict, rec: LLMRecommendation) -> str:
+    """웹소켓을 못 쓰는 대상 대신 고를 배포 가능한 대상: InfraFit 순위 → LLM 후보(적합도순) → aws_ec2."""
+    def ok(t) -> bool:
+        return bool(t) and t not in NO_WEBSOCKET and catalog.is_deployable(t) and t not in catalog.MULTI_CONTAINER
+
+    for c in reco.get("top") or []:
+        if ok(c.get("target")) and not (c.get("mixed") or c.get("unverified") or c.get("worker_limit")):
+            return c["target"]
+    return next((c.target for c in sorted(rec.candidates, key=lambda c: -c.fit) if ok(c.target)), "aws_ec2")
 
 
 def _health(rec: LLMRecommendation, notes: list[str]) -> str:
