@@ -72,6 +72,8 @@ def test_multi_candidate_carries_infrafit_of_same_compute(tmp_path):
     first = rec["candidates"][0]
     assert first["target"] == "aws_ec2_compose"
     assert first["infrafit"]["rank"] >= 1 and "monthly_baseline_usd" not in first["infrafit"]   # InfraFit 의 aws_ec2 항목, 비용은 화면 cost 하나만
+    ec2 = next(c for c in rec["candidates"] if c["target"] == "aws_ec2")
+    assert "infrafit" not in ec2                       # 같은 InfraFit 항목을 두 후보에 붙이지 않음 (ec2_compose 쪽에만)
     assert rec["infrafit"]["service_type"]
 
 

@@ -98,7 +98,8 @@ result = json.loads(resp["response"].read())
 | `cloud`, `architecture`, `container_port`, `size`, `health_path`, `env`, `reason` | **Terraform Worker** | `architecture`: `lambda` \| `ec2` \| `cloud_run` \| `ec2_compose`(컨테이너 여러 개) / `size`: `micro`\|`small`\|`medium`. `ec2_compose` 의 `container_port` 는 entry 컨테이너 포트(정보용), `env` 는 쓰지 않음 (환경변수는 compose 안에) |
 | `target`, `label`, `summary` | 화면 | `target` = `aws_lambda` 같은 카탈로그 id |
 | `clues[]` | 화면 (근거) | `file`, `line`, `finding`, `plain`(쉬운 설명), `tag` — 파일·줄은 실제 존재 확인됨 |
-| `candidates[]` | 화면 (1~5순위) | `rank`, `target`, `deployable`, `fit`(0~100), `verdict`, `why`, `size_spec`, `permissions`, `cost` |
+| `candidates[]` | 화면 (1~5순위) | `rank`, `target`, `deployable`, `fit`(0~100), `verdict`, `why`, `size_spec`, `permissions`, `cost`. InfraFit 요약 `top` 에 같은 대상이 있으면 `infrafit {rank, decided_by, unverified, worker_limit}` (InfraFit 순위·갈린 기준·능력 확인 필요·우리 Worker 상한으로 안 되는 이유). `aws_ec2_compose` 는 InfraFit `aws_ec2` 항목을 받고, 그때 `aws_ec2` 후보에는 붙이지 않음. 워크로드마다 다른 컴퓨트인 조합(`mixed`)은 붙이지 않음 |
+| `infrafit` | 화면 | InfraFit 판단 요약: `service_type`, `label`, `coverage`, `unprioritized`, `criteria_order`, `why`, `recommended_target`, `outcome`, `worker_override`(우리 Worker 상한 때문에 InfraFit 1순위 대신 다른 후보를 고른 이유). InfraFit 요약이 없으면 없음 |
 | `cost` | 화면 | `test_1h`, `monthly`(USD, 단가 없으면 null), `assumptions` |
 | `permissions` | 화면 (16. 권한 제시) | 배포될 앱이 받는 권한 |
 | `required_secrets` | 화면 | 사용자가 직접 넣어야 하는 비밀 환경변수 이름 |
@@ -208,15 +209,15 @@ Main Server 는 `start_build(projectName="pawploy-build", buildspecOverride=<응
 ## InfraFit 인벤토리·추천 연동
 
 `analyze` 스캔 단계에서 [InfraFit](vendor/infrafit/SOURCE) S0~S4(S1 인벤토리, S2 프로필, S3 적합성, S4 추천; 규칙 기반, LLM 없음)를 함께 돌려 `scan.inventory` 로 넘깁니다.
-LLM 프롬프트에는 target 을 `recommendation` 1순위 대상으로 따르고(다르면 이유를 warnings 에), 탈락 이유를 candidates 의 why 에 반영하고, candidate(확정 아님) 사실은 단정하지 말고, required_secrets 는 `external_services.secrets` 와 `env_names` 를 모두 보고 정하라고 적었습니다. `analyze` 검사 로직은 그대로입니다.
+LLM 프롬프트에는 target 을 `recommendation` 1순위 대상으로 따르고(다르면 이유를 warnings 에), 탈락 이유를 candidates 의 why 에 반영하고, candidates 의 why 는 `ranking` 의 기준 순서로 설명하고, `unverified: true` 후보는 확정적으로 추천하지 말고 warnings 에 확인 필요로 적고(1순위가 unverified 면 target 은 그대로 따르되 warnings 에 확인 필요), 비용 숫자는 쓰지 말고, candidate(확정 아님) 사실은 단정하지 말고, required_secrets 는 `external_services.secrets` 와 `env_names` 를 모두 보고 정하라고 적었습니다. `analyze` 검사 로직은 그대로입니다.
 
 - `deploy_units`: 결과 최상위 `inventory.deploy_units` 에 InfraFit 것 **전체**(근거 포함, 코드가 검사·렌더에 씀), 프롬프트용 `summary.deploy_units` 는 이름·구조만(3KB 이하, 전체 10KB 안에 포함). 프롬프트에는 전체를 넣지 않음
 - 내용 (`status: ok` 일 때 `summary`, 전체 10KB 이하): `workloads`, `endpoints`(총 개수·워크로드별 개수·앞 25개 `METHOD route @file:line`·노출), `datastores`, `external_services`, `environments`, `compute`(현재 컴퓨트 컴포넌트), `request_paths`(홉 + 명시된 timeout/body 설정), `unmapped`. 넘치면 긴 목록부터 줄이고 `truncated` 에 표시. 모든 file:line 은 inventory.json 근거 그대로.
-- `summary.recommendation` (4KB 이하, recommendation.json + fit.json + profile.json): `recommended`·`top`(상위 5개) — 각 `target`(capabilities.yaml 의 컴퓨트 구성 요소 `target` = 배포 대상 id), `deployable`, `assignment`(범위별 구성 요소 id), `worker_limit`(우리 Worker 상한 Lambda 30초·Cloud Run 60초로는 안 되는 이유, 1순위가 그러면 `worker_override` 와 함께 다음 후보로 바꿈), `unknown_count`; `rejected` — 탈락 컴퓨트별 이유 최대 3개(`rule`, `dimension`·`dimension_value`, `capability`·`capability_value`, `source.url`·짧은 `quote`); `app_scope` 와 `dimensions`(A1~A4, B1~B3, E2 값·근거 file:line, 가정이면 `assumed: true` + `why`); 후보가 없으면 `no_feasible: true`.
+- `summary.recommendation` (4.5KB 이하 = `MAX_RECOMMENDATION_BYTES` 4500, recommendation.json + fit.json + profile.json): `recommended`·`top`(상위 5개) — 각 `target`(capabilities.yaml 의 컴퓨트 구성 요소 `target` = 배포 대상 id, 호환용으로 첫 대상), `targets`(placement 순서의 서로 다른 대상), `mixed: true`(워크로드마다 다른 컴퓨트, 예: api=Lambda + worker=Fargate), `deployable`, `assignment`(범위별 구성 요소 id), `topology`, `decided_by`(바로 아래 후보와 갈린 기준), `unverified: true`(탐지한 요구에 대한 플랫폼 능력을 모름, 확인 필요), `worker_limit`(우리 Worker 상한 Lambda 30초·Cloud Run 60초로는 안 되는 이유, 1순위가 그러면 `worker_override` 와 함께 다음 후보로 바꿈), `unknown_count`; `ranking` — `service_type`, `label`, `coverage`, `unprioritized`, `criteria_order`, `why` (InfraFit 서비스 유형별 비교 기준 순서); `rejected` — 탈락 컴퓨트별 이유 최대 3개(`rule`, `dimension`·`dimension_value`, `scope`(위반한 워크로드 범위, 값도 그 범위의 것), `capability`·`capability_value`, `source.url`·짧은 `quote`); `app_scope`(앱 집계 범위, 보통 `w-app`) 와 `dimensions`(A1~A4, B1~B3, E2 값·근거 file:line, 가정이면 `assumed: true` + `why`); 후보가 없으면 `no_feasible: true`. 넘치면 탈락 근거 인용 → 후보 수 → 탈락 수 → 차원 `why` → `ranking.why`(120자) 순으로 줄임.
 - S1 은 됐는데 S2~S4 가 실패·시간 초과하면 S1 요약만 두고 `stage_error: {stage, message}` 를 붙입니다(`status` 는 `ok`).
-- 경고: 앱 워크로드 2개 이상, 리버스 프록시, 비밀값이 필요한 외부 서비스, 추천 대상과 주요 탈락 이유(또는 추천 단계 실패) → `warnings` 에 `InfraFit:` 로 추가. 컨테이너 1개 앱은 코드가 `supported`·추천 대상을 직접 바꾸지 않음 (여러 컨테이너면 대상은 `aws_ec2_compose`, InfraFit 후보가 없으면 `supported=false`).
+- 경고: 앱 워크로드 2개 이상, 리버스 프록시, 비밀값이 필요한 외부 서비스, `InfraFit: <유형> 유형으로 판단 — <기준 순서> 순으로 비교`, 추천 대상·갈린 기준(동률이면 `동률 (이름순)`·`동률 (모름 수)`)과 주요 탈락 이유(워크로드가 여럿이면 `w-worker A1=워커` 처럼 위반한 범위 표시) 또는 추천 단계 실패 → `warnings` 에 `InfraFit:` 로 추가. 컨테이너 1개 앱은 코드가 `supported`·추천 대상을 직접 바꾸지 않음 (여러 컨테이너면 대상은 `aws_ec2_compose`, InfraFit 후보가 없으면 `supported=false`).
 - 실행: 소스를 임시 폴더에 풀고(비밀 파일 제외, `.env.example` 류는 값 지우고 이름만) 별도 프로세스로 실행. 시간 제한 `PAWPLOY_INVENTORY_TIMEOUT`(기본 60초, 0이면 끔). 실패·시간 초과여도 analyze 는 계속되고 `inventory` 는 `{"status": "error"|"timeout", "message": ...}`. `fix_build` 는 인벤토리를 돌리지 않음(`skipped`).
-- 소스: `vendor/infrafit/` 에 복사본(vendoring). 갱신은 `python scripts/sync_infrafit.py <InfraFit 저장소 경로>` (커밋·날짜는 `vendor/infrafit/SOURCE`). 의존성 `crossplane`, `python-hcl2`(+`lark`, `regex`) 추가, `jsonschema`·`pyyaml` 은 기존에 이미 포함. kustomize 바이너리는 없어도 됨(overlay 는 미해석으로 기록).
+- 소스: `vendor/infrafit/` 에 복사본(vendoring). 갱신은 `python scripts/sync_infrafit.py <InfraFit 저장소 경로>` (커밋·날짜는 `vendor/infrafit/SOURCE`, 지금 f51cbe4). 의존성 `crossplane`, `python-hcl2`(+`lark`, `regex`) 추가, `jsonschema`·`pyyaml` 은 기존에 이미 포함. kustomize 바이너리는 없어도 됨(overlay 는 미해석으로 기록).
 - 크기·시간: 배포 zip 약 +0.6MB (vendor 0.13MB + 새 의존성 약 0.5MB, 압축 기준). 실제 저장소에서 S0~S4 0.2~1.5초, 요약 3~10KB.
 
 ## 평가 (analyze)
@@ -236,7 +237,7 @@ QA(실제 런타임 시나리오 검증) 방법·시나리오 목록·결과: [d
 
 ```bash
 python -m venv .venv && .venv/Scripts/pip install -r requirements.txt -r requirements-dev.txt
-.venv/Scripts/python -m pytest -q                 # 오프라인 테스트 126개 (모델·AWS 호출 없음)
+.venv/Scripts/python -m pytest -q                 # 오프라인 테스트 140개 (모델·AWS 호출 없음)
 WORKER_REPO=<Terraform-worker 체크아웃> .venv/Scripts/python -m pytest -q   # Worker 규칙과 직접 대조 (+33, Worker main)
 AWS_PROFILE=peony .venv/Scripts/python -m agent.app   # 로컬 서버 → POST http://localhost:8080/invocations
 ```

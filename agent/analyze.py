@@ -280,7 +280,7 @@ def validate_multi(rec: LLMRecommendation, src: source.SourceTree, scan: dict, d
 
 
 def _infrafit_view(reco: dict) -> dict | None:
-    """화면용 InfraFit 판단 요약: 유형·기준 순서·1순위 대상. 요약이 없으면 None."""
+    """화면용 InfraFit 판단 요약: 유형·기준 순서·추천 대상(Worker 상한으로 바꿨으면 그 이유). 요약이 없으면 None."""
     rk = reco.get("ranking") or {}
     if not rk and not reco.get("recommended") and not reco.get("outcome"):
         return None
@@ -289,6 +289,8 @@ def _infrafit_view(reco: dict) -> dict | None:
         out["recommended_target"] = reco["recommended"]["target"]
     if reco.get("outcome"):
         out["outcome"] = reco["outcome"]
+    if reco.get("worker_override"):                    # recommended_target 이 InfraFit 1순위와 다른 이유
+        out["worker_override"] = reco["worker_override"]
     return out
 
 
@@ -301,10 +303,14 @@ def _attach_infrafit(candidates: list[dict], reco: dict) -> None:
     """후보마다 같은 대상의 InfraFit 순위·갈린 기준을 붙인다 (비용은 화면 cost 하나만 쓴다)."""
     top = {}
     for c in reco.get("top") or []:
-        top.setdefault(c.get("target"), c)
+        if not c.get("mixed"):                         # 워크로드마다 다른 컴퓨트인 조합은 한 대상의 순위가 아니다
+            top.setdefault(c.get("target"), c)
+    names = {cand["target"] for cand in candidates}
+    aliased = {cost.SAME_PRICE_AS[n] for n in names if n in cost.SAME_PRICE_AS}  # ec2_compose 가 있으면 aws_ec2 항목은 그쪽에만
     for cand in candidates:
-        target = cost.SAME_PRICE_AS.get(cand["target"], cand["target"])                  # ec2_compose = 같은 EC2 컴퓨트
-        c = top.get(cand["target"]) or top.get(target)
+        if cand["target"] in aliased:
+            continue
+        c = top.get(cand["target"]) or top.get(cost.SAME_PRICE_AS.get(cand["target"]))  # ec2_compose = 같은 EC2 컴퓨트
         if c:
             info = {"rank": c.get("rank")}
             if c.get("decided_by"):
