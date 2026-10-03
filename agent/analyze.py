@@ -289,6 +289,8 @@ def _infrafit_view(reco: dict) -> dict | None:
         out["recommended_target"] = reco["recommended"]["target"]
     if reco.get("outcome"):
         out["outcome"] = reco["outcome"]
+    if reco.get("unknown_capabilities"):              # outcome=unverified: 확인 못 한 플랫폼 능력
+        out["unknown_capabilities"] = reco["unknown_capabilities"]
     if reco.get("worker_override"):                    # recommended_target 이 InfraFit 1순위와 다른 이유
         out["worker_override"] = reco["worker_override"]
     return out
@@ -370,8 +372,10 @@ def _infrafit_compute_warnings(reco: dict, u: dict, inv_summary: dict) -> list[s
             missing.setdefault(eng, d)
     for eng, d in missing.items():
         at = ", ".join(d.get("at") or [])[:80]
-        out.append(f"코드가 {eng} 를 쓰는데({at}) 이번 배포 묶음에 {eng} 컨테이너가 없습니다 (compose 에 없는 저장소는 "
-                   f"띄우지 않음). 접속 주소를 환경변수로 따로 넣지 않으면 앱이 localhost 로 접속하다 실패합니다. "
+        # InfraFit 은 compose·k8s 가 있으면 거기 적힌 서비스만 쓰고, 없을 때만 비밀번호 없이 뜨는 저장소(redis 등)를 컨테이너로 만든다
+        out.append(f"코드가 {eng} 를 쓰는데({at}) 이번 배포 묶음에 {eng} 컨테이너가 없습니다 (compose 가 있으면 거기 적힌 "
+                   f"서비스만, 없으면 비밀번호 없이 뜨는 저장소만 컨테이너로 만듦). 접속 주소를 환경변수로 따로 넣지 않으면 "
+                   f"앱이 localhost 로 접속하다 실패합니다. "
                    f"docker-compose.yml 에 {eng} 서비스를 추가하고 다시 분석하세요.")
     if compute and compute != COMPOSE_COMPUTE:
         out.append(f"InfraFit 1순위 컴퓨트는 {rec.get('target') or '?'}({compute})지만, 컨테이너 {count}개를 그대로 함께 "

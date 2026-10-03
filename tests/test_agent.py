@@ -559,11 +559,13 @@ def test_infrafit_ranking_reaches_analyze_response(tmp_path):
     assert rec["infrafit"]["service_type"] == "realtime"
     assert rec["infrafit"]["criteria_order"][:2] == ["certainty", "always_on"]
     assert rec["infrafit"]["recommended_target"] != "aws_lambda"      # 웹소켓 능력 모름 → 1순위 아님 (QA 3)
-    # aws_ec2 는 InfraFit 6순위라 요약 top(5)에 없다 → infrafit 필드 없음. top 안의 대상(gcp_cloud_run, 3순위)으로 확인
     cr = next(c for c in rec["candidates"] if c["target"] == "gcp_cloud_run")
     assert cr["infrafit"]["rank"] >= 1 and cr["infrafit"]["decided_by"]["criterion"] == "certainty"
     assert "monthly_baseline_usd" not in cr["infrafit"]                 # 비용은 화면 cost 하나만 (PR #5)
-    assert "infrafit" not in next(c for c in rec["candidates"] if c["target"] == "aws_ec2")
+    # InfraFit ed648cc(029e195 에 포함): VM docker-compose 는 CP.websocket 유도값이 생겨 웹소켓 능력이 확인된다 →
+    # aws_ec2 가 top(5) 안으로 올라와 infrafit 필드가 붙고 unverified 가 아니다 (예전: 6순위라 필드 없음)
+    ec2 = next(c for c in rec["candidates"] if c["target"] == "aws_ec2")["infrafit"]
+    assert 1 <= ec2["rank"] <= 5 and "unverified" not in ec2 and "worker_limit" not in ec2
     assert any("실시간 유형으로 판단" in w for w in rec["warnings"])
 
 
@@ -700,6 +702,45 @@ def test_inventory_outcome_detail_is_text():
     block = inventory.recommendation_summary({"dimensions": []}, {"matrix": []}, reco)
     assert block["outcome"] == "static_only"
     assert block["outcome_detail"] == "정적 사이트 / 현재: static hosting (vercel.json)"
+
+
+def test_candidate_unknown_marks_unverified_with_capabilities():
+    """InfraFit 029e195: 근거 있는 요구에 대한 능력을 모르는 후보에 unknown 이 붙는다 → unverified + 능력 이름 (최대 3)."""
+    def u(cap, scope="w-app"):
+        return {"scope": scope, "component": "cp:aws/lambda/function-url", "rule": "R", "dimension": "A3",
+                "dimension_value": "장시간 양방향(웹소켓)", "capability": cap, "at": ["app.py:3"]}
+    reco = {"recommended": "C2", "outcome": "recommended", "candidates": [
+        {"id": "C1", "rank": 1, "assignment": {"w-app": "cp:aws/lambda/function-url"},
+         "unknown": [u("CP.websocket"), u("CP.websocket", "w-worker"), u("CP.a"), u("CP.b"), u("CP.c")]},
+        {"id": "C2", "rank": 2, "assignment": {"w-app": "cp:aws/ec2/docker-compose"}}]}
+    block = inventory.recommendation_summary({"dimensions": []}, {"matrix": []}, reco)
+    first, second = block["top"]
+    assert first["unverified"] is True and first["unknown_capabilities"] == ["CP.websocket", "CP.a", "CP.b"]
+    assert "unverified" not in second and "unknown_capabilities" not in second
+    assert block["recommended"]["id"] == "C2" and "unknown_capabilities" not in block
+
+
+def test_unverified_outcome_summary_and_warning():
+    """모든 후보가 확인 못 한 능력을 가지면 InfraFit 은 recommended=null, outcome=unverified."""
+    unk = [{"scope": "w-app", "component": "cp:aws/lambda/function-url", "rule": "R", "dimension": "A3",
+            "dimension_value": "x", "capability": "CP.websocket", "at": []}]
+    reco = {"recommended": None, "outcome": "unverified",
+            "outcome_detail": {"message": "조건을 만족하는지 확인하지 못한 후보만 남았다",
+                               "unknown_capabilities": ["CP.websocket", "CP.long_poll"]},
+            "candidates": [{"id": "C1", "rank": 1, "assignment": {"w-app": "cp:aws/lambda/function-url"},
+                            "unknown": unk}]}
+    block = inventory.recommendation_summary({"dimensions": []}, {"matrix": []}, reco)
+    assert block["recommended"] is None and block["outcome"] == "unverified"
+    assert block["outcome_detail"] == "조건을 만족하는지 확인하지 못한 후보만 남았다"
+    assert block["unknown_capabilities"] == ["CP.websocket", "CP.long_poll"]     # 별도 키 (outcome_detail 은 문장만)
+    w = _reco_warning(block)
+    assert w.startswith("InfraFit: 조건 충족을 확인한 후보가 없습니다 (확인 못 한 능력: CP.websocket, CP.long_poll). "
+                        "조건을 만족하는지 확인하지 못한 후보만 남았다")
+    assert "조건을 모두 만족하는 컴퓨트 후보가 없습니다" not in w
+    from agent import analyze as an
+    view = an._infrafit_view(block)
+    assert view["outcome"] == "unverified" and view["unknown_capabilities"] == ["CP.websocket", "CP.long_poll"]
+    assert "recommended_target" not in view
 
 
 def test_example_buildspecs_match_templates():

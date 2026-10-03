@@ -378,16 +378,20 @@ CELERY = str(FIX / "procfile_celery")       # Flask + Celery, Procfile web/worke
 NGINX_CONF = str(FIX / "compose_nginx_conf")  # 공식 nginx 이미지 + 저장소 설정 파일 bind mount (build 없음)
 
 
-def test_code_only_redis_is_flagged_not_called_managed(tmp_path):
+def test_code_only_redis_is_bundled_and_port_fixed(tmp_path):
+    # (029e195 전 이름: test_code_only_redis_is_flagged_not_called_managed)
     fixes = [UnitFix(field="port", id="web", value="8000", why="gunicorn 기본"),
              UnitFix(field="entry", id="web", value="8000", why="웹 프로세스")]
     out, _, _ = _analyze(tmp_path, CELERY, fixes)
     rec = out["recommendation"]
     du = rec["deploy_units"]
-    assert du["datastores"] == []                                             # compose 가 없어 Redis 컨테이너가 없다
-    missing = [w for w in rec["warnings"] if "redis 컨테이너가 없습니다" in w]
-    assert len(missing) == 1 and "requirements.txt:3" in missing[0]
-    assert not any("관리형" in w for w in rec["warnings"])                   # 띄우지도 않는 저장소를 "컨테이너로 띄운다"고 하지 않음
+    # InfraFit 029e195: compose 가 없어도 코드가 쓰는 Redis 는 저장소 컨테이너(redis:7-alpine)로 묶음에 들어간다.
+    # 예전 기대값(datastores == [] 와 "redis 컨테이너가 없습니다" 경고 1개)은 이제 틀린 설명이라 바꿨다.
+    # 묶음에 없는 저장소 경고 자체는 test_code_only_password_store_still_flagged 가 지킨다.
+    assert [d["image"] for d in du["datastores"]] == ["redis:7-alpine"]
+    assert not any("컨테이너가 없습니다" in w for w in rec["warnings"])
+    # 저장소가 이제 실제로 같은 서버의 컨테이너로 뜨므로 "관리형 대신 컨테이너" 안내가 맞다 (InfraFit 은 ElastiCache 추천)
+    assert any("관리형(ca:aws/elasticache/node-based)" in w for w in rec["warnings"])
     # $PORT 는 compose 가 서버 환경변수로 바꿔 빈 값이 되므로 듣는 포트로 바꾼다
     web = next(c for c in du["containers"] if c["id"] == "web")
     assert web["command"] == "gunicorn app:app --bind 0.0.0.0:8000"
@@ -455,3 +459,92 @@ def test_worker_limit_replaces_infrafit_first_choice():
     s = summary("1초 미만", "장시간 양방향(웹소켓)")
     assert s["recommended"]["target"] == "aws_ec2"
     assert [bool(c.get("worker_limit")) for c in s["top"]] == [True, True, False]
+
+
+def test_worker_override_skips_unverified_candidates():
+    """InfraFit 029e195: unknown 이 붙은(능력 확인 못 한) 후보는 Worker 상한 대체 후보로도 고르지 않는다."""
+    unk = [{"scope": "w-app", "component": "cp:gcp/cloud-run/request-billing", "rule": "R", "dimension": "A2",
+            "dimension_value": "수십 초", "capability": "CP.request_timeout", "at": []}]
+    lam = {"id": "C1", "rank": 1, "assignment": {"w-app": "cp:aws/lambda/function-url"}}
+    run = {"id": "C2", "rank": 2, "assignment": {"w-app": "cp:gcp/cloud-run/request-billing"}, "unknown": unk}
+    ec2 = {"id": "C3", "rank": 3, "assignment": {"w-app": "cp:aws/ec2/docker-compose"}}
+    profile = {"dimensions": [{"scope": "w-app", "dimension": "A2", "value": "수십 초"},
+                              {"scope": "w-app", "dimension": "A3", "value": "짧은 HTTP"}]}
+
+    s = inventory.recommendation_summary(profile, {"matrix": []},
+                                         {"recommended": "C1", "candidates": [lam, run, ec2]})
+    assert s["recommended"]["target"] == "aws_ec2"                             # Cloud Run 은 unverified 라 건너뜀
+    assert s["worker_override"]["infrafit_target"] == "aws_lambda"
+    # 대체할 후보가 모두 unverified 면 바꾸지 않고 1순위에 worker_limit 만 표시 (지금처럼)
+    s = inventory.recommendation_summary(profile, {"matrix": []}, {"recommended": "C1", "candidates": [lam, run]})
+    assert s["recommended"]["target"] == "aws_lambda" and "30초" in s["recommended"]["worker_limit"]
+    assert s["worker_override"]["infrafit_target"] == "aws_lambda"
+
+
+def test_code_only_redis_becomes_bundled_container_in_compose(tmp_path):
+    """InfraFit 029e195: compose 없는 코드 경로도 Redis 저장소 컨테이너를 만들고, 앱이 loopback 기본값으로 읽는
+    REDIS_URL 에 컨테이너 주소를 넣는다. beat 는 scheduled 워크로드·컨테이너."""
+    fixes = [UnitFix(field="port", id="web", value="8000", why="gunicorn 기본"),
+             UnitFix(field="entry", id="web", value="8000", why="웹 프로세스")]
+    out, store, _ = _analyze(tmp_path, CELERY, fixes, brain=_brain(fixes, required_secrets=["REDIS_URL"]))
+    rec = out["recommendation"]
+    assert rec["supported"] is True, rec["warnings"]
+    du = rec["deploy_units"]
+    assert [(d["id"], d["datastore"], d["image"]) for d in du["datastores"]] == [("redis", "svc-redis", "redis:7-alpine")]
+    cs = {c["id"]: c for c in du["containers"]}
+    assert set(cs) == {"web", "worker", "scheduled"}
+    assert all(c["depends_on"] == ["redis"] and c["env"] == {"REDIS_URL": "redis://redis:6379/0"} for c in cs.values())
+    assert "REDIS_URL" not in rec["required_secrets"]                          # compose 가 값을 넣는다
+    assert du["entry"] == {"container": "web", "port": 8000, "why": "AI 보완: 웹 프로세스"}
+    assert rec["container_port"] == 8000
+    assert cs["web"]["command"] == "gunicorn app:app --bind 0.0.0.0:8000"     # $PORT 처리 (PR #5) 그대로
+
+    g = _gen(store, rec)
+    assert g["status"] == "ok", g
+    t = g["targets"][0]
+    doc, _ = _rendered(t["files"]["compose.yaml.tftpl"], t["images"])
+    s = doc["services"]
+    assert set(s) == {"web", "worker", "scheduled", "redis"} and s["redis"]["image"] == "redis:7-alpine"
+    for name in ("web", "worker", "scheduled"):
+        assert s[name]["environment"]["REDIS_URL"] == "redis://redis:6379/0"
+        assert "redis" in s[name]["depends_on"]
+    assert s["web"]["ports"] == ["80:8000"] and "ports" not in s["redis"]
+    assert s["web"]["command"] == ["gunicorn", "app:app", "--bind", "0.0.0.0:8000"]
+
+
+def test_code_only_redis_without_port_fix_explains_missing_entry(tmp_path):
+    """포트를 보완하지 않으면 $PORT 를 정할 수 없어 entry 가 없다 → 이유가 warnings 에 있고 supported=false."""
+    out, _, _ = _analyze(tmp_path, CELERY)
+    rec = out["recommendation"]
+    assert rec["supported"] is False and rec["deploy_units"]["entry"] is None
+    assert [d["image"] for d in rec["deploy_units"]["datastores"]] == ["redis:7-alpine"]
+    assert any("InfraFit 미해결: containers.web.ports" in w for w in rec["warnings"])
+    assert any("web.command: $PORT 는 배포 서버에 없는 값" in w for w in rec["warnings"])
+
+
+def test_code_only_password_store_still_flagged(tmp_path):
+    """비밀번호가 필요한 저장소(postgres)는 InfraFit 이 컨테이너를 만들지 않는다(unresolved datastores.<범위>) →
+    PR #5 의 '코드가 쓰는데 묶음에 없음' 경고. 외부 주소를 기본값으로 읽는 앱은 unresolved containers.<id>.env."""
+    work = tmp_path / "src"
+    shutil.copytree(CELERY, work)
+    with open(work / "requirements.txt", "a") as f:
+        f.write("psycopg2-binary==2.9.9\n")
+    with open(work / "app.py", "a") as f:
+        f.write('import os\nimport psycopg2\nconn = psycopg2.connect(os.environ.get("DATABASE_URL", "postgresql://app@localhost/app"))\n')
+    tasks = work / "tasks.py"
+    tasks.write_text(tasks.read_text().replace("redis://localhost:6379/0", "redis://cache.example.com:6379/0"))
+    fixes = [UnitFix(field="port", id="web", value="8000", why="gunicorn 기본"),
+             UnitFix(field="entry", id="web", value="8000", why="웹 프로세스")]
+    out, _, _ = _analyze(tmp_path, str(work), fixes, brain=_brain(fixes, required_secrets=["REDIS_URL"]))
+    rec = out["recommendation"]
+    du = rec["deploy_units"]
+    assert [d["image"] for d in du["datastores"]] == ["redis:7-alpine"]          # postgres 컨테이너는 없음
+    missing = [w for w in rec["warnings"] if "컨테이너가 없습니다" in w]
+    assert len(missing) == 1 and missing[0].startswith("코드가 postgresql 를 쓰는데(requirements.txt:5")
+    assert "띄우지 않음" not in missing[0]                                       # 029e195 전의 틀린 설명 없음
+    assert any(w.startswith("InfraFit 미해결: datastores.ds-postgresql — 접속 정보(비밀번호)") for w in rec["warnings"])
+    for cid in ("web", "worker", "scheduled"):
+        assert any(w.startswith(f"InfraFit 미해결: containers.{cid}.env — 앱이 외부 cache.example.com") for w in rec["warnings"])
+        assert "REDIS_URL" not in next(c for c in du["containers"] if c["id"] == cid)["env"]
+    assert "REDIS_URL" in rec["required_secrets"]                                # 값을 못 넣었으니 사용자에게 묻는다
+    assert not any("관리형(ca:aws/rds" in w for w in rec["warnings"])           # 띄우지 않는 postgres 는 "컨테이너로 띄운다"고 하지 않음

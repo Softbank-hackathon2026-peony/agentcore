@@ -364,8 +364,12 @@ def _candidate(c: dict) -> dict:
         out["topology"] = c["topology"]
     if c.get("decided_by"):
         out["decided_by"] = c["decided_by"]
-    if ((c.get("criteria") or {}).get("certainty") or {}).get("evidence_unknown"):
+    unknown = [u for u in c.get("unknown") or [] if isinstance(u, dict)]   # InfraFit: 근거 있는 요구에 대한 능력을 모름
+    if unknown or ((c.get("criteria") or {}).get("certainty") or {}).get("evidence_unknown"):
         out["unverified"] = True                      # 탐지한 요구에 대한 플랫폼 능력을 모름 (확인 필요)
+    caps = list(dict.fromkeys(str(u["capability"]) for u in unknown if u.get("capability")))
+    if caps:
+        out["unknown_capabilities"] = caps[:3]
     return out
 
 
@@ -460,7 +464,8 @@ def recommendation_summary(profile: dict, fit: dict, reco: dict) -> dict:
            "app_scope": scope, "dimensions": dims}
     first_why = _worker_why(out["recommended"], dim_values)
     if first_why:                                     # InfraFit 1순위가 우리 Worker 설정으로는 안 됨 → 다음 후보
-        nxt = next((c for c in top if not c.get("worker_limit") and c["id"] != out["recommended"]["id"]), None)
+        nxt = next((c for c in top if not c.get("worker_limit") and not c.get("unverified")    # 능력 확인 못 한 후보로 바꾸지 않음
+                    and c["id"] != out["recommended"]["id"]), None)
         out["worker_override"] = {"infrafit_target": out["recommended"]["target"], "why": first_why}
         out["recommended"] = dict(nxt) if nxt else {**out["recommended"], "worker_limit": first_why}
     rk = reco.get("ranking")
@@ -469,10 +474,13 @@ def recommendation_summary(profile: dict, fit: dict, reco: dict) -> dict:
                                               "criteria_order", "why") if k in rk}
     if reco.get("no_feasible"):
         out["no_feasible"] = True
-    if reco.get("outcome"):                           # recommended | no_feasible | static_only | not_deployable
+    if reco.get("outcome"):                           # recommended | unverified | no_feasible | static_only | not_deployable
         out["outcome"] = reco["outcome"]
         detail = reco.get("outcome_detail")
-        if isinstance(detail, dict):                  # {"message": ..., "current": [{component, label, ...}]}
+        if isinstance(detail, dict):                  # {"message": ..., "current": [...]} 또는 {"message", "unknown_capabilities"}
+            caps = [str(x) for x in detail.get("unknown_capabilities") or []]
+            if caps:                                  # unverified: 어떤 능력을 확인 못 했는지 (별도 키)
+                out["unknown_capabilities"] = caps[:6]
             current = [c.get("label") or c.get("component") for c in detail.get("current") or [] if isinstance(c, dict)]
             detail = (detail.get("message") or "") + (f" / 현재: {', '.join(map(str, current))}" if current else "")
         if detail:
