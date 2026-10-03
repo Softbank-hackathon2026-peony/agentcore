@@ -7,9 +7,14 @@
   4. AgentCore Runtime pawploy_agent (없으면 생성, 있으면 새 버전으로 업데이트)
 
 사용: AWS_PROFILE=peony .venv/Scripts/python scripts/deploy.py [--dry-run]
+테스트 런타임 (Main Server 가 쓰는 pawploy_agent 는 그대로 두고 따로 올림):
+      AWS_PROFILE=peony .venv/Scripts/python scripts/deploy.py --name pawploy_agent_staging
+      [--env PAWPLOY_PRELOAD_CHARS=0]   # 런타임 환경변수 추가 (켜고 끄며 비교할 때)
+버킷·역할은 같은 것을 쓴다. 비교: scripts/compare_runtimes.py
 """
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -31,12 +36,20 @@ RUNTIME = "PYTHON_3_13"
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="AWS에 아무것도 만들지 않고 할 일만 출력")
+    ap.add_argument("--name", default=RUNTIME_NAME, help="런타임 이름. 테스트용은 pawploy_agent_staging")
+    ap.add_argument("--env", action="append", default=[], metavar="KEY=VALUE", help="런타임 환경변수 추가 (여러 번 가능)")
     args = ap.parse_args()
+    if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_]{0,47}", args.name):
+        ap.error("런타임 이름은 영문자로 시작하고 영문·숫자·_ 만, 48자 이하")
+    if any("=" not in kv for kv in args.env):
+        ap.error("--env 는 KEY=VALUE 형식")
+    extra_env = dict(kv.split("=", 1) for kv in args.env)
 
     sts = boto3.client("sts", region_name=REGION)
     account = sts.get_caller_identity()["Account"]
     bucket = f"pawploy-agent-{account}"
-    print(f"[계정] {account}  [리전] {REGION}  [버킷] {bucket}  [역할] {ROLE_NAME}  [런타임] {RUNTIME_NAME}")
+    print(f"[계정] {account}  [리전] {REGION}  [버킷] {bucket}  [역할] {ROLE_NAME}  [런타임] {args.name}"
+          + (f"  [환경변수 추가] {extra_env}" if extra_env else ""))
     if args.dry_run:
         print("dry-run: 여기서 멈춤")
         return
@@ -48,7 +61,7 @@ def main():
     zip_path = build_zip()
     boto3.client("s3", region_name=REGION).upload_file(str(zip_path), bucket, key)
     print(f"[코드] s3://{bucket}/{key} ({zip_path.stat().st_size // 1024}KB)")
-    arn = ensure_runtime(role_arn, bucket, key)
+    arn = ensure_runtime(role_arn, bucket, key, args.name, extra_env)
     print(f"\n✅ 배포 완료\nAGENT_RUNTIME_ARN={arn}\nPAWPLOY_ARTIFACT_BUCKET={bucket}")
 
 
@@ -121,13 +134,13 @@ def build_zip() -> Path:
     return zip_path
 
 
-def ensure_runtime(role_arn: str, bucket: str, key: str) -> str:
+def ensure_runtime(role_arn: str, bucket: str, key: str, name: str = RUNTIME_NAME, extra_env: dict | None = None) -> str:
     ctl = boto3.client("bedrock-agentcore-control", region_name=REGION)
     artifact = {"codeConfiguration": {"code": {"s3": {"bucket": bucket, "prefix": key}},
                                       "runtime": RUNTIME, "entryPoint": ["main.py"]}}
-    env = {"PAWPLOY_ARTIFACT_BUCKET": bucket, "PAWPLOY_REGION": REGION}
+    env = {"PAWPLOY_ARTIFACT_BUCKET": bucket, "PAWPLOY_REGION": REGION, **(extra_env or {})}
     existing = next((r for r in ctl.list_agent_runtimes().get("agentRuntimes", [])
-                     if r["agentRuntimeName"] == RUNTIME_NAME), None)
+                     if r["agentRuntimeName"] == name), None)
     common = dict(agentRuntimeArtifact=artifact, roleArn=role_arn, environmentVariables=env,
                   networkConfiguration={"networkMode": "PUBLIC"})
     if existing:
@@ -135,7 +148,7 @@ def ensure_runtime(role_arn: str, bucket: str, key: str) -> str:
         resp = ctl.update_agent_runtime(agentRuntimeId=rid, **common)
         print(f"[런타임] 업데이트: {rid}")
     else:
-        resp = ctl.create_agent_runtime(agentRuntimeName=RUNTIME_NAME, **common)
+        resp = ctl.create_agent_runtime(agentRuntimeName=name, **common)
         rid = resp["agentRuntimeId"]
         print(f"[런타임] 만듦: {rid}")
     for _ in range(60):
