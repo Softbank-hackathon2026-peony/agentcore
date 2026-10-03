@@ -1,6 +1,7 @@
-"""analyze 속도 개선 (오프라인): 핵심 파일 미리 넣기, 이미지별 Dockerfile 동시 생성.
+"""analyze 속도 개선 (오프라인): 핵심 파일 미리 넣기, 추천+Dockerfile 한 번에, 이미지별 Dockerfile 동시 생성.
 
-실제 모델 동작(추천+Dockerfile 한 번에, 캐싱)은 테스트 런타임에서 확인한다 (scripts/compare_runtimes.py)."""
+여기서는 우리 코드의 분기·조립만 검사한다 (모델 답은 테스트용 대역). 실제 속도·품질은 이 테스트로 알 수 없다."""
+import json
 import threading
 from pathlib import Path
 
@@ -9,7 +10,8 @@ from agent import source
 from agent.handler import handle
 from agent.scan import scan
 from agent.storage import LocalStore
-from tests.fakes import FakeBrain, recommendation
+from strands.models import Model
+from tests.fakes import GOOD_DOCKERFILE, FakeBrain, recommendation
 
 FIX = Path(__file__).parent / "fixtures"
 
@@ -34,6 +36,58 @@ def test_preload_respects_budget_and_prefix():
     _, auth = brain_mod.preload_block(src, sc, 60_000, prefix="services/auth/")
     assert len(small) < len(all_) <= brain_mod.PRELOAD_MAX_FILES
     assert auth and all(p.startswith("services/auth/") for p in auth)
+
+
+class ScriptedModel(Model):
+    """단위 테스트용 Strands 모델 대역: 정해진 도구 호출을 차례로 돌려주고, 받은 요청을 남긴다."""
+    def __init__(self, answers):
+        self.answers, self.requests = list(answers), []
+
+    def update_config(self, **model_config):
+        pass
+
+    def get_config(self):
+        return {}
+
+    def structured_output(self, output_model, prompt, system_prompt=None, **kwargs):
+        raise NotImplementedError
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        self.requests.append(messages)
+        name, fields = self.answers.pop(0)
+        yield {"messageStart": {"role": "assistant"}}
+        yield {"contentBlockStart": {"start": {"toolUse": {"toolUseId": f"t{len(self.requests)}", "name": name}}}}
+        yield {"contentBlockDelta": {"delta": {"toolUse": {"input": json.dumps(fields, ensure_ascii=False)}}}}
+        yield {"contentBlockStop": {}}
+        yield {"messageStop": {"stopReason": "tool_use"}}
+
+
+def _rec_fields(**over):
+    return {**recommendation(env={}).model_dump(), **over}
+
+
+def _run_brain(monkeypatch, answers):
+    model = ScriptedModel(answers)
+    monkeypatch.setattr(brain_mod, "_model", lambda: model)
+    src = source.load(str(FIX / "sample_app"))
+    rec, df = brain_mod.StrandsBrain().analyze(src, scan(src), None)
+    return model, rec, df
+
+
+def test_analyze_gets_recommendation_and_dockerfile_in_one_call(monkeypatch):
+    model, rec, df = _run_brain(monkeypatch, [
+        ("AnalysisOut", _rec_fields(dockerfile=GOOD_DOCKERFILE, dockerfile_notes=["샘플 기반"]))])
+    assert len(model.requests) == 1                       # 예전: 추천 1번 + Dockerfile 1번
+    assert rec.target == "aws_lambda" and df.dockerfile == GOOD_DOCKERFILE and df.notes == ["샘플 기반"]
+    first = model.requests[0][0]["content"][0]["text"]
+    assert "## 미리 읽은 파일" in first and '<file path="app.py">' in first and "## Dockerfile" in first
+
+
+def test_analyze_falls_back_to_second_call_when_dockerfile_empty(monkeypatch):
+    model, rec, df = _run_brain(monkeypatch, [
+        ("AnalysisOut", _rec_fields()),
+        ("DockerfileOut", {"dockerfile": GOOD_DOCKERFILE, "container_port": 8080, "notes": []})])
+    assert len(model.requests) == 2 and df.dockerfile == GOOD_DOCKERFILE
 
 
 def test_multi_image_dockerfiles_are_generated_concurrently(tmp_path):
