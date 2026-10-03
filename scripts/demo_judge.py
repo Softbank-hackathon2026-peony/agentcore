@@ -9,7 +9,7 @@
   1. analyze         코드를 읽고 추천 · 근거(코드가 존재 확인) · 후보 5개+월 비용(코드 계산) · Dockerfile(코드가 규칙 강제)
   2. CodeBuild       같은 이미지를 AWS ECR + GCP Artifact Registry 에 동시에 (digest 고정)
   3. fix_build       실제 CodeBuild 실패 로그 → 원인 판단 → Dockerfile 수정
-  4. gen_terraform   AWS · GCP Terraform 모듈 동시 생성 (코드가 허용 리소스·금지어 검사)
+  4. gen_terraform   AWS · GCP 표준 모듈은 팀이 검증한 견본 그대로 (LLM 없이 약 3초, 코드가 허용 리소스·금지어 재검사)
   5. fix_terraform   일부러 깨뜨린 모듈 → 로그에 없던 오타까지 수정, 다른 클라우드는 그대로 유지
   6. 안전장치         ① 코드에 숨긴 공격 문장 무시  ② 웹 서버 없는 저장소는 배포 불가 판정
 """
@@ -150,7 +150,7 @@ def show_fix_build(sec, out, broken_df):
 
 
 def show_gen(sec, out):
-    title(4, "gen_terraform — AWS · GCP Terraform 동시 생성", sec)
+    title(4, "gen_terraform — AWS · GCP 검증된 견본 모듈 (LLM 없이 약 3초)", sec)
     kv("저장", out["module_uri"] + "{aws,gcp}/")
     for t in out["targets"]:
         print(f"\n  {B_}[{t['cloud'].upper()}] {t['architecture']}{X}  {D}{', '.join(t.get('files', {}))}{X}")
@@ -214,8 +214,8 @@ def main():
     if os.name == "nt":
         os.system("")
     mode = "재생 (저장된 실제 결과)" if a.replay else "실제 호출"
-    print(f"{B_}Pawploy AgentCore — 이주호 파트 시연{X}  {D}[{mode}]  서울 AgentCore Runtime · Claude Sonnet 4.6 (Bedrock){X}")
-    print(f"{D}  판단은 AI, 검증은 코드: 분석·빌드 수정·Terraform 생성·수정 4개 모드 + 빌드 인프라{X}")
+    print(f"{B_}Pawploy AgentCore — 이주호 파트 시연{X}  {D}[{mode}]  서울 AgentCore Runtime · Claude Sonnet 4.5 (Bedrock){X}")
+    print(f"{D}  판단은 AI, 검증은 코드: 분석·빌드 수정·Terraform 수정은 AI, 표준 Terraform 은 검증된 견본 + 코드 검사{X}")
 
     fb_in = json.loads((SAVE / "fix-build-input.json").read_text(encoding="utf-8"))
     with ThreadPoolExecutor(4) as ex:
@@ -255,7 +255,7 @@ def main():
             (sa, oa), (sc, oc) = j6a.result(), j6c.result()
             show_guards(sa, oa, sc, oc)
 
-    print(f"\n{B_}정리{X}  분석 30~60초 · 빌드 약 50초(ECR+GCP 동시) · Terraform 약 20초 · 실패하면 로그 보고 자동 수정(최대 3회)")
+    print(f"\n{B_}정리{X}  분석 30~50초 · 빌드 약 40초(기존 Dockerfile 재사용, ECR+GCP 동시 push) · Terraform 약 3초(견본) · 실패하면 로그 보고 자동 수정(최대 3회)")
     print(f"{D}  평가 저장소 15개 중 13개 정확 · 숨긴 공격 5/5 차단 · 오프라인 테스트 + 실제 런타임 QA{X}\n")
 
 

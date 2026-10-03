@@ -7,8 +7,8 @@ Amazon Bedrock AgentCore Runtime(서울)에 올라가고, Main Server가 `mode`�
 |---|---|---|---|
 | `analyze` | 05~08 분석·추천 + Dockerfile·buildspec 생성 (수정 요청 재분석 포함). 컨테이너 여러 개면 `deploy_units` + 이미지별 빌드 파일 | 이주호 (InfraFit 연결·인젝션 방어·여러 컨테이너: 고준서) | ✅ 배포본 실제 호출, 평가 13/15 · 인젝션 5/5 / ⚠️ 여러 컨테이너는 오프라인 테스트만 |
 | `fix_build` | 11~13 빌드 실패 → Dockerfile 수정 (최대 3회). 여러 컨테이너면 `image_id` 하나만 | 이주호 | ⚠️ 오프라인 테스트만 (CodeBuild 생기면 실제 로그로 확인) |
-| `gen_terraform` | 18~20 승인안 → AWS·GCP Terraform 모듈 동시 생성. 여러 컨테이너는 AWS `ec2_compose` (견본 + 코드가 렌더한 compose) | 이주호 (Worker 규격 맞춤: 고준서) | ✅ ec2·lambda·cloud_run 실제 생성 → `terraform validate` 통과 + Worker `iac.py` 위반 0건 / `ec2_compose` 는 Worker `iac.find_violations` 0건 (오프라인) |
-| `fix_terraform` | 23~25 Terraform 실패 → 수정 (최대 3회). `ec2_compose` 는 main.tf 만 | 이주호 | ✅ 실제 validate 에러 수정 (로그에 없던 오타까지) → validate 통과 |
+| `gen_terraform` | 18~20 승인안 → AWS·GCP Terraform 모듈 동시 생성. `ec2`·`lambda`·`cloud_run` 은 팀이 검증한 견본 그대로(LLM 없음, 앱 값은 Worker 입력 변수, 약 3초 — `PAWPLOY_TF_USE_REFERENCE=0` 이면 예전처럼 LLM 생성). 여러 컨테이너는 AWS `ec2_compose` (견본 + 코드가 렌더한 compose) | 이주호 (Worker 규격 맞춤: 고준서) | ✅ ec2·lambda·cloud_run 실제 생성 → `terraform validate` 통과 + Worker `iac.py` 위반 0건 / `ec2_compose` 는 Worker `iac.find_violations` 0건 (오프라인) |
+| `fix_terraform` | 23~25 Terraform 실패 → 수정 (최대 3회). LLM 은 바꿀 곳만 교체로 내고 정확히 한 곳에 맞을 때만 적용, 아니면 파일 전체 재작성. `ec2_compose` 는 main.tf 만 | 이주호 | ✅ 실제 validate 에러 수정 (로그에 없던 오타까지) → validate 통과 |
 
 ## 설계 원칙
 
@@ -62,7 +62,7 @@ curl -X POST localhost:8081/invocations -d '{"mode":"analyze","project_id":"p","
 | 3a | 파일 속 AI 지시문 탐지 → 사용자 경고 | 코드 | `scan.py` |
 | 3b | InfraFit S0~S4 인벤토리·추천 + `deploy_units` (별도 프로세스, 60초 제한, 실패해도 계속) | 규칙 | `inventory.py`, `vendor/infrafit` |
 | 4 | Claude가 `list_files`·`read_file`로 파일을 직접 읽고 추천 (구조화 출력, 최대 12턴). 여러 컨테이너면 `unit_fixes`(빈 포트·운영용 명령·빌드 단계·entry)도 | LLM | `brain.py` |
-| 5 | 같은 대화를 이어 Dockerfile 생성 (여러 컨테이너면 Dockerfile 이 없는 이미지만 따로) | LLM | `brain.py` |
+| 5 | 추천과 같은 답으로 Dockerfile 생성. 프로젝트 Dockerfile 이 고정 포트(EXPOSE)면 그대로 쓴다 (여러 컨테이너면 Dockerfile 이 없는 이미지만 따로, 동시에) | LLM / 코드 | `brain.py`, `buildfiles.py` |
 | 6 | 검사·보정: 배포 가능 대상만, 근거 파일·줄 실재 확인, 비밀 env 분리(이름·값), 후보 5개 채움, 비용 계산 | 코드 | `analyze.py`, `cost.py` |
 | 6a | 여러 컨테이너: deploy_units 를 소스와 대조, LLM 보완을 다시 검사, 운영 배포용 변환(마운트·DB 비밀번호·헬스체크), compose 렌더 확인 | 코드 | `units.py`, `compose.py` |
 | 7 | Dockerfile 규칙 강제: Lambda Web Adapter·`PORT`·`EXPOSE`, `.env` COPY 거부 (여러 컨테이너 이미지는 어댑터 없음) | 코드 | `buildfiles.py` |
