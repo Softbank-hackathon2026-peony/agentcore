@@ -294,11 +294,20 @@ class StrandsBrain:
 
     # ---------------- Terraform ----------------
 
-    def _tf_agent(self):
+    def _tf_agent(self, reference: str | None = None):
         from strands import Agent
-        return Agent(model=_model(), tools=[], callback_handler=None, system_prompt=TF_SYSTEM_PROMPT)
+        system = TF_SYSTEM_PROMPT
+        if reference is not None:
+            # Stable prefix shared by repairs; changing code/logs follow the cache point.
+            system = [{"text": TF_SYSTEM_PROMPT + "\n\n## 검증된 견본\n" + reference}]
+            if config.TF_CACHE_PROMPT:
+                system.append({"cachePoint": {"type": "default"}})
+        return Agent(model=_model(), tools=[], callback_handler=None, system_prompt=system)
 
     def gen_terraform(self, ctx: dict, arch: str, reference: str, errors: list[str]):
+        if config.TF_USE_REFERENCE:
+            from .terraform import standard_module
+            return standard_module(arch)
         prompt = (
             f"아래 승인된 추천안에 맞는 `{arch}` 모듈을 작성하라.\n"
             "AWS·GCP 모듈을 따로따로 만든다. 추천안의 1순위(recommended)가 다른 클라우드여도 "
@@ -324,7 +333,25 @@ class StrandsBrain:
         )
         if errors:
             prompt += "\n## 직전 수정본이 검사에 걸렸다. 아래를 모두 고쳐라\n- " + "\n- ".join(errors)
-        from .schemas import TerraformFix
+        from .schemas import TerraformFix, TerraformPatch
+        if config.TF_PATCH_FIX:
+            patch_prompt = prompt.replace("고칠 때는 파일 전체를 다시 내라.",
+                "고칠 때는 edits에 최소 교체만 내라. old는 현재 파일에 정확히 한 번 있는 원문(공백 포함), "
+                "new는 교체할 코드다. 여러 교체는 순서대로 적용된다. 파일 추가·삭제와 주석 추가는 하지 마라.")
+            patch_prompt = patch_prompt.replace(f"\n\n## 견본\n{reference}\n", "\n")
+            patch = self._run(self._tf_agent(reference), patch_prompt, TerraformPatch)
+            if not patch.fixable:
+                return TerraformFix(fixable=False, cause=patch.cause)
+            updated = {f.name: f.content for f in files}
+            for edit in patch.edits:
+                if (edit.name not in updated or (arch == "ec2_compose" and edit.name != "main.tf")
+                        or updated[edit.name].count(edit.old) != 1):
+                    # Ambiguous edits must never be applied; retain the full-file repair fallback.
+                    break
+                updated[edit.name] = updated[edit.name].replace(edit.old, edit.new, 1)
+            else:
+                return TerraformFix(fixable=True, cause=patch.cause, changes=patch.changes,
+                    files=[f.model_copy(update={"content": updated[f.name]}) for f in files])
         return self._run(self._tf_agent(), prompt, TerraformFix)
 
     def fix_dockerfile(self, src: SourceTree, scan: dict, dockerfile: str, build_log: str, failed_phase: str,
