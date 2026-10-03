@@ -86,6 +86,23 @@ def _tools(src: SourceTree):
     return [list_files, read_file]
 
 
+DOCKERFILE_RUNTIME_RULES = """
+실행 안정성 규칙 (빌드 성공만으로 실행 성공이 보장되지 않는다):
+- 기존 Dockerfile과 베이스 이미지의 ENTRYPOINT·CMD를 먼저 확인하고, 운영 실행에 맞으면 유지하라.
+- CMD는 가능한 exec 형식 JSON 배열로 쓴다. CMD 안에 heredoc, 설정 파일 생성, 중첩 sh -c,
+  여러 줄 문자열이나 복잡한 따옴표·역슬래시 이스케이프를 넣지 마라.
+- 정적 설정 파일은 RUN에서 생성하며 대상 디렉터리는 mkdir -p로 먼저 만든다.
+  줄바꿈은 실제 줄바꿈을 가진 Dockerfile heredoc으로 표현하고 문자 그대로의 \\n과 혼동하지 마라.
+- 런타임 환경변수 치환이 필요하면 베이스 이미지의 공식 기능을 우선 사용하라.
+  nginx는 /etc/nginx/templates/default.conf.template에 ${PORT}를 보존해서 저장하고,
+  공식 /docker-entrypoint.sh의 envsubst를 사용한다. nginx 변수 $uri 등을 미리 치환하지 마라.
+  nginx의 CMD는 ["nginx", "-g", "daemon off;"]로 유지한다.
+- 별도 실행 스크립트가 꼭 필요하면 이미지 안에 실제 파일로 생성하고 셸 문법과 실행 권한을 확인하라.
+  마지막 서버 실행은 exec로 하고 0.0.0.0에서 지정 포트를 리슨하게 하라.
+- 실행하지 않은 이미지를 실행 검증했다고 주장하지 마라.
+"""
+
+
 class StrandsBrain:
     def _agent(self, src: SourceTree):
         from strands import Agent
@@ -161,7 +178,7 @@ class StrandsBrain:
             "- 의존성 설치는 실제 의존성 파일을 사용하고, 개발용 서버(예: flask run --debug) 대신 운영용 실행 명령을 써라.\n"
             "- .env 나 키 파일을 COPY 하지 마라. 빌드 컨텍스트 루트는 프로젝트 루트다."
         )
-        df: DockerfileOut = self._run(agent, df_prompt, DockerfileOut)
+        df: DockerfileOut = self._run(agent, df_prompt + DOCKERFILE_RUNTIME_RULES, DockerfileOut)
         return rec, df
 
     def image_dockerfile(self, src: SourceTree, scan: dict, image: dict, services: list[dict]):
@@ -178,7 +195,7 @@ class StrandsBrain:
             f"## 이 이미지를 쓰는 서비스 (deploy_units)\n{json.dumps(services, ensure_ascii=False, indent=1)}\n\n"
             f"## 스캔 요약\n{json.dumps({k: scan[k] for k in ('languages', 'frameworks', 'port_hints', 'dockerfiles')}, ensure_ascii=False)}"
         )
-        return self._run(agent, prompt, DockerfileOut)
+        return self._run(agent, prompt + DOCKERFILE_RUNTIME_RULES, DockerfileOut)
 
     # ---------------- Terraform ----------------
 
@@ -228,4 +245,4 @@ class StrandsBrain:
             f"## 빌드 로그 (마지막 부분)\n{build_log[-12000:]}\n\n"
             f"## 스캔 요약\n{json.dumps({k: scan[k] for k in ('languages', 'frameworks', 'port_hints', 'dockerfiles')}, ensure_ascii=False)}"
         )
-        return self._run(agent, prompt, DockerfileFix)
+        return self._run(agent, prompt + DOCKERFILE_RUNTIME_RULES, DockerfileFix)
