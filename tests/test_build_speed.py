@@ -20,7 +20,8 @@ TWEET = ('FROM nginx:latest\nCOPY index.html /usr/share/nginx/html\n'
          'CMD ["nginx", "-g", "daemon off;"]\n')
 
 
-def test_existing_nginx_skips_dockerfile_model_and_keeps_runtime(monkeypatch):
+@pytest.mark.parametrize("model_dockerfile", ["", "FROM nginx\nRUN broken-template-rewrite\n"])
+def test_existing_nginx_skips_dockerfile_model_and_keeps_runtime(monkeypatch, model_dockerfile):
     src = SourceTree({"Dockerfile": TWEET.encode(), "index.html": b"hello"})
     brain = StrandsBrain()
     calls = []
@@ -28,7 +29,7 @@ def test_existing_nginx_skips_dockerfile_model_and_keeps_runtime(monkeypatch):
     def run(agent, prompt, model):
         calls.append(model)
         return AnalysisOut(**recommendation(container_port=8080).model_dump(),
-                           dockerfile="FROM nginx\nRUN broken-template-rewrite\n")
+                           dockerfile=model_dockerfile)
     monkeypatch.setattr(brain, "_run", run)
     rec, df = brain.analyze(src, {"tree": src.paths()}, None)
     assert len(calls) == 1
@@ -55,6 +56,11 @@ def test_existing_file_retains_secret_copy_guard():
     df = buildfiles.existing_dockerfile(src, 80)
     with pytest.raises(AgentError, match="비밀"):
         buildfiles.normalize_dockerfile(df.dockerfile, df.container_port)
+
+
+def test_http_https_pair_selects_http_even_if_model_suggests_https():
+    src = SourceTree({"Dockerfile": TWEET.encode()})
+    assert buildfiles.existing_dockerfile(src, 443).container_port == 80
 
 
 def test_reused_dockerfile_retains_project_ignore_and_security_rules(tmp_path):

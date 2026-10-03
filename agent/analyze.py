@@ -74,7 +74,9 @@ def run(payload: dict, brain, store: Store) -> dict:
     files = {}
     if dockerfile is not None:
         ignore = buildfiles.DOCKERIGNORE
-        if src.exists("Dockerfile") and df.dockerfile.replace("\r\n", "\n") == src.read_text("Dockerfile", limit=buildfiles.MAX_DOCKERFILE_CHARS + 1).replace("\r\n", "\n"):
+        original = (src.read_text("Dockerfile", limit=buildfiles.MAX_DOCKERFILE_CHARS + 1)
+                    if src.exists("Dockerfile") else None)
+        if original is not None and df.dockerfile.replace("\r\n", "\n") == original.replace("\r\n", "\n"):
             # Preserve project build-context exclusions when reusing its Dockerfile.
             for path in ("Dockerfile.dockerignore", ".dockerignore"):
                 if src.exists(path):

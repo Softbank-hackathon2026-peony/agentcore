@@ -86,7 +86,7 @@ def existing_dockerfile(src, preferred_port: int):
                 ports.append(port)
     ports = list(dict.fromkeys(ports))
     # The conventional HTTP+HTTPS pair has one clear HTTP entry point.
-    port = preferred_port if preferred_port in ports else (80 if set(ports) == {80, 443} else None)
+    port = 80 if set(ports) == {80, 443} else (preferred_port if preferred_port in ports else None)
     if port is None and len(ports) == 1:
         port = ports[0]
     if port is None:
