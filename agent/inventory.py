@@ -310,10 +310,10 @@ def ranking_labels() -> dict:
     path = VENDOR_DIR / "knowledge" / "ranking.yaml"
     try:
         cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except OSError:
+        return {"criteria": {c["id"]: c.get("label", c["id"]) for c in cfg.get("criteria") or []},
+                "types": {t["id"]: t.get("label", t["id"]) for t in cfg.get("service_types") or []}}
+    except (OSError, yaml.YAMLError, KeyError, TypeError, AttributeError):   # 라벨이 없어도 요약은 만든다
         return {"criteria": {}, "types": {}}
-    return {"criteria": {c["id"]: c.get("label", c["id"]) for c in cfg.get("criteria") or []},
-            "types": {t["id"]: t.get("label", t["id"]) for t in cfg.get("service_types") or []}}
 
 
 def _short(text, n: int = 160) -> str:

@@ -282,7 +282,7 @@ def validate_multi(rec: LLMRecommendation, src: source.SourceTree, scan: dict, d
 def _infrafit_view(reco: dict) -> dict | None:
     """화면용 InfraFit 판단 요약: 유형·기준 순서·1순위 대상. 요약이 없으면 None."""
     rk = reco.get("ranking") or {}
-    if not rk and not reco.get("recommended"):
+    if not rk and not reco.get("recommended") and not reco.get("outcome"):
         return None
     out = {k: rk[k] for k in ("service_type", "label", "coverage", "unprioritized", "criteria_order", "why") if k in rk}
     if (reco.get("recommended") or {}).get("target"):
@@ -303,7 +303,8 @@ def _attach_infrafit(candidates: list[dict], reco: dict) -> None:
     for c in reco.get("top") or []:
         top.setdefault(c.get("target"), c)
     for cand in candidates:
-        c = top.get(cand["target"])
+        target = cost.SAME_PRICE_AS.get(cand["target"], cand["target"])                  # ec2_compose = 같은 EC2 컴퓨트
+        c = top.get(cand["target"]) or top.get(target)
         if c:
             info = {"rank": c.get("rank")}
             if c.get("decided_by"):
