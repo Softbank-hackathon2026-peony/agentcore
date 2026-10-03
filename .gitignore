@@ -9,3 +9,10 @@ work/
 evals/.cache/
 evals/results/
 .tools/
+
+# 커버리지·SonarCloud 스캔 산출물
+.coverage
+coverage.xml
+htmlcov/
+.sonar/
+.scannerwork/
