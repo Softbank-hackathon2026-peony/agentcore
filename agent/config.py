@@ -12,3 +12,9 @@ MAX_ATTEMPTS = int(os.environ.get("PAWPLOY_MAX_ATTEMPTS", "3"))
 MAX_TURNS = int(os.environ.get("PAWPLOY_MAX_TURNS", "12"))
 # InfraFit 인벤토리(별도 프로세스) 시간 제한(초). 0 이하면 인벤토리를 돌리지 않는다.
 INVENTORY_TIMEOUT = int(os.environ.get("PAWPLOY_INVENTORY_TIMEOUT", "60"))
+# analyze 첫 프롬프트에 미리 넣을 핵심 파일 내용 상한(글자). 0 이면 넣지 않고 모델이 도구로 읽는다.
+PRELOAD_CHARS = int(os.environ.get("PAWPLOY_PRELOAD_CHARS", "60000"))
+# Bedrock 프롬프트 캐싱 (턴마다 다시 보내는 앞부분 재사용). 0 이면 끈다.
+PROMPT_CACHE = os.environ.get("PAWPLOY_PROMPT_CACHE", "1") != "0"
+# 모델 자리. bedrock(기본) / file (로컬: 요청·응답을 PAWPLOY_LLM_DIR 의 파일로 주고받음, agent/file_model.py)
+LLM = os.environ.get("PAWPLOY_LLM", "bedrock")

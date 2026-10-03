@@ -56,6 +56,12 @@ class LLMRecommendation(BaseModel):
                                       description="컨테이너가 여러 개일 때만: deploy_units 의 빈 값·개발용 값 보완 (없으면 빈 목록)")
 
 
+class AnalysisOut(LLMRecommendation):
+    """컨테이너 1개: 추천과 Dockerfile 을 한 번의 답으로 (모델 왕복을 하나 줄인다)."""
+    dockerfile: str = Field(default="", description="추천에 맞는 Dockerfile 전체 내용")
+    dockerfile_notes: list[str] = Field(default_factory=list, description="Dockerfile 을 무엇을 근거로 어떻게 만들었는지")
+
+
 class DockerfileOut(BaseModel):
     dockerfile: str = Field(description="Dockerfile 전체 내용")
     container_port: int = Field(ge=1, le=65535)

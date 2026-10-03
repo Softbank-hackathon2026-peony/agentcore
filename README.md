@@ -29,6 +29,17 @@ AWS_PROFILE=peony .venv/Scripts/python scripts/demo.py           # 배포본 실
 0 오늘 커밋 → 1 샘플 앱 analyze (Lambda 추천·근거·1~5순위·비용·Dockerfile) → 2 simple-web-app analyze ("지원 안 됨") → 3 gen_terraform (AWS Lambda + GCP Cloud Run 모듈 동시) → 4 fix_terraform (깨뜨린 모듈 수정).
 녹화된 실제 결과: [examples/demo/](examples/demo/) (10/2 녹화. 10/3 부터 simple-web-app 은 `aws_ec2_compose` 로 지원 — 아래 [여러 컨테이너](#여러-컨테이너-ec2_compose))
 
+### 로컬 실행 (AWS 없이, 모델 답을 파일로)
+
+```bash
+PAWPLOY_LLM=file PAWPLOY_LLM_DIR=.local-llm .venv/bin/python -c "from agent.app import app; app.run(port=8081)"
+curl -X POST localhost:8081/invocations -d '{"mode":"analyze","project_id":"p","source_uri":"<로컬 폴더>"}'
+```
+
+모델을 부를 때마다 `.local-llm/req-<번호>.json`(system·tools·messages)이 생기고, `res-<번호>.json`(`{"tool_calls": [{"name": ..., "input": {...}}]}` 또는 `{"text": ...}`)을 쓰면 그 답으로 진행합니다 (`agent/file_model.py`). 도구 호출·구조화 출력·턴 수는 실제와 같고, 호출마다 `{"pawploy_llm": ..., "cycles": ...}` 로그가 남습니다.
+
+속도 관련 설정: `PAWPLOY_PRELOAD_CHARS`(첫 프롬프트에 미리 넣는 핵심 파일 글자 수, 기본 60000, 0=끔), `PAWPLOY_PROMPT_CACHE`(Bedrock 프롬프트 캐싱, 기본 1).
+
 ## 재시도는 누가 돌리나
 
 에이전트는 **한 번 호출에 한 번** 처리합니다. 실패 → 수정 → 재실행 루프는 **Main Server**가 돌립니다.
