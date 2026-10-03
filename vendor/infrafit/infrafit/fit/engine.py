@@ -230,6 +230,8 @@ class Cell:
     is_current: bool = False
     # 모름이 근거 있는 차원 값(source=detector)에서 나왔는가(가정 값에서 나온 모름은 순위를 내리지 않는다). 출력하지 않는다.
     evidence_unknown: bool = False
+    # 위 모름의 상세: [{rule, dimension, dimension_value, capability, at}]. 범위·컴포넌트는 Recommender 가 붙인다. 출력하지 않는다.
+    evidence_unknowns: list[dict] = field(default_factory=list)
 
     @property
     def result(self) -> str:
@@ -285,9 +287,17 @@ def evaluate(scope: str, kind: str, component_id: str, component: dict | None,
                                    + basis_note(entry)})
             continue
         if state == "unknown":
-            cell.unknown_keys += [k for k, e in refs if e is None]
-            if any(d.get("source") == "detector" for d in hit):
+            missing = [k for k, e in refs if e is None]
+            cell.unknown_keys += missing
+            seen = next((d for d in hit if d.get("source") == "detector"), None)
+            if seen is not None:
                 cell.evidence_unknown = True
+                at = [f"{e['path']}:{e['line']}" if e.get("line") else e["path"]
+                      for e in (seen.get("evidence") or [])[:2]]
+                for k in sorted(set(missing)):
+                    cell.evidence_unknowns.append({
+                        "rule": rule["id"], "dimension": seen["dimension"],
+                        "dimension_value": dim_value(seen.get("value")), "capability": k, "at": at})
             continue
         required = required_spec(rule.get("require"))
         if rule.get("otherwise") == "config" and rule.get("config_from"):

@@ -28,8 +28,12 @@ compute 범위는 워크로드마다 하나다(scopes.app_scopes). 조합은 토
 request_headroom(필요 등급보다 한 단계 위 상한) / scaling / data_safety / config_burden. 모르는 수(셀 + 모르는 비용 구성 요소,
 가정 값에서 나온 것 포함)는 유형 기준 순서에 없고 그 뒤의 동률 깨기다. 능력 값을 모르면 나쁜 쪽. 운영 부담은 출처 있는 값이 없어
 순위에 쓰지 않는다. 출력: ranking(유형·coverage·근거·기준 순서), 후보마다 criteria·decided_by(갈린 기준; unknown_count 또는 name일 수 있다).
-결과(outcome): recommended | no_feasible | static_only(정적 프런트엔드만) | not_deployable(앱·정적 워크로드 없음, 또는
-profile.batch_only: 사람이 실행하는 도구).
+모름 표시: 근거 있는 차원(source=detector)이 요구하는 능력을 플랫폼 능력 표가 모르는 셀이 있으면 후보에 `unknown`
+([{scope, component, rule, dimension, dimension_value, capability, at}], 셀마다 중복 없이)을 붙인다. recommended 는 `unknown` 이
+없는 첫 후보이고, 모든 후보에 있으면 recommended 는 null, outcome 은 unverified 다(값을 지어내 추천하지 않는다).
+순위·decided_by 는 그대로다(확실성 기준이 이런 후보를 이미 뒤로 보낸다). 가정 값에서 나온 모름은 표시하지 않는다.
+결과(outcome): recommended | unverified(확인 못 한 후보만 있음) | no_feasible | static_only(정적 프런트엔드만) |
+not_deployable(앱·정적 워크로드 없음, 또는 profile.batch_only: 사람이 실행하는 도구).
 """
 
 from __future__ import annotations
@@ -104,6 +108,7 @@ class Combo:
     assignment: dict[str, str] = field(default_factory=dict)
     cells: list[dict] = field(default_factory=list)
     evidence_unknown: int = 0                           # 근거 있는 차원에서 나온 모름 셀 수
+    unknowns: list[dict] = field(default_factory=list)  # 그 모름의 상세(Candidate.unknown)
     transforms: list[str] = field(default_factory=list)
     blocked: list[dict] = field(default_factory=list)   # Rejected.reasons 항목
     external: list[str] = field(default_factory=list)   # 현재 BaaS를 그대로 둔 데이터 범위
@@ -168,6 +173,7 @@ class Recommender:
         self.fit_cells = {(c["scope"], c["candidate"]) for c in fit["matrix"]}
         self.cache: dict[tuple, tuple[dict, bool]] = {}
         self.transform_cells: dict[tuple, dict] = {}
+        self.unknown_detail: dict[tuple, list[dict]] = {}
         self.pin_rules = {r["id"] for r in rules if r.get("config_from") in PIN_CONFIG_KEYS}
         # 서비스 유형별 순위: 앱 워크로드(리버스 프록시 제외)의 차원으로 유형 하나를 정한다
         self.workloads = [s for s in self.app if s.workload_kind != "reverse-proxy"]
@@ -180,7 +186,7 @@ class Recommender:
 
     # ----- 셀 -----
     def _cell(self, scope: Scope, cid: str, transformed: bool = False) -> tuple[dict, bool]:
-        """(FitCell, 근거 있는 모름인가). 변형 셀은 transform_fits에 남긴다."""
+        """(FitCell, 근거 있는 모름인가). 변형 셀은 transform_fits에 남긴다. 모름 상세는 unknown_detail 에 둔다."""
         key = (scope.id, cid, transformed)
         if key not in self.cache:
             dims = scope.dims
@@ -189,6 +195,7 @@ class Recommender:
             cell = evaluate(scope.id, scope.kind, cid, self.components.get(cid), dims, self.rules,
                             is_current=cid in scope.current)
             self.cache[key] = (cell.to_dict(), cell.evidence_unknown)
+            self.unknown_detail[key] = cell.evidence_unknowns
         cell, ev = self.cache[key]
         if transformed:
             self.transform_cells[(scope.id, cid)] = cell
@@ -198,7 +205,12 @@ class Recommender:
         cell, ev = self._cell(scope, cid, transformed)
         combo.assignment[scope.id] = cid
         combo.cells.append(cell)
-        combo.evidence_unknown += int(ev and cell["result"] == "unknown")
+        if ev and cell["result"] == "unknown":
+            combo.evidence_unknown += 1
+            for u in self.unknown_detail[(scope.id, cid, transformed)]:
+                item = {"scope": scope.id, "component": cid, **u}
+                if item not in combo.unknowns:
+                    combo.unknowns.append(item)
         return cell
 
     # ----- 비용 -----
@@ -462,7 +474,7 @@ class Recommender:
                                    for s in self.data if s.id in combo.assignment and not s.external)),
             "config_burden": configs + len(used),
         }
-        return {
+        out = {
             "id": "", "rank": 0,
             "topology": combo.topology,
             "assignment": dict(sorted(combo.assignment.items())),
@@ -489,6 +501,9 @@ class Recommender:
             "_cost": (None if unknown_cost else total, len(unknown_cost), total),
             "_name": combo.name,
         }
+        if combo.unknowns:
+            out["unknown"] = list(combo.unknowns)
+        return out
 
     def run(self) -> dict:
         batch = (self.profile or {}).get("batch_only") or {}
@@ -543,7 +558,8 @@ class Recommender:
                                    "matrix": [self.transform_cells[k] for k in sorted(self.transform_cells)]})
         return {
             "candidates": feasible,
-            "recommended": feasible[0]["id"] if feasible else None,
+            # 근거 있는 요구에 대한 능력을 모르는 후보는 추천하지 않는다
+            "recommended": next((c["id"] for c in feasible if not c.get("unknown")), None),
             "rejected": sorted(rejected, key=lambda r: r["id"]),
             # 아래는 MVP에서 계산하지 않는다: 민감도 없음, 시나리오 요약은 0, 관점 없음
             "sensitivity": [],
@@ -561,6 +577,10 @@ class Recommender:
         if batch.get("value"):
             return "not_deployable", {"message": batch.get("reason") or "사람이 실행하는 도구", "current": []}
         if feasible:
+            if all(c.get("unknown") for c in feasible):
+                return "unverified", {
+                    "message": "조건을 만족하는지 확인하지 못한 후보만 남았다",
+                    "unknown_capabilities": sorted({u["capability"] for c in feasible for u in c["unknown"]})}
             return "recommended", None
         if self.app:
             return "no_feasible", None

@@ -288,6 +288,11 @@ def _recommendation_warnings(inv: dict) -> list[str]:
         head = "InfraFit: 정적 사이트만 있어 컴퓨트를 고를 필요가 없습니다 (" + reco.get("outcome_detail", "")[:150] + ")"
     elif reco.get("outcome") == "not_deployable":
         head = "InfraFit: 배포할 서버·정적 사이트가 없습니다 (" + reco.get("outcome_detail", "")[:150] + ")"
+    elif reco.get("outcome") == "unverified":       # 후보는 있으나 모두 근거 있는 요구에 대한 능력을 확인 못 함
+        caps = ", ".join(reco.get("unknown_capabilities") or []) or "?"
+        head = f"InfraFit: 조건 충족을 확인한 후보가 없습니다 (확인 못 한 능력: {caps})"
+        if reco.get("outcome_detail"):
+            head += ". " + reco["outcome_detail"][:150]
     else:
         head = "InfraFit: 조건을 모두 만족하는 컴퓨트 후보가 없습니다"
     rejected = reco.get("rejected") or []

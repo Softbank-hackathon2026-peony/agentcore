@@ -26,7 +26,10 @@ from infrafit.repo import Snapshot, parent_dir
 
 WEB_FRAMEWORKS = ("next", "express", "fastify", "koa", "@nestjs/core", "hono", "fastapi", "flask", "django")
 STATIC_OUTPUT_DIRS = ("dist", "build", "out")  # 정적 프런트엔드 빌드 결과 디렉터리
-PROC_KINDS = {"web": "web", "worker": "worker", "clock": "scheduled", "release": "migration-job"}
+PROC_KINDS = {"web": "web", "worker": "worker", "clock": "scheduled", "beat": "scheduled", "scheduler": "scheduled",
+              "cron": "scheduled", "release": "migration-job"}
+# 표에 없는 Procfile 유형이라도 Celery beat(정기 작업 스케줄러)를 실행하면 정기 작업이다
+CELERY_BEAT = re.compile(r"\bcelery\b(?:\s+(?:--[\w-]+=\S+|-[A-Za-z]\s+\S+|--[\w-]+(?:\s+[^\s-]\S*)?))*\s+beat(?=\s|$)")
 # 워커 프로세스를 뜻하는 토큰 끝(`board.worker`, `jobs/worker.py` 등). `--workers 4`, `uvicorn.workers.UvicornWorker`는 아니다
 WORKER_SUFFIXES = (".worker", "/worker", ":worker", "worker.py", "worker.js", "worker.ts")
 # 진입점 파일이 계속 도는 프로세스라는 근거(무한 루프, 서버·소비자 루프). 없으면 실행하고 끝나는 배치·CLI(batch)
@@ -251,7 +254,7 @@ def _from_code(snap: Snapshot, manifests: Manifests, artifacts: list[ParsedArtif
             found.setdefault(key, info)
     for key, (cmd, rel, line) in sorted(manifests.procfile.items()):
         d, proc = key.split(":", 1)
-        wkind = PROC_KINDS.get(proc)
+        wkind = PROC_KINDS.get(proc) or ("scheduled" if CELERY_BEAT.search(cmd) else None)
         if not wkind or is_test_dir(d):
             continue
         entry = found.setdefault((wkind, d), {})

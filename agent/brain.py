@@ -121,6 +121,8 @@ class StrandsBrain:
             "`inventory.summary.recommendation.ranking` 은 이 앱의 서비스 유형과 비교 기준 순서다. candidates 의 why 는 "
             "그 순서의 기준으로 설명하라. `unverified: true` 후보는 확정적으로 추천하지 말고 warnings 에 확인 필요로 적어라. "
             "1순위가 unverified 면 target 은 그대로 따르되 warnings 에 확인 필요를 적어라. "
+            "recommendation.outcome 이 unverified 면 recommended 가 없다(모든 후보가 능력 확인 필요): target 은 top 1순위를 "
+            "따르고 warnings 에 unknown_capabilities 를 확인 필요로 적어라. "
             "required_secrets 는 inventory 의 external_services.secrets 와 스캔의 env_names 를 모두 보고 정하라.\n\n"
             f"## 스캔 결과\n{json.dumps(scan_view, ensure_ascii=False, indent=1)}\n\n"
             f"## 파일 트리\n" + "\n".join(scan["tree"])

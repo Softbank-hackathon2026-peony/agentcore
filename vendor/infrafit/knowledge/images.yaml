@@ -3,6 +3,10 @@
 #       dev-tool(개발용 도구, 무시).
 # component: 카탈로그 ID(선택). hosting_hint: 함께 쓰인 저장소의 호스팅 후보 카탈로그 ID(선택, 판단은 S2·S3).
 # port: 공식 이미지가 듣는 기본 포트(선택). compose·k8s·접속 URL에서 포트를 못 찾은 저장소 컨테이너에만 쓴다(deploy_units).
+# image: 코드에서만 쓰는 저장소를 deploy_units 컨테이너로 만들 때 쓰는 공식 이미지(선택, 저장소 role 만).
+#        비밀번호 없이는 뜨지 않는 공식 이미지는 image 를 두지 않는다(postgres·mysql·mongo).
+# url_scheme·url_template: 앱 코드가 기본값으로 읽는 접속 주소의 스킴과, 컨테이너 주소를 넣을 형식(선택).
+#        자리표시자는 {scheme} {host} {port} 만.
 images:
   # 관측(메트릭·로그·트레이스) 도구: 알려진 배포처의 이미지만 본다(사용자 이미지 `acme/data-exporter`는 앱이다).
   # 저장소 이름이 들어간 익스포터(`percona/mongodb_exporter` 등)를 먼저 잡도록 맨 앞에 둔다
@@ -19,7 +23,8 @@ images:
   - {match: [mongo, "mongodb*"], role: datastore, component: "ds:unspecified/mongodb/default", port: 27017}
   # 캐시·큐
   - {match: [redis, "redis/redis-stack*", "redis-stack*", redis-cluster, redis-sentinel, valkey, valkey-cluster],
-     role: cache, component: "ca:unspecified/redis/default", port: 6379}
+     role: cache, component: "ca:unspecified/redis/default", port: 6379,
+     image: "redis:7-alpine", url_scheme: [redis, rediss], url_template: "redis://{host}:{port}{path}"}
   - {match: [memcached], role: cache, port: 11211}
   - {match: [rabbitmq], role: queue, port: 5672}
   # 기반 서비스

@@ -274,6 +274,13 @@ components:
           basis: derived
           from: {doc: "capabilities/05-compute-tier1-2.md", line: 928, url: "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-lifecycle.html", quote: "that you keep the instance running, even if the instance remains idle"}
           reasoning: "인스턴스는 유휴여도 계속 실행되므로 VM 안 서버 프로세스가 떠 있다"
+      # 웹소켓: VM 위 Docker Compose 는 앱 포트를 직접 열고 플랫폼 프록시가 없다(정의상/유도)
+      CP.websocket:
+        value: true
+        source:
+          basis: derived
+          from: {doc: "capabilities/05-compute-tier1-2.md", line: 928, url: "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-lifecycle.html", quote: "that you keep the instance running, even if the instance remains idle"}
+          reasoning: "VM 위 Docker Compose 는 앱 컨테이너 포트를 직접 열고 플랫폼 프록시·요청 계층이 없다. 앱 서버가 처리하는 웹소켓 업그레이드를 가로막는 계층이 없어 장시간 연결을 유지한다"
 
   - id: "cp:gcp/compute-engine/docker-compose"
     target: gcp_compute_engine
@@ -320,6 +327,13 @@ components:
           basis: derived
           from: {doc: "post-response-work.md", line: 95, url: "https://docs.cloud.google.com/compute/docs/instances/instance-lifecycle", quote: "You control the lifecycle of your compute instances."}
           reasoning: "VM 수명을 사용자가 정하므로 VM 안 서버 프로세스는 요청과 무관하게 떠 있다"
+      # 웹소켓: VM 위 Docker Compose 는 앱 포트를 직접 열고 플랫폼 프록시가 없다(정의상/유도)
+      CP.websocket:
+        value: true
+        source:
+          basis: derived
+          from: {doc: "post-response-work.md", line: 95, url: "https://docs.cloud.google.com/compute/docs/instances/instance-lifecycle", quote: "You control the lifecycle of your compute instances."}
+          reasoning: "VM 위 Docker Compose 는 앱 컨테이너 포트를 직접 열고 플랫폼 프록시·요청 계층이 없다. 앱 서버가 처리하는 웹소켓 업그레이드를 가로막는 계층이 없어 장시간 연결을 유지한다"
 
   # ---------- 관리형 쿠버네티스(계획 2b) ----------
   - id: "cp:gcp/gke/autopilot"

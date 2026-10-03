@@ -182,6 +182,19 @@ code:
     scope: request-path
     glob: ["**/*.java", "**/*.kt"]
     regex: '\b(?:XSSFWorkbook|SXSSFWorkbook|HSSFWorkbook)\('
+  # A2: 요청 경로의 긴 동기 대기(10초 이상 상수). 변수 인자는 잡지 않는다
+  - id: PD-A2-SLEEP-PY
+    dimension: A2
+    value: "수십 초"
+    scope: request-path
+    glob: ["**/*.py"]
+    regex: '(?:\btime\.|\basyncio\.|(?<![\w.]))sleep\(\s*[1-9]\d+(?:\.\d+)?\s*\)'
+  - id: PD-A2-SLEEP-JS
+    dimension: A2
+    value: "수십 초"
+    scope: request-path
+    glob: ["**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx", "**/*.jsx"]
+    regex: 'Promise\b[^;\n]*\bsetTimeout\([^,]*,\s*[1-9]\d{4,}\s*\)|\bawait\s+(?:new\s+Promise\b[^;\n]*\bsetTimeout\([^,]*,\s*[1-9]\d{4,}\s*\)|(?<![\w.])(?:sleep|delay)\(\s*[1-9]\d{4,}\s*\))|(?<![\w.])(?:sleep|delay)\(\s*[1-9]\d{4,}\s*\)'
   # A3: SSE 응답
   - id: PD-A3-SSE
     dimension: A3
