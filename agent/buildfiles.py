@@ -187,6 +187,28 @@ def _instr_idx(lines: list[str], pattern: re.Pattern) -> list[int]:
     return [s for s, e in _instructions(lines) if pattern.match(_joined(lines, s, e))]
 
 
+# Lambda 는 파일시스템이 읽기 전용(/tmp 만 쓰기)이고 루트가 아니라서, 시작할 때 캐시·PID 폴더를 만드는 웹 서버 이미지는 바로 죽는다
+# (운영 E2E 2026-10-03: nginx:stable-alpine → mkdir /var/cache/nginx/client_temp: Read-only file system)
+_LAMBDA_UNFIT_BASE = re.compile(r"(?:^|/)(nginx|nginx-unprivileged|openresty|httpd|php)(?::|@|$)", re.I)
+
+
+def lambda_unfit_base(text: str | None) -> str | None:
+    """마지막 스테이지 베이스 이미지가 Lambda 에서 못 뜨는 웹 서버 이미지면 그 이미지 이름, 아니면 None.
+    php 는 -apache 변형만 (php-fpm·cli 는 웹 서버를 따로 띄우지 않으므로 여기서 판단하지 않는다)."""
+    if not text:
+        return None
+    lines = text.replace("\r\n", "\n").split("\n")
+    froms = [(s, e) for s, e in _instructions(lines) if _FROM.match(_joined(lines, s, e))]
+    if not froms:
+        return None
+    parts = [p for p in _joined(lines, *froms[-1]).split()[1:] if not p.startswith("--")]
+    image = parts[0] if parts else ""
+    m = _LAMBDA_UNFIT_BASE.search(image)
+    if not m or (m.group(1).lower() == "php" and "apache" not in image.lower()):
+        return None
+    return image
+
+
 def _drop_instr(lines: list[str], pattern: re.Pattern) -> list[str]:
     drop = {k for s, e in _instructions(lines) if pattern.match(_joined(lines, s, e)) for k in range(s, e + 1)}
     return [l for k, l in enumerate(lines) if k not in drop]
