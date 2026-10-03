@@ -56,6 +56,12 @@ Worker의 루트 main.tf가 이미 하는 일 (모듈에서 절대 하지 마라
 - data 소스는 견본에 있는 것만. aws_ssm_parameter 는 AWS 공개 파라미터(name = "/aws/service/...")만 읽는다
 - IAM 정책은 견본의 관리형 정책(ECR 읽기, Lambda 기본 실행)만 붙인다
 - EC2는 credit_specification { cpu_credits = "standard" } 를 반드시 유지한다 (추가 과금 방지)
+- EC2의 기본 이미지 정책은 Pawploy가 제공한 Docker 사전 설치 AMI를 사용하는 것이다.
+  승인된 추천안 또는 견본에 해당 리전·x86_64용 사전 설치 AMI ID가 명시되어 있으면 aws_instance.ami에 그 ID를 그대로 사용하라.
+  이 경우 일반 Amazon Linux AMI 조회로 대체하지 말고, user_data에서 dnf/apt/yum으로 Docker·containerd를 설치하지 마라.
+  Docker는 systemctl enable --now docker로 시작하고, ECR 로그인 → 앱 이미지 pull → 컨테이너 실행만 수행하라.
+  사전 설치 AMI ID가 제공되지 않았다면 ID나 SSM 경로를 지어내거나 일반 AMI에 Docker가 설치돼 있다고 가정하지 마라.
+  이 경우 기존 견본의 AMI·설치 절차를 유지하고 notes에 'Docker 사전 설치 AMI ID 미제공: 기존 부팅 설치 방식 사용'을 명시하라.
 - Cloud Run은 deletion_protection = false, 최대 인스턴스 1개, 메모리 2Gi 이하, 앱 전용 google_service_account(역할 없음)로 실행한다
 - 파일은 main.tf (+ 필요하면 .tftpl). 주석은 한국어로 짧게.
 """
@@ -167,10 +173,14 @@ DOCKERFILE_RUNTIME_RULES = """
   여러 줄 문자열이나 복잡한 따옴표·역슬래시 이스케이프를 넣지 마라.
 - 정적 설정 파일은 RUN에서 생성하며 대상 디렉터리는 mkdir -p로 먼저 만든다.
   줄바꿈은 실제 줄바꿈을 가진 Dockerfile heredoc으로 표현하고 문자 그대로의 \\n과 혼동하지 마라.
+  셸 heredoc은 <<'EOF'처럼 구분자를 인용해서 ${PORT}·$uri·$host가 빌드 중 치환되지 않게 하라.
 - 런타임 환경변수 치환이 필요하면 베이스 이미지의 공식 기능을 우선 사용하라.
-  nginx는 /etc/nginx/templates/default.conf.template에 ${PORT}를 보존해서 저장하고,
-  공식 /docker-entrypoint.sh의 envsubst를 사용한다. nginx 변수 $uri 등을 미리 치환하지 마라.
-  nginx의 CMD는 ["nginx", "-g", "daemon off;"]로 유지한다.
+  공식 nginx 이미지에서는 /etc/nginx/templates/default.conf.template에 ${PORT}를 보존해서 저장하고,
+  상속한 /docker-entrypoint.sh를 유지해서 시작 시 envsubst가 실행되게 하라.
+  PORT만 치환하는 템플릿이면 ENV NGINX_ENVSUBST_FILTER=^PORT$로 범위를 제한하라.
+  다른 환경변수도 필요한 기존 템플릿은 필요한 변수 전체를 포함하도록 필터를 정하라.
+  nginx 변수 $uri·$host·$request_uri는 보존하고, CMD는 ["nginx", "-g", "daemon off;"]로 유지한다.
+  nginx를 직접 설치한 다른 베이스 이미지에는 공식 entrypoint·템플릿 기능이 있다고 가정하지 마라.
 - 별도 실행 스크립트가 꼭 필요하면 이미지 안에 실제 파일로 생성하고 셸 문법과 실행 권한을 확인하라.
   마지막 서버 실행은 exec로 하고 0.0.0.0에서 지정 포트를 리슨하게 하라.
 - 실행하지 않은 이미지를 실행 검증했다고 주장하지 마라.
