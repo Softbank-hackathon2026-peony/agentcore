@@ -1373,6 +1373,47 @@
         "unknown_count": {
           "type": "integer"
         },
+        "unknown": {
+          "type": "array",
+          "description": "근거 있는 요구(detector)에 대해 플랫폼 능력을 모르는 항목. 있으면 recommended 가 될 수 없다",
+          "items": {
+            "type": "object",
+            "properties": {
+              "scope": {
+                "$ref": "#/$defs/ScopeId"
+              },
+              "component": {
+                "$ref": "#/$defs/ComponentId"
+              },
+              "rule": {
+                "type": "string"
+              },
+              "dimension": {
+                "type": "string"
+              },
+              "dimension_value": {},
+              "capability": {
+                "type": "string"
+              },
+              "at": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "scope",
+              "component",
+              "rule",
+              "dimension",
+              "dimension_value",
+              "capability",
+              "at"
+            ]
+          }
+        },
         "ops_burden": {
           "type": "string",
           "enum": [
@@ -2990,9 +3031,10 @@
             "recommended",
             "no_feasible",
             "static_only",
-            "not_deployable"
+            "not_deployable",
+            "unverified"
           ],
-          "description": "recommended: 후보 있음, no_feasible: 앱 범위는 있으나 실현 가능한 후보 없음, static_only: 정적 프런트엔드만 있어 컴퓨트 선택 불필요, not_deployable: 앱·정적 워크로드 없음"
+          "description": "unverified: 후보는 있으나 모두 근거 있는 요구에 대한 능력을 확인하지 못함(recommended 는 null). recommended: 후보 있음, no_feasible: 앱 범위는 있으나 실현 가능한 후보 없음, static_only: 정적 프런트엔드만 있어 컴퓨트 선택 불필요, not_deployable: 앱·정적 워크로드 없음"
         },
         "outcome_detail": {
           "type": [
@@ -3002,6 +3044,12 @@
           "properties": {
             "message": {
               "type": "string"
+            },
+            "unknown_capabilities": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             },
             "current": {
               "type": "array",
@@ -3035,8 +3083,7 @@
           },
           "additionalProperties": false,
           "required": [
-            "message",
-            "current"
+            "message"
           ]
         },
         "ranking": {
@@ -3056,6 +3103,63 @@
         "transform_fits",
         "perspectives",
         "outcome"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "static_only",
+                  "not_deployable"
+                ]
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "required": [
+              "outcome_detail"
+            ],
+            "properties": {
+              "outcome_detail": {
+                "type": "object",
+                "required": [
+                  "message",
+                  "current"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "unverified"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "required": [
+              "outcome_detail"
+            ],
+            "properties": {
+              "outcome_detail": {
+                "type": "object",
+                "required": [
+                  "message",
+                  "unknown_capabilities"
+                ]
+              }
+            }
+          }
+        }
       ]
     },
     "Adjustment": {

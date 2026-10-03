@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 from . import buildfiles, catalog, compose, config, cost, source, units
 from .errors import AgentError
-from .scan import scan as run_scan
+from .scan import STORE_WARNING, scan as run_scan
 from .schemas import LLMRecommendation
 from .storage import Store
 
@@ -24,6 +24,9 @@ SECRET_VALUE = re.compile(r"AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|\bsk-[A-Za-z0-9_\-
 RESERVED_ENV = {"PORT", "AWS_LWA_PORT", "AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
 MULTI_TARGET = "aws_ec2_compose"
 COMPOSE_COMPUTE = "cp:aws/ec2/docker-compose"      # InfraFit capabilities.yaml 의 같은 실행기
+# 웹소켓(연결을 오래 유지)을 쓸 수 없는 대상. catalog.TARGETS 의 limits "WebSocket 불가" 와 같은 기준
+NO_WEBSOCKET = {"aws_lambda"}
+WEBSOCKET_VALUE = "장시간 양방향(웹소켓)"            # InfraFit 차원 A3 의 값
 MAX_CANDIDATES = 5                                 # 화면 규격: 1~5순위
 
 
@@ -123,6 +126,18 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
         notes.append(f"추천 대상 {target}은 지금 배포 불가 → {fallback}로 변경")
         target = fallback
 
+    reco = ((scan.get("inventory") or {}).get("summary") or {}).get("recommendation") or {}
+    ws_at = _websocket_evidence(reco)
+    ws_reason_prefix, ws_swap = "", None
+    if ws_at is not None and target in NO_WEBSOCKET:
+        old, target = target, _websocket_fallback(reco, rec)
+        where = ", ".join(ws_at[:2]) or "코드"
+        warnings.append(f"웹소켓 연결이 필요한데({where}) {catalog.TARGETS[old]['label']} 는 WebSocket 을 지원하지 않아 "
+                        f"{catalog.TARGETS[target]['label']}({target}) 로 바꿨습니다.")
+        notes.append(f"웹소켓을 탐지({where})했는데 추천 대상 {old} 는 WebSocket 불가 → {target} 로 변경")
+        ws_reason_prefix = f"(코드 검사: 웹소켓 때문에 {old} 대신 {target}) "
+        ws_swap = f"코드 검사: 웹소켓 때문에 {catalog.TARGETS[old]['label']} 대신 선택. "
+
     health = _health(rec, notes)
     env, secrets_needed = _env(rec, notes)
     clues = _clues(rec, src, notes)
@@ -133,15 +148,23 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
         if c.target in seen or c.target in catalog.MULTI_CONTAINER:
             continue
         seen.add(c.target)
-        candidates.append(_candidate(c.target, c.fit, c.verdict, c.why, rec.size))
+        verdict, why = c.verdict, c.why
+        if ws_at is not None and c.target in NO_WEBSOCKET:
+            verdict, why = "부적합", "WebSocket 불가 — " + why
+        candidates.append(_candidate(c.target, c.fit, verdict, why, rec.size))
     for tid in catalog.TARGETS:        # LLM이 빠뜨린 대상도 표시 (적합도 없음)
         if tid not in seen and tid not in catalog.MULTI_CONTAINER:
-            candidates.append(_candidate(tid, None, "부적합" if not catalog.is_deployable(tid) else "적합",
-                                         "모델이 평가하지 않음", rec.size))
+            no_ws = ws_at is not None and tid in NO_WEBSOCKET
+            candidates.append(_candidate(tid, None, "부적합" if no_ws or not catalog.is_deployable(tid) else "적합",
+                                         ("WebSocket 불가 — " if no_ws else "") + "모델이 평가하지 않음", rec.size))
+    if ws_swap:                        # 코드가 고른 대상은 1순위, 모델이 매긴 평가(낭비 등)는 이 선택과 맞지 않으니 덮어쓴다
+        i = next(i for i, c in enumerate(candidates) if c["target"] == target)
+        chosen = candidates.pop(i)
+        chosen["verdict"], chosen["why"] = "추천", ws_swap + chosen["why"]
+        candidates.insert(0, chosen)
     candidates = candidates[:MAX_CANDIDATES]
     for i, c in enumerate(candidates, 1):
         c["rank"] = i
-    reco = ((scan.get("inventory") or {}).get("summary") or {}).get("recommendation") or {}
     _attach_infrafit(candidates, reco)
 
     t = catalog.TARGETS[target]
@@ -154,7 +177,7 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
     return {
         # ↓ Terraform Worker가 읽는 필드
         "cloud": t["cloud"], "architecture": t["architecture"], "container_port": rec.container_port,
-        "size": rec.size, "health_path": health, "env": env, "reason": rec.reason,
+        "size": rec.size, "health_path": health, "env": env, "reason": ws_reason_prefix + rec.reason,
         # ↓ 화면·사용자 검토용
         "target": target, "label": t["label"], "summary": rec.summary,
         "required_secrets": sorted(set(secrets_needed)), "permissions": t["permissions"],
@@ -162,6 +185,25 @@ def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tupl
         "supported": supported, "warnings": warnings,
         **_infrafit_field(reco),
     }, notes
+
+
+def _websocket_evidence(reco: dict) -> list[str] | None:
+    """InfraFit 이 웹소켓(A3)을 근거와 함께 탐지했으면 그 근거(file:line) 목록, 아니면 None. 가정값은 탐지가 아니다."""
+    a3 = (reco.get("dimensions") or {}).get("A3") or {}
+    if a3.get("value") != WEBSOCKET_VALUE or a3.get("assumed"):
+        return None
+    return list(a3.get("at") or [])
+
+
+def _websocket_fallback(reco: dict, rec: LLMRecommendation) -> str:
+    """웹소켓을 못 쓰는 대상 대신 고를 배포 가능한 대상: InfraFit 순위 → LLM 후보(적합도순) → aws_ec2."""
+    def ok(t) -> bool:
+        return bool(t) and t not in NO_WEBSOCKET and catalog.is_deployable(t) and t not in catalog.MULTI_CONTAINER
+
+    for c in reco.get("top") or []:
+        if ok(c.get("target")) and not (c.get("mixed") or c.get("unverified") or c.get("worker_limit")):
+            return c["target"]
+    return next((c.target for c in sorted(rec.candidates, key=lambda c: -c.fit) if ok(c.target)), "aws_ec2")
 
 
 def _health(rec: LLMRecommendation, notes: list[str]) -> str:
@@ -212,6 +254,7 @@ def validate_multi(rec: LLMRecommendation, src: source.SourceTree, scan: dict, d
     notes: list[str] = []
     warnings = list(dict.fromkeys([*scan["warnings"], *rec.warnings]))
     u, check_notes, problems = units.check(du, src)
+    warnings = _drop_bundled_stores(warnings, scan, u)
     notes += check_notes
     applied, rejected = units.apply_fixes(u, rec.unit_fixes, src)
     notes += rejected
@@ -279,6 +322,28 @@ def validate_multi(rec: LLMRecommendation, src: source.SourceTree, scan: dict, d
     }, notes
 
 
+SQL_IMAGES = ("postgres", "mysql", "mariadb")
+
+
+def _drop_bundled_stores(warnings: list[str], scan: dict, u: dict) -> list[str]:
+    """스캔의 '외부 데이터베이스/캐시가 필요해 보입니다' 에서 이번 묶음에 컨테이너로 들어간 저장소는 뺀다.
+    저장소 이름은 레지스트리 이미지 이름, 없으면(프로젝트 Dockerfile 로 빌드: build_image) InfraFit 범위 id(ds-postgresql → postgresql)."""
+    names = {str(d.get("image") or "").split("@")[0].split(":")[0].rsplit("/", 1)[-1] for d in u["datastores"]}
+    names |= {str(d.get("datastore") or "").split("-", 1)[-1] for d in u["datastores"] if d.get("datastore")}
+    names -= {""}
+    left = [n for n in scan.get("datastores") or [] if n != "sqlite"
+            and not any(n.startswith(i) or i.startswith(n) for i in names)
+            and not (n == "sql" and any(i.startswith(SQL_IMAGES) for i in names))]
+    out = []
+    for w in warnings:
+        if w.startswith(STORE_WARNING):
+            if not left:
+                continue
+            w = STORE_WARNING + ", ".join(left)
+        out.append(w)
+    return list(dict.fromkeys(out))
+
+
 def _infrafit_view(reco: dict) -> dict | None:
     """화면용 InfraFit 판단 요약: 유형·기준 순서·추천 대상(Worker 상한으로 바꿨으면 그 이유). 요약이 없으면 None."""
     rk = reco.get("ranking") or {}
@@ -289,6 +354,8 @@ def _infrafit_view(reco: dict) -> dict | None:
         out["recommended_target"] = reco["recommended"]["target"]
     if reco.get("outcome"):
         out["outcome"] = reco["outcome"]
+    if reco.get("unknown_capabilities"):              # outcome=unverified: 확인 못 한 플랫폼 능력
+        out["unknown_capabilities"] = reco["unknown_capabilities"]
     if reco.get("worker_override"):                    # recommended_target 이 InfraFit 1순위와 다른 이유
         out["worker_override"] = reco["worker_override"]
     return out
@@ -370,8 +437,10 @@ def _infrafit_compute_warnings(reco: dict, u: dict, inv_summary: dict) -> list[s
             missing.setdefault(eng, d)
     for eng, d in missing.items():
         at = ", ".join(d.get("at") or [])[:80]
-        out.append(f"코드가 {eng} 를 쓰는데({at}) 이번 배포 묶음에 {eng} 컨테이너가 없습니다 (compose 에 없는 저장소는 "
-                   f"띄우지 않음). 접속 주소를 환경변수로 따로 넣지 않으면 앱이 localhost 로 접속하다 실패합니다. "
+        # InfraFit 은 compose·k8s 가 있으면 거기 적힌 서비스만 쓰고, 없을 때만 비밀번호 없이 뜨는 저장소(redis 등)를 컨테이너로 만든다
+        out.append(f"코드가 {eng} 를 쓰는데({at}) 이번 배포 묶음에 {eng} 컨테이너가 없습니다 (compose 가 있으면 거기 적힌 "
+                   f"서비스만, 없으면 비밀번호 없이 뜨는 저장소만 컨테이너로 만듦). 접속 주소를 환경변수로 따로 넣지 않으면 "
+                   f"앱이 localhost 로 접속하다 실패합니다. "
                    f"docker-compose.yml 에 {eng} 서비스를 추가하고 다시 분석하세요.")
     if compute and compute != COMPOSE_COMPUTE:
         out.append(f"InfraFit 1순위 컴퓨트는 {rec.get('target') or '?'}({compute})지만, 컨테이너 {count}개를 그대로 함께 "

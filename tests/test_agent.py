@@ -559,12 +559,85 @@ def test_infrafit_ranking_reaches_analyze_response(tmp_path):
     assert rec["infrafit"]["service_type"] == "realtime"
     assert rec["infrafit"]["criteria_order"][:2] == ["certainty", "always_on"]
     assert rec["infrafit"]["recommended_target"] != "aws_lambda"      # 웹소켓 능력 모름 → 1순위 아님 (QA 3)
-    # aws_ec2 는 InfraFit 6순위라 요약 top(5)에 없다 → infrafit 필드 없음. top 안의 대상(gcp_cloud_run, 3순위)으로 확인
     cr = next(c for c in rec["candidates"] if c["target"] == "gcp_cloud_run")
     assert cr["infrafit"]["rank"] >= 1 and cr["infrafit"]["decided_by"]["criterion"] == "certainty"
     assert "monthly_baseline_usd" not in cr["infrafit"]                 # 비용은 화면 cost 하나만 (PR #5)
-    assert "infrafit" not in next(c for c in rec["candidates"] if c["target"] == "aws_ec2")
+    # InfraFit ed648cc(029e195 에 포함): VM docker-compose 는 CP.websocket 유도값이 생겨 웹소켓 능력이 확인된다 →
+    # aws_ec2 가 top(5) 안으로 올라와 infrafit 필드가 붙고 unverified 가 아니다 (예전: 6순위라 필드 없음)
+    ec2 = next(c for c in rec["candidates"] if c["target"] == "aws_ec2")["infrafit"]
+    assert 1 <= ec2["rank"] <= 5 and "unverified" not in ec2 and "worker_limit" not in ec2
     assert any("실시간 유형으로 판단" in w for w in rec["warnings"])
+
+
+def _analyze_ws(tmp_path, source_uri, target):
+    out = handle({"mode": "analyze", "project_id": "prj_ws", "source_uri": source_uri},
+                 brain=FakeBrain(rec=recommendation(target=target)), store=LocalStore(str(tmp_path)))
+    return out["recommendation"]
+
+
+def test_detected_websocket_replaces_lambda_with_next_deployable(tmp_path):
+    rec = _analyze_ws(tmp_path, SOCKETIO, "aws_lambda")
+    assert rec["target"] == "aws_ec2" and rec["architecture"] == "ec2"
+    assert any("WebSocket" in w and "server.js:6" in w for w in rec["warnings"])
+    assert rec["reason"].startswith("(코드 검사: 웹소켓 때문에 aws_lambda 대신 aws_ec2)")
+    lam = next(c for c in rec["candidates"] if c["target"] == "aws_lambda")
+    assert lam["verdict"] == "부적합" and lam["why"].startswith("WebSocket 불가")
+    first = rec["candidates"][0]
+    assert first["target"] == "aws_ec2" and first["rank"] == 1 and first["verdict"] == "추천"
+    assert first["why"].startswith("코드 검사: 웹소켓 때문에 AWS Lambda 대신 선택. ")
+
+
+def test_no_websocket_keeps_lambda(tmp_path):
+    rec = _analyze_ws(tmp_path, SAMPLE, "aws_lambda")
+    assert rec["target"] == "aws_lambda"
+    assert not any("WebSocket" in w for w in rec["warnings"])
+    assert not rec["reason"].startswith("(코드 검사")
+
+
+def test_detected_websocket_leaves_cloud_run_alone(tmp_path):
+    rec = _analyze_ws(tmp_path, SOCKETIO, "gcp_cloud_run")
+    assert rec["target"] == "gcp_cloud_run"
+    assert not any("웹소켓 연결이 필요한데" in w for w in rec["warnings"])
+
+
+def test_websocket_evidence_needs_confirmed_a3_row():
+    from agent import analyze as an
+    ws = "장시간 양방향(웹소켓)"
+    assert an._websocket_evidence({"dimensions": {"A3": {"value": ws, "at": ["a.js:1", "b.js:2", "c.js:3"]}}}) == ["a.js:1", "b.js:2", "c.js:3"]
+    assert an._websocket_evidence({"dimensions": {"A3": {"value": ws, "assumed": True, "why": "가정"}}}) is None
+    assert an._websocket_evidence({"dimensions": {"A3": {"value": "단발 요청", "at": ["a.js:1"]}}}) is None
+    assert an._websocket_evidence({}) is None
+
+
+def test_websocket_gate_handles_candidates_the_model_did_not_list(tmp_path):
+    from agent.schemas import Candidate
+    only_ec2_fit = [Candidate(target="gcp_cloud_run", fit=50, verdict="적합", why="x")]
+    out = handle({"mode": "analyze", "project_id": "prj_ws", "source_uri": SOCKETIO},
+                 brain=FakeBrain(rec=recommendation(target="aws_lambda", candidates=only_ec2_fit)),
+                 store=LocalStore(str(tmp_path)))
+    cands = out["recommendation"]["candidates"]
+    assert cands[0]["target"] == "aws_ec2" and cands[0]["rank"] == 1 and cands[0]["verdict"] == "추천"
+    assert cands[0]["why"].endswith("모델이 평가하지 않음")
+    lam = next((c for c in cands if c["target"] == "aws_lambda"), None)       # 5개 안에 들면 부적합
+    assert lam is None or (lam["verdict"] == "부적합" and lam["why"] == "WebSocket 불가 — 모델이 평가하지 않음")
+
+
+def test_websocket_fallback_order():
+    from agent import analyze as an
+    from agent.schemas import Candidate
+    llm = recommendation(candidates=[Candidate(target="aws_lambda", fit=95, verdict="추천", why="-"),
+                                     Candidate(target="aws_ec2_compose", fit=90, verdict="적합", why="-"),
+                                     Candidate(target="aws_ecs_fargate", fit=85, verdict="적합", why="-"),
+                                     Candidate(target="gcp_cloud_run", fit=60, verdict="적합", why="-"),
+                                     Candidate(target="aws_ec2", fit=40, verdict="적합", why="-")])
+    top = [{"target": "aws_lambda"}, {"target": "aws_ec2", "mixed": True}, {"target": "aws_ec2", "unverified": True},
+           {"target": "gcp_cloud_run", "worker_limit": "60초"}, {"target": "gcp_gke"},
+           {"target": "gcp_cloud_run"}]
+    assert an._websocket_fallback({"top": top}, llm) == "gcp_cloud_run"          # (a) 걸러지는 항목 뒤 첫 후보 (gke 는 배포 불가)
+    assert an._websocket_fallback({}, llm) == "gcp_cloud_run"                    # (b) LLM 후보: Lambda·compose·배포 불가 fargate 제외
+    assert an._websocket_fallback({"top": [{"target": "aws_lambda"}]}, llm) == "gcp_cloud_run"
+    nothing = recommendation(candidates=[Candidate(target="aws_lambda", fit=90, verdict="추천", why="-")])
+    assert an._websocket_fallback({}, nothing) == "aws_ec2"                      # (c)
 
 
 def test_attach_infrafit_skips_mixed_and_aliases_ec2_once():
@@ -700,6 +773,47 @@ def test_inventory_outcome_detail_is_text():
     block = inventory.recommendation_summary({"dimensions": []}, {"matrix": []}, reco)
     assert block["outcome"] == "static_only"
     assert block["outcome_detail"] == "정적 사이트 / 현재: static hosting (vercel.json)"
+
+
+def test_candidate_unknown_marks_unverified_with_capabilities():
+    """InfraFit 029e195: 근거 있는 요구에 대한 능력을 모르는 후보에 unknown 이 붙는다 → unverified + 능력 이름 (최대 3)."""
+    def u(cap, scope="w-app"):
+        return {"scope": scope, "component": "cp:aws/lambda/function-url", "rule": "R", "dimension": "A3",
+                "dimension_value": "장시간 양방향(웹소켓)", "capability": cap, "at": ["app.py:3"]}
+    reco = {"recommended": "C2", "outcome": "recommended", "candidates": [
+        {"id": "C1", "rank": 1, "assignment": {"w-app": "cp:aws/lambda/function-url"},
+         "unknown": [u("CP.websocket"), u("CP.websocket", "w-worker"), u("CP.a"), u("CP.b"), u("CP.c")]},
+        {"id": "C2", "rank": 2, "assignment": {"w-app": "cp:aws/ec2/docker-compose"}}]}
+    block = inventory.recommendation_summary({"dimensions": []}, {"matrix": []}, reco)
+    first, second = block["top"]
+    assert first["unverified"] is True and first["unknown_capabilities"] == ["CP.websocket", "CP.a", "CP.b"]
+    assert "unverified" not in second and "unknown_capabilities" not in second
+    assert block["recommended"]["id"] == "C2" and "unknown_capabilities" not in block
+
+
+def test_unverified_outcome_summary_and_warning():
+    """모든 후보가 확인 못 한 능력을 가지면 InfraFit 은 recommended=null, outcome=unverified."""
+    unk = [{"scope": "w-app", "component": "cp:aws/lambda/function-url", "rule": "R", "dimension": "A3",
+            "dimension_value": "x", "capability": "CP.websocket", "at": []}]
+    reco = {"recommended": None, "outcome": "unverified",
+            "outcome_detail": {"message": "조건을 만족하는지 확인하지 못한 후보만 남았다",
+                               "unknown_capabilities": ["CP.websocket", "CP.long_poll"]},
+            "candidates": [{"id": "C1", "rank": 1, "assignment": {"w-app": "cp:aws/lambda/function-url"},
+                            "unknown": unk}]}
+    block = inventory.recommendation_summary({"dimensions": []}, {"matrix": []}, reco)
+    assert block["recommended"] is None and block["outcome"] == "unverified"
+    assert block["outcome_detail"] == "조건을 만족하는지 확인하지 못한 후보만 남았다"
+    assert block["unknown_capabilities"] == ["CP.websocket", "CP.long_poll"]     # 별도 키 (outcome_detail 은 문장만)
+    w = _reco_warning(block)
+    # InfraFit 기본 message 는 앞 문장과 같은 말이라 붙이지 않는다
+    assert w == "InfraFit: 조건 충족을 확인한 후보가 없습니다 (확인 못 한 능력: CP.websocket, CP.long_poll)."
+    assert "조건을 모두 만족하는 컴퓨트 후보가 없습니다" not in w
+    w = _reco_warning({**block, "outcome_detail": "다른 설명"})
+    assert w == "InfraFit: 조건 충족을 확인한 후보가 없습니다 (확인 못 한 능력: CP.websocket, CP.long_poll). 다른 설명."
+    from agent import analyze as an
+    view = an._infrafit_view(block)
+    assert view["outcome"] == "unverified" and view["unknown_capabilities"] == ["CP.websocket", "CP.long_poll"]
+    assert "recommended_target" not in view
 
 
 def test_example_buildspecs_match_templates():

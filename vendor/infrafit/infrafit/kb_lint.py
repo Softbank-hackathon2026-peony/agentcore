@@ -13,7 +13,9 @@ ROLES = {"primary-db", "cache", "session", "queue", "scheduler", "realtime", "fi
 STATUSES = {"confirmed", "candidate"}
 ARTIFACTS = {"dockerfile", "k8s", "terraform", "hop"}
 IMAGE_ROLES = {"reverse-proxy", "datastore", "cache", "queue", "infra", "dev-tool"}
-IMAGE_KEYS = {"match", "role", "component", "hosting_hint", "port"}
+IMAGE_KEYS = {"match", "role", "component", "hosting_hint", "port", "image", "url_scheme", "url_template"}
+IMAGE_REF = re.compile(r"^[a-z0-9][a-z0-9._/-]*:[A-Za-z0-9._-]+$")
+URL_FIELDS = re.compile(r"\{(\w+)\}")
 # 이미지 role → component가 가져야 하는 family(infra·dev-tool은 정하지 않는다)
 IMAGE_ROLE_FAMILIES = {"datastore": "ds", "cache": "ca", "queue": "qu", "reverse-proxy": "nw"}
 
@@ -152,6 +154,18 @@ def _lint_images(entries: list[dict] | None = None) -> list[str]:
         if "port" in e and (not isinstance(e["port"], int) or isinstance(e["port"], bool)
                             or not 0 < e["port"] < 65536):
             issues.append(f"{name}: port는 1~65535 정수여야 함 {e['port']!r}")
+        if "image" in e:
+            if not isinstance(e["image"], str) or not IMAGE_REF.match(e["image"]):
+                issues.append(f"{name}: image 는 태그가 있는 공식 이미지여야 함 {e.get('image')!r}")
+            if e.get("role") not in ("datastore", "cache", "queue"):
+                issues.append(f"{name}: image 는 저장소 role(datastore·cache·queue)에만 둔다 (role {e.get('role')})")
+        if "url_scheme" in e and not (isinstance(e["url_scheme"], list) and e["url_scheme"]
+                                      and all(isinstance(x, str) and x.isalnum() for x in e["url_scheme"])):
+            issues.append(f"{name}: url_scheme 은 영숫자 문자열 목록")
+        if "url_template" in e:
+            fields = set(URL_FIELDS.findall(str(e["url_template"])))
+            if not fields <= {"scheme", "host", "port", "path"} or "url_scheme" not in e:
+                issues.append(f"{name}: url_template 자리표시자는 scheme·host·port·path 만, url_scheme 이 필요함")
         family = IMAGE_ROLE_FAMILIES.get(e.get("role"))
         if family and isinstance(e.get("component"), str) and e["component"].split(":")[0] != family:
             issues.append(f"{name}: role {e['role']}의 component family는 {family}여야 함 {e['component']}")

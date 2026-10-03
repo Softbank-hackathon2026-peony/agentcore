@@ -23,6 +23,7 @@ PY_FRAMEWORKS = {"flask": "flask", "fastapi": "fastapi", "django": "django", "st
 JS_FRAMEWORKS = {"express": "express", "next": "nextjs", "@nestjs/core": "nestjs", "fastify": "fastify",
                  "koa": "koa", "hono": "hono", "nuxt": "nuxt", "vite": "vite", "react": "react",
                  "vue": "vue", "svelte": "svelte", "socket.io": "socket.io", "ws": "ws"}
+STORE_WARNING = "외부 데이터베이스/캐시가 필요해 보입니다: "   # 여러 컨테이너면 analyze 가 묶음에 든 저장소를 뺀다
 DATASTORES = {"sqlite": "sqlite", "sqlite3": "sqlite", "psycopg": "postgres", "psycopg2": "postgres",
               "psycopg2-binary": "postgres", "asyncpg": "postgres", "pg": "postgres", "mysql": "mysql",
               "mysql2": "mysql", "pymysql": "mysql", "redis": "redis", "ioredis": "redis",
@@ -163,7 +164,7 @@ def scan(src: SourceTree, inventory: bool = True) -> dict:
     if k8s:
         warnings.append("Kubernetes 매니페스트가 있습니다. 쿠버네티스로 배포하지는 않고 컨테이너 구성만 참고합니다.")
     if datastores and datastores != ["sqlite"]:
-        warnings.append(f"외부 데이터베이스/캐시가 필요해 보입니다: {', '.join(datastores)}")
+        warnings.append(STORE_WARNING + ", ".join(datastores))
     if secrets_present:
         warnings.append(f"비밀 파일이 포함돼 있습니다 (내용은 읽지 않음): {', '.join(secrets_present[:5])}")
     suspicious = _suspicious_instructions(src, paths)
@@ -240,6 +241,7 @@ def _suspicious_instructions(src: SourceTree, paths: list[str], limit: int = 10)
     return found
 
 
+UNVERIFIED_DEFAULT = "조건을 만족하는지 확인하지 못한 후보만 남았다"   # InfraFit recommend.py 의 unverified 기본 message
 TIE_LABELS = {"name": "동률 (이름순)", "unknown_count": "동률 (모름 수)"}   # ranking.yaml 기준이 아닌 마지막 비교
 
 
@@ -288,6 +290,11 @@ def _recommendation_warnings(inv: dict) -> list[str]:
         head = "InfraFit: 정적 사이트만 있어 컴퓨트를 고를 필요가 없습니다 (" + reco.get("outcome_detail", "")[:150] + ")"
     elif reco.get("outcome") == "not_deployable":
         head = "InfraFit: 배포할 서버·정적 사이트가 없습니다 (" + reco.get("outcome_detail", "")[:150] + ")"
+    elif reco.get("outcome") == "unverified":       # 후보는 있으나 모두 근거 있는 요구에 대한 능력을 확인 못 함
+        caps = ", ".join(reco.get("unknown_capabilities") or []) or "?"
+        head = f"InfraFit: 조건 충족을 확인한 후보가 없습니다 (확인 못 한 능력: {caps})"
+        if reco.get("outcome_detail") and reco["outcome_detail"] != UNVERIFIED_DEFAULT:   # 기본 문장은 위와 같은 말
+            head += ". " + reco["outcome_detail"][:150]
     else:
         head = "InfraFit: 조건을 모두 만족하는 컴퓨트 후보가 없습니다"
     rejected = reco.get("rejected") or []

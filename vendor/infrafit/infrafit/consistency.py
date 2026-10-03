@@ -277,11 +277,17 @@ def check_s4(rec: dict, fit: dict, inventory: dict, profile: dict | None,
         for t in cand["transforms"]:
             if t not in known_tf:
                 issues.append(f"candidate {cand['id']}: unknown transform {t}")
+    by_id = {c["id"]: c for c in rec["candidates"]}
     if rec["recommended"] is None:
-        if ids:
+        if ids and rec["outcome"] != "unverified":
             issues.append("recommended is null although candidates exist")
     elif rec["recommended"] not in ids:
         issues.append(f"recommended {rec['recommended']} is not a candidate")
+    elif by_id[rec["recommended"]].get("unknown"):
+        issues.append(f"recommended {rec['recommended']} has unknown capabilities for detected requirements")
+    if rec["outcome"] == "unverified":
+        if rec["recommended"] is not None or not ids or not all(c.get("unknown") for c in by_id.values()):
+            issues.append("outcome unverified requires no recommended and unknown on every candidate")
     if ((profile or {}).get("batch_only") or {}).get("value") and (ids or rec["outcome"] != "not_deployable"):
         issues.append("profile.batch_only is true but recommendation is not not_deployable without candidates")
     return sorted(set(issues))
