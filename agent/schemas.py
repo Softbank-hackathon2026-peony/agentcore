@@ -86,6 +86,19 @@ class TerraformFix(BaseModel):
     changes: list[str] = Field(default_factory=list)
 
 
+class TerraformEdit(BaseModel):
+    name: str = Field(description="현재 모듈에 있는 파일 이름")
+    old: str = Field(min_length=1, description="현재 파일에서 정확히 한 번 나타나는 교체할 원문. 공백·줄바꿈도 그대로")
+    new: str = Field(description="교체할 코드. 주석·불필요 변경 금지")
+
+
+class TerraformPatch(BaseModel):
+    fixable: bool
+    cause: str = Field(description="실패 원인 한두 문장")
+    edits: list[TerraformEdit] = Field(default_factory=list, description="최소 수정만. 파일 추가·삭제 금지. fixable=false면 빈 목록")
+    changes: list[str] = Field(default_factory=list)
+
+
 class DockerfileFix(BaseModel):
     fixable: bool = Field(description="Dockerfile 수정으로 고칠 수 있는 에러면 true")
     cause: str = Field(description="빌드 실패 원인 한두 문장")
