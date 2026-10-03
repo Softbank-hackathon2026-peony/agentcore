@@ -45,27 +45,27 @@ def generated_name(image_id: str) -> str:
 
 def normalize_dockerfile(text: str, port: int | None, lambda_adapter: bool = True) -> tuple[str, list[str]]:
     """규칙을 강제한 Dockerfile과, 코드가 고친 내용 목록을 돌려준다.
-    여러 컨테이너(ec2_compose) 이미지는 Lambda 에서 돌지 않으므로 lambda_adapter=False, 포트를 모르면 port=None."""
+    여러 컨테이너(ec2_compose) 이미지는 Lambda 에서 돌지 않으므로 lambda_adapter=False, 포트를 모르면 port=None.
+    명령 줄만 본다: \\ 로 이어진 줄과 heredoc 본문(RUN cat <<EOF ... EOF) 안의 `from x import y` 같은 줄은 명령이 아니다."""
     if not text or not text.strip():
         raise AgentError("dockerfile_invalid", "Dockerfile이 비어 있습니다")
     if len(text) > MAX_DOCKERFILE_CHARS:
         raise AgentError("dockerfile_invalid", "Dockerfile이 너무 깁니다")
     text = text.replace("\r\n", "\n").strip("\n") + "\n"
     lines = text.split("\n")
-    from_idx = [i for i, l in enumerate(lines) if _FROM.match(l)]
-    if not from_idx:
+    if not _instr_idx(lines, _FROM):
         raise AgentError("dockerfile_invalid", "FROM 이 없습니다")
     fixes: list[str] = []
 
-    for l in lines:
-        m = _SECRET_COPY.match(l)
+    for start, end in _instructions(lines):
+        m = _SECRET_COPY.match(_joined(lines, start, end))
         if m and _mentions_secret(m.group(2)):
-            raise AgentError("dockerfile_unsafe", f"비밀 파일을 이미지에 복사하는 줄이 있습니다: {l.strip()}")
+            raise AgentError("dockerfile_unsafe", f"비밀 파일을 이미지에 복사하는 줄이 있습니다: {lines[start].strip()}")
 
     # Lambda Web Adapter: 마지막 스테이지에 LWA_LINE 딱 하나. LLM 이 쓴 어댑터 COPY 는 이름·버전이 틀릴 수 있어서
     # (예: 없는 이미지 aws-lambda-web-adapter:0.8.4 가 정상 줄과 같이 들어가 검사를 통과함) 정확히 그 한 줄이 아니면 전부 지우고 다시 넣는다
     lines, found = _strip_lambda_adapter(lines)
-    last = [i for i, l in enumerate(lines) if _FROM.match(l)][-1]
+    last = _instr_idx(lines, _FROM)[-1]
     if lambda_adapter:
         lines.insert(last + 1, LWA_LINE)
         if found != [(LWA_LINE, True)]:
@@ -78,14 +78,13 @@ def normalize_dockerfile(text: str, port: int | None, lambda_adapter: bool = Tru
     if port is None:
         return "\n".join(lines).strip("\n") + "\n", fixes
 
-    # PORT / EXPOSE
-    body = "\n".join(lines)
-    if not re.search(rf"^\s*ENV\s+PORT[= ]{port}\b", body, re.M | re.I):
-        lines = [l for l in lines if not re.match(r"^\s*ENV\s+PORT[= ]", l, re.I)]
+    # PORT / EXPOSE (명령 줄만 보고, 명령 줄만 지운다)
+    if not _instr_idx(lines, re.compile(rf"^\s*ENV\s+PORT[= ]{port}\b", re.I)):
+        lines = _drop_instr(lines, re.compile(r"^\s*ENV\s+PORT[= ]", re.I))
         lines.insert(_insert_pos(lines), f"ENV PORT={port}")
         fixes.append(f"ENV PORT={port} 로 맞춤")
-    if not re.search(rf"^\s*EXPOSE\s+{port}\b", "\n".join(lines), re.M | re.I):
-        lines = [l for l in lines if not re.match(r"^\s*EXPOSE\s+", l, re.I)]
+    if not _instr_idx(lines, re.compile(rf"^\s*EXPOSE\s+{port}\b", re.I)):
+        lines = _drop_instr(lines, re.compile(r"^\s*EXPOSE\s+", re.I))
         lines.insert(_insert_pos(lines), f"EXPOSE {port}")
         fixes.append(f"EXPOSE {port} 로 맞춤")
 
@@ -93,32 +92,71 @@ def normalize_dockerfile(text: str, port: int | None, lambda_adapter: bool = Tru
 
 
 _LWA_REF = re.compile(r"lambda-(web-)?adapter", re.I)
+_HEREDOC = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
+
+
+def _instructions(lines: list[str]) -> list[tuple[int, int]]:
+    """명령마다 (첫 줄, 마지막 줄). \\ 로 이어진 줄과 heredoc 본문·끝 표시는 그 명령에 포함된다.
+    빈 줄과 주석은 명령이 아니다."""
+    out, i = [], 0
+    while i < len(lines):
+        s = lines[i].strip()
+        if not s or s.startswith("#"):
+            i += 1
+            continue
+        start, pending = i, []
+        while True:
+            pending += [m.group(3) for m in _HEREDOC.finditer(lines[i])]
+            if lines[i].rstrip().endswith("\\") and i + 1 < len(lines):
+                i += 1
+                continue
+            break
+        for delim in pending:                       # heredoc 본문은 끝 표시 줄까지 통째로 이 명령
+            i += 1
+            while i < len(lines) and lines[i].strip() != delim:
+                i += 1
+        out.append((start, min(i, len(lines) - 1)))
+        i += 1
+    return out
+
+
+def _joined(lines: list[str], start: int, end: int) -> str:
+    """\\ 로 이어진 명령을 한 줄로 (heredoc 본문은 빼고 명령 줄들만)."""
+    parts = [lines[start]]
+    k = start
+    while lines[k].rstrip().endswith("\\") and k < end:
+        k += 1
+        parts.append(lines[k])
+    return " ".join(p.strip().rstrip("\\").strip() for p in parts)
+
+
+def _instr_idx(lines: list[str], pattern: re.Pattern) -> list[int]:
+    """pattern 에 맞는 명령의 첫 줄 번호들."""
+    return [s for s, e in _instructions(lines) if pattern.match(_joined(lines, s, e))]
+
+
+def _drop_instr(lines: list[str], pattern: re.Pattern) -> list[str]:
+    drop = {k for s, e in _instructions(lines) if pattern.match(_joined(lines, s, e)) for k in range(s, e + 1)}
+    return [l for k, l in enumerate(lines) if k not in drop]
 
 
 def _strip_lambda_adapter(lines: list[str]) -> tuple[list[str], list[tuple[str, bool]]]:
     """Lambda Web Adapter 를 가져오는 COPY 명령(\\ 로 이어진 줄 포함)을 모든 스테이지에서 지운다.
     돌려주는 found = [(한 줄로 합친 명령, 마지막 스테이지였는지)]."""
-    last = [i for i, l in enumerate(lines) if _FROM.match(l)][-1]
-    out, found, i = [], [], 0
-    while i < len(lines):
-        j = i
-        while lines[j].rstrip().endswith("\\") and j + 1 < len(lines):
-            j += 1
-        instr = " ".join(l.strip().rstrip("\\").strip() for l in lines[i:j + 1])
+    last = _instr_idx(lines, _FROM)[-1]
+    found, drop = [], set()
+    for s, e in _instructions(lines):
+        instr = _joined(lines, s, e)
         if re.match(r"^COPY\b", instr, re.I) and _LWA_REF.search(instr):
-            found.append((" ".join(instr.split()), i > last))
-        else:
-            out.extend(lines[i:j + 1])
-        i = j + 1
-    return out, found
+            found.append((" ".join(instr.split()), s > last))
+            drop.update(range(s, e + 1))
+    return [l for k, l in enumerate(lines) if k not in drop], found
 
 
 def _insert_pos(lines: list[str]) -> int:
-    """마지막 CMD/ENTRYPOINT 바로 앞 (없으면 맨 끝)."""
-    for i in range(len(lines) - 1, -1, -1):
-        if re.match(r"^\s*(CMD|ENTRYPOINT)\b", lines[i], re.I):
-            return i
-    return len(lines)
+    """마지막 CMD/ENTRYPOINT 명령 바로 앞 (없으면 맨 끝)."""
+    idx = _instr_idx(lines, re.compile(r"^\s*(CMD|ENTRYPOINT)\b", re.I))
+    return idx[-1] if idx else len(lines)
 
 
 def _mentions_secret(args: str) -> bool:

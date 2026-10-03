@@ -48,14 +48,31 @@ def run(payload: dict, brain, store: Store) -> dict:
 
     recommendation, notes = validate(rec, src, scan)
     port = recommendation["container_port"]
-    dockerfile, fixes = buildfiles.normalize_dockerfile(df.dockerfile, port)
+    dockerfile, fixes = None, []
+    if no_server_evidence(scan):
+        # 모델이 HTTP 래퍼를 지어내 CLI 를 공개 엔드포인트로 만들던 문제 (QA A7a). 웹 서버 근거가 하나도 없으면 배포하지 않는다
+        recommendation["supported"] = False
+        recommendation["warnings"].append(NO_SERVER_WARNING)
+        notes.append("웹 서버 근거가 없어 supported=false, 빌드 파일을 만들지 않음")
+    else:
+        try:
+            dockerfile, fixes = buildfiles.normalize_dockerfile(df.dockerfile, port)
+        except AgentError as e:
+            if e.code != "dockerfile_invalid":
+                raise
+            # 분석 결과까지 버리지 않는다 (README 만 있는 저장소에서 analyze 전체가 error 로 끝나던 문제, QA A7b)
+            recommendation["supported"] = False
+            recommendation["warnings"].append(f"Dockerfile 을 만들지 못해 배포할 수 없습니다: {e.message}")
+            notes.append(f"Dockerfile 정규화 실패: {e.message}")
 
-    files = {buildfiles.DOCKERFILE_NAME: dockerfile, "dockerignore": buildfiles.DOCKERIGNORE,
-             "buildspec.yml": buildfiles.buildspec()}
     build_prefix = f"projects/{project_id}/build/{analysis_id}/attempt-1/"
-    for name, text in files.items():
-        store.put_text(build_prefix + name, text)
-    recommendation["dockerfile_notes"] = list(df.notes) + fixes
+    files = {}
+    if dockerfile is not None:
+        files = {buildfiles.DOCKERFILE_NAME: dockerfile, "dockerignore": buildfiles.DOCKERIGNORE,
+                 "buildspec.yml": buildfiles.buildspec()}
+        for name, text in files.items():
+            store.put_text(build_prefix + name, text)
+    recommendation["dockerfile_notes"] = (list(df.notes) + fixes) if dockerfile is not None else []
     recommendation.update({"project_id": project_id, "analysis_id": analysis_id,
                            "commit_sha": payload.get("commit_sha"), "model_id": config.MODEL_ID,
                            "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")})
@@ -64,10 +81,29 @@ def run(payload: dict, brain, store: Store) -> dict:
     return {
         "status": "ok", "mode": "analyze", "project_id": project_id, "analysis_id": analysis_id,
         "recommendation": recommendation, "recommendation_uri": rec_uri,
-        "build_files": {"attempt": 1, "uri_prefix": store.prefix_uri(build_prefix),
-                        "dockerfile": dockerfile, "buildspec": files["buildspec.yml"]},
+        "build_files": ({"attempt": 1, "uri_prefix": store.prefix_uri(build_prefix),
+                         "dockerfile": dockerfile, "buildspec": files["buildspec.yml"]} if files else None),
         "validation_notes": notes,
     }
+
+
+NO_SERVER_WARNING = ("HTTP 요청을 받는 서버 코드를 찾지 못했습니다 (웹 프레임워크·포트·Dockerfile·compose·HTTP 엔드포인트 없음). "
+                     "Pawploy 는 웹 서비스만 배포하므로 이 저장소는 배포할 수 없습니다.")
+_SERVER_KINDS = {"web", "reverse-proxy", "static-frontend"}
+
+
+def no_server_evidence(scan: dict) -> bool:
+    """웹 서버가 있다는 근거가 *하나도* 없으면 True. 근거가 하나라도 있으면(오탐 방지) 모델 판단을 따른다."""
+    if scan.get("frameworks") or scan.get("port_hints") or scan.get("dockerfiles") \
+            or scan.get("compose_services") or scan.get("static_site"):
+        return False
+    inv = scan.get("inventory") or {}
+    if inv.get("status") != "ok":
+        return False                      # InfraFit 이 없으면 판단하지 않는다
+    s = inv.get("summary") or {}
+    if any(w.get("kind") in _SERVER_KINDS for w in s.get("workloads") or []):
+        return False
+    return not (s.get("endpoints") or {}).get("total")
 
 
 def validate(rec: LLMRecommendation, src: source.SourceTree, scan: dict) -> tuple[dict, list[str]]:

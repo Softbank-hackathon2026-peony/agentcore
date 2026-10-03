@@ -26,6 +26,30 @@ def analyze(tmp_path, brain=None, **extra):
     return handle(payload, brain=brain or FakeBrain(), store=store), store
 
 
+def test_analyze_cli_repo_without_web_server_is_not_supported(tmp_path):
+    """웹 서버 근거가 하나도 없는 CLI 저장소에 모델이 HTTP 래퍼를 지어내던 문제 (QA A7a)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "rename_photos.py").write_text("import os, sys\n\n\ndef main():\n    for f in os.listdir(sys.argv[1]):\n"
+                                           "        print(f)\n\n\nif __name__ == '__main__':\n    main()\n", "utf-8")
+    out, _ = analyze(tmp_path / "store", source_uri=str(repo))     # FakeBrain 은 supported=True 로 답함
+    rec = out["recommendation"]
+    assert out["status"] == "ok" and rec["supported"] is False and out["build_files"] is None
+    assert any("HTTP 요청을 받는 서버" in w for w in rec["warnings"])
+    assert not (tmp_path / "store" / "projects/prj_demo/build").exists()
+
+
+def test_analyze_invalid_dockerfile_keeps_recommendation(tmp_path):
+    """모델 Dockerfile 이 깨져도(FROM 없음) analyze 전체를 error 로 끝내지 않는다 (QA A7b)."""
+    from agent.schemas import DockerfileOut
+    brain = FakeBrain(df=DockerfileOut(dockerfile="# 실행할 코드를 찾지 못했습니다\n", container_port=8080, notes=[]))
+    out, _ = analyze(tmp_path, brain=brain)
+    rec = out["recommendation"]
+    assert out["status"] == "ok" and rec["supported"] is False and out["build_files"] is None
+    assert any("Dockerfile 을 만들지 못해" in w for w in rec["warnings"])
+    assert rec["candidates"] and rec["target"] == "aws_lambda"          # 추천 결과는 그대로 남음
+
+
 # ---------- 소스 읽기 ----------
 
 def test_path_traversal_blocked():
@@ -231,6 +255,18 @@ def test_lambda_adapter_line_is_exactly_one_pinned_copy():
 
     out, fixes = buildfiles.normalize_dockerfile(bad, None, lambda_adapter=False)
     assert "lambda-adapter" not in out and fixes
+
+
+def test_heredoc_body_is_not_an_instruction():
+    """heredoc 안의 `from flask import Flask` 를 마지막 FROM 으로 보고 그 뒤에 어댑터 줄을 넣던 문제 (QA A7a)."""
+    df = ("FROM python:3.12-slim\nWORKDIR /app\nRUN cat <<'EOF' > server.py\nimport os\nfrom flask import Flask\n"
+          "EXPOSE_ME = 1\nCMD_X = 2\nEOF\nRUN pip install \\\n    flask\nCMD [\"python\", \"server.py\"]\n")
+    out, _ = buildfiles.normalize_dockerfile(df, 8080)
+    lines = out.splitlines()
+    assert lines[1] == buildfiles.LWA_LINE                       # 진짜 FROM 바로 아래
+    body = lines[lines.index("RUN cat <<'EOF' > server.py") + 1:lines.index("EOF")]
+    assert body == ["import os", "from flask import Flask", "EXPOSE_ME = 1", "CMD_X = 2"]   # 본문은 그대로
+    assert lines[-3:] == ["ENV PORT=8080", "EXPOSE 8080", "CMD [\"python\", \"server.py\"]"]
 
 
 def test_generated_dockerfile_ignores_project_dockerignore():
