@@ -214,7 +214,7 @@ def main():
     if os.name == "nt":
         os.system("")
     mode = "재생 (저장된 실제 결과)" if a.replay else "실제 호출"
-    print(f"{B_}Pawploy AgentCore — 이주호 파트 시연{X}  {D}[{mode}]  서울 AgentCore Runtime · Claude Sonnet 4.5 (Bedrock){X}")
+    print(f"{B_}Pawploy AgentCore — 이주호 파트 시연{X}  {D}[{mode}]  서울 AgentCore Runtime · Claude Sonnet 4.6 (Bedrock){X}")
     print(f"{D}  판단은 AI, 검증은 코드: 분석·빌드 수정·Terraform 수정은 AI, 표준 Terraform 은 검증된 견본 + 코드 검사{X}")
 
     fb_in = json.loads((SAVE / "fix-build-input.json").read_text(encoding="utf-8"))
