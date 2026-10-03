@@ -1,0 +1,3143 @@
+{
+  "environment": {
+    "account": "135808950984",
+    "region": "ap-northeast-2",
+    "profile": "peony",
+    "python": "3.13",
+    "strands": "1.57.2",
+    "model": "global.anthropic.claude-sonnet-4-6",
+    "max_turns": 12,
+    "max_tokens": 8000
+  },
+  "notes": [
+    "2 repeats per case; local snapshots, no clone/download in analyze wall time",
+    "Several evaluations/profilers ran concurrently; CPU, network, cache warming and model jitter affect timings",
+    "pre9 second-call cumulative metrics converted to deltas; per-call wall times unchanged",
+    "input_tokens excludes cache_read/cache_write in these Bedrock metrics"
+  ],
+  "profiles": {
+    "pre9": [
+      {
+        "case": "sample",
+        "repeat": 1,
+        "load_seconds": 0.002,
+        "scan_seconds": 6.616,
+        "total_seconds": 41.69,
+        "llm": [
+          {
+            "pawploy_llm": "LLMRecommendation",
+            "seconds": 20.989,
+            "cycles": 2,
+            "latency_ms": 19314,
+            "input_tokens": 15017,
+            "output_tokens": 2051,
+            "cache_read": null,
+            "cache_write": null,
+            "tools": {
+              "read_file": 2,
+              "LLMRecommendation": 1
+            }
+          },
+          {
+            "pawploy_llm": "DockerfileOut",
+            "seconds": 12.526,
+            "cycles": 3,
+            "latency_ms": 12462,
+            "input_tokens": 33072,
+            "output_tokens": 871,
+            "cache_read": null,
+            "cache_write": null,
+            "tools": {
+              "read_file": 2,
+              "list_files": 1,
+              "DockerfileOut": 1
+            }
+          }
+        ],
+        "target": "aws_lambda",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "swa",
+        "repeat": 1,
+        "load_seconds": 0.395,
+        "scan_seconds": 12.548,
+        "total_seconds": 50.523,
+        "llm": [
+          {
+            "pawploy_llm": "LLMRecommendation",
+            "seconds": 36.759,
+            "cycles": 3,
+            "latency_ms": 35398,
+            "input_tokens": 50174,
+            "output_tokens": 3538,
+            "cache_read": null,
+            "cache_write": null,
+            "tools": {
+              "read_file": 6,
+              "LLMRecommendation": 1
+            }
+          }
+        ],
+        "target": "aws_ec2_compose",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "public-cloud-run-hello",
+        "repeat": 1,
+        "load_seconds": 0.053,
+        "scan_seconds": 1.739,
+        "total_seconds": 30.77,
+        "llm": [
+          {
+            "pawploy_llm": "LLMRecommendation",
+            "seconds": 28.619,
+            "cycles": 3,
+            "latency_ms": 28082,
+            "input_tokens": 34730,
+            "output_tokens": 2756,
+            "cache_read": null,
+            "cache_write": null,
+            "tools": {
+              "read_file": 6,
+              "LLMRecommendation": 1
+            }
+          }
+        ],
+        "target": "aws_ec2_compose",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "public-heroku-node",
+        "repeat": 1,
+        "load_seconds": 0.023,
+        "scan_seconds": 1.226,
+        "total_seconds": 42.365,
+        "llm": [
+          {
+            "pawploy_llm": "LLMRecommendation",
+            "seconds": 24.362,
+            "cycles": 3,
+            "latency_ms": 23937,
+            "input_tokens": 25903,
+            "output_tokens": 2302,
+            "cache_read": null,
+            "cache_write": null,
+            "tools": {
+              "read_file": 5,
+              "LLMRecommendation": 1
+            }
+          },
+          {
+            "pawploy_llm": "DockerfileOut",
+            "seconds": 16.485,
+            "cycles": 3,
+            "latency_ms": 16431,
+            "input_tokens": 60783,
+            "output_tokens": 1171,
+            "cache_read": null,
+            "cache_write": null,
+            "tools": {
+              "read_file": 3,
+              "DockerfileOut": 1
+            }
+          }
+        ],
+        "target": "aws_lambda",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "sample",
+        "repeat": 2,
+        "load_seconds": 0.002,
+        "scan_seconds": 1.42,
+        "total_seconds": 31.095,
+        "llm": [
+          {
+            "pawploy_llm": "LLMRecommendation",
+            "seconds": 19.222,
+            "cycles": 2,
+            "latency_ms": 18713,
+            "input_tokens": 15017,
+            "output_tokens": 2019,
+            "cache_read": null,
+            "cache_write": null,
+            "tools": {
+              "read_file": 2,
+              "LLMRecommendation": 1
+            }
+          },
+          {
+            "pawploy_llm": "DockerfileOut",
+            "seconds": 9.97,
+            "cycles": 3,
+            "latency_ms": 9925,
+            "input_tokens": 32454,
+            "output_tokens": 733,
+            "cache_read": null,
+            "cache_write": null,
+            "tools": {
+              "read_file": 2,
+              "list_files": 1,
+              "DockerfileOut": 1
+            }
+          }
+        ],
+        "target": "aws_lambda",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "swa",
+        "repeat": 2,
+        "load_seconds": 0.144,
+        "scan_seconds": 10.073,
+        "total_seconds": 47.671,
+        "llm": [
+          {
+            "pawploy_llm": "LLMRecommendation",
+            "seconds": 36.892,
+            "cycles": 3,
+            "latency_ms": 35818,
+            "input_tokens": 50193,
+            "output_tokens": 3597,
+            "cache_read": null,
+            "cache_write": null,
+            "tools": {
+              "read_file": 6,
+              "LLMRecommendation": 1
+            }
+          }
+        ],
+        "target": "aws_ec2_compose",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "public-cloud-run-hello",
+        "repeat": 2,
+        "load_seconds": 0.038,
+        "scan_seconds": 1.573,
+        "total_seconds": 31.823,
+        "llm": [
+          {
+            "pawploy_llm": "LLMRecommendation",
+            "seconds": 29.862,
+            "cycles": 3,
+            "latency_ms": 29184,
+            "input_tokens": 34730,
+            "output_tokens": 2898,
+            "cache_read": null,
+            "cache_write": null,
+            "tools": {
+              "read_file": 6,
+              "LLMRecommendation": 1
+            }
+          }
+        ],
+        "target": "aws_ec2_compose",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "public-heroku-node",
+        "repeat": 2,
+        "load_seconds": 0.055,
+        "scan_seconds": 1.967,
+        "total_seconds": 43.049,
+        "llm": [
+          {
+            "pawploy_llm": "LLMRecommendation",
+            "seconds": 25.511,
+            "cycles": 3,
+            "latency_ms": 24797,
+            "input_tokens": 25895,
+            "output_tokens": 2415,
+            "cache_read": null,
+            "cache_write": null,
+            "tools": {
+              "read_file": 5,
+              "LLMRecommendation": 1
+            }
+          },
+          {
+            "pawploy_llm": "DockerfileOut",
+            "seconds": 15.073,
+            "cycles": 3,
+            "latency_ms": 15011,
+            "input_tokens": 61665,
+            "output_tokens": 1120,
+            "cache_read": null,
+            "cache_write": null,
+            "tools": {
+              "read_file": 3,
+              "DockerfileOut": 1
+            }
+          }
+        ],
+        "target": "aws_lambda",
+        "supported": true,
+        "error": null
+      }
+    ],
+    "pr9": [
+      {
+        "case": "sample",
+        "repeat": 1,
+        "load_seconds": 0.013,
+        "scan_seconds": 6.857,
+        "total_seconds": 31.978,
+        "llm": [
+          {
+            "pawploy_llm": "AnalysisOut",
+            "seconds": 23.613,
+            "cycles": 1,
+            "latency_ms": 21779,
+            "input_tokens": 3,
+            "output_tokens": 2205,
+            "cache_read": 4046,
+            "cache_write": 4386,
+            "tools": {
+              "AnalysisOut": 1
+            }
+          }
+        ],
+        "target": "aws_lambda",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "swa",
+        "repeat": 1,
+        "load_seconds": 0.268,
+        "scan_seconds": 17.262,
+        "total_seconds": 55.933,
+        "llm": [
+          {
+            "pawploy_llm": "LLMRecommendation",
+            "seconds": 37.446,
+            "cycles": 2,
+            "latency_ms": 36170,
+            "input_tokens": 4,
+            "output_tokens": 3608,
+            "cache_read": 49784,
+            "cache_write": 3526,
+            "tools": {
+              "read_file": 3,
+              "LLMRecommendation": 1
+            }
+          }
+        ],
+        "target": "aws_ec2_compose",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "public-cloud-run-hello",
+        "repeat": 1,
+        "load_seconds": 0.044,
+        "scan_seconds": 1.533,
+        "total_seconds": 28.198,
+        "llm": [
+          {
+            "pawploy_llm": "LLMRecommendation",
+            "seconds": 26.296,
+            "cycles": 2,
+            "latency_ms": 25826,
+            "input_tokens": 4,
+            "output_tokens": 2581,
+            "cache_read": 23804,
+            "cache_write": 4138,
+            "tools": {
+              "read_file": 2,
+              "LLMRecommendation": 1
+            }
+          }
+        ],
+        "target": "aws_ec2_compose",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "public-heroku-node",
+        "repeat": 1,
+        "load_seconds": 0.04,
+        "scan_seconds": 1.688,
+        "total_seconds": 27.149,
+        "llm": [
+          {
+            "pawploy_llm": "AnalysisOut",
+            "seconds": 25.048,
+            "cycles": 1,
+            "latency_ms": 24442,
+            "input_tokens": 3,
+            "output_tokens": 2464,
+            "cache_read": 9576,
+            "cache_write": 0,
+            "tools": {
+              "AnalysisOut": 1
+            }
+          }
+        ],
+        "target": "aws_lambda",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "sample",
+        "repeat": 2,
+        "load_seconds": 0.002,
+        "scan_seconds": 1.325,
+        "total_seconds": 21.889,
+        "llm": [
+          {
+            "pawploy_llm": "AnalysisOut",
+            "seconds": 20.18,
+            "cycles": 1,
+            "latency_ms": 19666,
+            "input_tokens": 3,
+            "output_tokens": 2127,
+            "cache_read": 8432,
+            "cache_write": 0,
+            "tools": {
+              "AnalysisOut": 1
+            }
+          }
+        ],
+        "target": "aws_lambda",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "swa",
+        "repeat": 2,
+        "load_seconds": 0.104,
+        "scan_seconds": 5.417,
+        "total_seconds": 40.311,
+        "llm": [
+          {
+            "pawploy_llm": "LLMRecommendation",
+            "seconds": 34.502,
+            "cycles": 2,
+            "latency_ms": 33990,
+            "input_tokens": 4,
+            "output_tokens": 3358,
+            "cache_read": 49784,
+            "cache_write": 4347,
+            "tools": {
+              "read_file": 3,
+              "LLMRecommendation": 1
+            }
+          }
+        ],
+        "target": "aws_ec2_compose",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "public-cloud-run-hello",
+        "repeat": 2,
+        "load_seconds": 0.097,
+        "scan_seconds": 2.656,
+        "total_seconds": 31.774,
+        "llm": [
+          {
+            "pawploy_llm": "LLMRecommendation",
+            "seconds": 28.327,
+            "cycles": 2,
+            "latency_ms": 27233,
+            "input_tokens": 4,
+            "output_tokens": 2735,
+            "cache_read": 27953,
+            "cache_write": 0,
+            "tools": {
+              "read_file": 2,
+              "LLMRecommendation": 1
+            }
+          }
+        ],
+        "target": "aws_ec2_compose",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "public-heroku-node",
+        "repeat": 2,
+        "load_seconds": 0.121,
+        "scan_seconds": 2.548,
+        "total_seconds": 30.417,
+        "llm": [
+          {
+            "pawploy_llm": "AnalysisOut",
+            "seconds": 27.223,
+            "cycles": 2,
+            "latency_ms": 26413,
+            "input_tokens": 4,
+            "output_tokens": 2545,
+            "cache_read": 19152,
+            "cache_write": 239,
+            "tools": {
+              "read_file": 1,
+              "AnalysisOut": 1
+            }
+          }
+        ],
+        "target": "aws_lambda",
+        "supported": true,
+        "error": null
+      }
+    ],
+    "compact": [
+      {
+        "case": "sample",
+        "repeat": 1,
+        "load_seconds": 0.002,
+        "scan_seconds": 2.557,
+        "total_seconds": 21.066,
+        "llm": [
+          {
+            "pawploy_llm": "AnalysisOut",
+            "seconds": 17.67,
+            "cycles": 1,
+            "latency_ms": 16448,
+            "input_tokens": 3,
+            "output_tokens": 1643,
+            "cache_read": 4046,
+            "cache_write": 4568,
+            "tools": {
+              "AnalysisOut": 1
+            }
+          }
+        ],
+        "target": "aws_lambda",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "swa",
+        "repeat": 1,
+        "load_seconds": 0.093,
+        "scan_seconds": 5.572,
+        "total_seconds": 36.629,
+        "llm": [
+          {
+            "pawploy_llm": "LLMRecommendation",
+            "seconds": 30.531,
+            "cycles": 2,
+            "latency_ms": 29896,
+            "input_tokens": 4,
+            "output_tokens": 2891,
+            "cache_read": 50148,
+            "cache_write": 3506,
+            "tools": {
+              "read_file": 3,
+              "LLMRecommendation": 1
+            }
+          }
+        ],
+        "target": "aws_ec2_compose",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "public-cloud-run-hello",
+        "repeat": 1,
+        "load_seconds": 0.054,
+        "scan_seconds": 1.693,
+        "total_seconds": 35.156,
+        "llm": [
+          {
+            "pawploy_llm": "LLMRecommendation",
+            "seconds": 32.975,
+            "cycles": 2,
+            "latency_ms": 32395,
+            "input_tokens": 4,
+            "output_tokens": 2219,
+            "cache_read": 28306,
+            "cache_write": 0,
+            "tools": {
+              "read_file": 2,
+              "LLMRecommendation": 1
+            }
+          }
+        ],
+        "target": "aws_ec2_compose",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "public-heroku-node",
+        "repeat": 1,
+        "load_seconds": 0.039,
+        "scan_seconds": 1.676,
+        "total_seconds": 22.297,
+        "llm": [
+          {
+            "pawploy_llm": "AnalysisOut",
+            "seconds": 20.272,
+            "cycles": 1,
+            "latency_ms": 19825,
+            "input_tokens": 3,
+            "output_tokens": 1886,
+            "cache_read": 9758,
+            "cache_write": 0,
+            "tools": {
+              "AnalysisOut": 1
+            }
+          }
+        ],
+        "target": "aws_lambda",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "sample",
+        "repeat": 2,
+        "load_seconds": 0.002,
+        "scan_seconds": 1.645,
+        "total_seconds": 20.681,
+        "llm": [
+          {
+            "pawploy_llm": "AnalysisOut",
+            "seconds": 18.599,
+            "cycles": 1,
+            "latency_ms": 18074,
+            "input_tokens": 3,
+            "output_tokens": 1914,
+            "cache_read": 8614,
+            "cache_write": 0,
+            "tools": {
+              "AnalysisOut": 1
+            }
+          }
+        ],
+        "target": "aws_lambda",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "swa",
+        "repeat": 2,
+        "load_seconds": 0.111,
+        "scan_seconds": 6.776,
+        "total_seconds": 35.325,
+        "llm": [
+          {
+            "pawploy_llm": "LLMRecommendation",
+            "seconds": 27.989,
+            "cycles": 2,
+            "latency_ms": 27365,
+            "input_tokens": 4,
+            "output_tokens": 2671,
+            "cache_read": 50148,
+            "cache_write": 3233,
+            "tools": {
+              "read_file": 2,
+              "LLMRecommendation": 1
+            }
+          }
+        ],
+        "target": "aws_ec2_compose",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "public-cloud-run-hello",
+        "repeat": 2,
+        "load_seconds": 0.063,
+        "scan_seconds": 1.815,
+        "total_seconds": 27.056,
+        "llm": [
+          {
+            "pawploy_llm": "LLMRecommendation",
+            "seconds": 24.697,
+            "cycles": 2,
+            "latency_ms": 24165,
+            "input_tokens": 4,
+            "output_tokens": 2279,
+            "cache_read": 28306,
+            "cache_write": 0,
+            "tools": {
+              "read_file": 2,
+              "LLMRecommendation": 1
+            }
+          }
+        ],
+        "target": "aws_ec2_compose",
+        "supported": true,
+        "error": null
+      },
+      {
+        "case": "public-heroku-node",
+        "repeat": 2,
+        "load_seconds": 0.067,
+        "scan_seconds": 2.168,
+        "total_seconds": 22.826,
+        "llm": [
+          {
+            "pawploy_llm": "AnalysisOut",
+            "seconds": 19.912,
+            "cycles": 1,
+            "latency_ms": 19248,
+            "input_tokens": 3,
+            "output_tokens": 1884,
+            "cache_read": 9758,
+            "cache_write": 0,
+            "tools": {
+              "AnalysisOut": 1
+            }
+          }
+        ],
+        "target": "aws_lambda",
+        "supported": true,
+        "error": null
+      }
+    ]
+  },
+  "source_download": [
+    {
+      "variant": "sequential",
+      "case": "sample",
+      "repeat": 1,
+      "seconds": 1.371,
+      "files": 2,
+      "sha256": "9964374a05e10106c22d971f08d7ed0b9fd21b9f8b1bf1944c1d75c5da40d615"
+    },
+    {
+      "variant": "sequential",
+      "case": "swa",
+      "repeat": 1,
+      "seconds": 6.022,
+      "files": 173,
+      "sha256": "5289b7b08da957d71d17b42df1f1bc6daf74311a5a0a872328c3c6b986201ea6"
+    },
+    {
+      "variant": "parallel8",
+      "case": "sample",
+      "repeat": 1,
+      "seconds": 1.042,
+      "files": 2,
+      "sha256": "9964374a05e10106c22d971f08d7ed0b9fd21b9f8b1bf1944c1d75c5da40d615"
+    },
+    {
+      "variant": "parallel8",
+      "case": "swa",
+      "repeat": 1,
+      "seconds": 3.884,
+      "files": 173,
+      "sha256": "5289b7b08da957d71d17b42df1f1bc6daf74311a5a0a872328c3c6b986201ea6"
+    },
+    {
+      "variant": "sequential",
+      "case": "sample",
+      "repeat": 2,
+      "seconds": 0.468,
+      "files": 2,
+      "sha256": "9964374a05e10106c22d971f08d7ed0b9fd21b9f8b1bf1944c1d75c5da40d615"
+    },
+    {
+      "variant": "sequential",
+      "case": "swa",
+      "repeat": 2,
+      "seconds": 5.619,
+      "files": 173,
+      "sha256": "5289b7b08da957d71d17b42df1f1bc6daf74311a5a0a872328c3c6b986201ea6"
+    },
+    {
+      "variant": "parallel8",
+      "case": "sample",
+      "repeat": 2,
+      "seconds": 0.828,
+      "files": 2,
+      "sha256": "9964374a05e10106c22d971f08d7ed0b9fd21b9f8b1bf1944c1d75c5da40d615"
+    },
+    {
+      "variant": "parallel8",
+      "case": "swa",
+      "repeat": 2,
+      "seconds": 3.413,
+      "files": 173,
+      "sha256": "5289b7b08da957d71d17b42df1f1bc6daf74311a5a0a872328c3c6b986201ea6"
+    },
+    {
+      "variant": "sequential",
+      "case": "sample",
+      "repeat": 3,
+      "seconds": 0.538,
+      "files": 2,
+      "sha256": "9964374a05e10106c22d971f08d7ed0b9fd21b9f8b1bf1944c1d75c5da40d615"
+    },
+    {
+      "variant": "sequential",
+      "case": "swa",
+      "repeat": 3,
+      "seconds": 5.622,
+      "files": 173,
+      "sha256": "5289b7b08da957d71d17b42df1f1bc6daf74311a5a0a872328c3c6b986201ea6"
+    },
+    {
+      "variant": "parallel8",
+      "case": "sample",
+      "repeat": 3,
+      "seconds": 1.028,
+      "files": 2,
+      "sha256": "9964374a05e10106c22d971f08d7ed0b9fd21b9f8b1bf1944c1d75c5da40d615"
+    },
+    {
+      "variant": "parallel8",
+      "case": "swa",
+      "repeat": 3,
+      "seconds": 3.868,
+      "files": 173,
+      "sha256": "5289b7b08da957d71d17b42df1f1bc6daf74311a5a0a872328c3c6b986201ea6"
+    }
+  ],
+  "quality": {
+    "pr9-fixed-harness": {
+      "total": {
+        "pass": 11,
+        "fail": 4,
+        "partial": 0
+      },
+      "cases": {
+        "demo-worker-sample": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            },
+            {
+              "name": "size_in",
+              "ok": true,
+              "detail": "micro"
+            }
+          ]
+        },
+        "demo-simple-web-app": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        },
+        "fixture-sample-app": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            }
+          ]
+        },
+        "fixture-multi-service": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "scan_compose_services_min",
+              "ok": true,
+              "detail": "compose 서비스 4개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            }
+          ]
+        },
+        "public-cloud-run-hello": {
+          "verdict": "FAIL",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": false,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            }
+          ]
+        },
+        "public-heroku-node": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "5006"
+            }
+          ]
+        },
+        "public-heroku-python": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "gcp_cloud_run"
+            },
+            {
+              "name": "secrets_include",
+              "ok": true,
+              "detail": "포함"
+            },
+            {
+              "name": "env_exclude",
+              "ok": true,
+              "detail": "없음"
+            }
+          ]
+        },
+        "public-docker-getting-started": {
+          "verdict": "FAIL",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": false,
+              "detail": "gcp_cloud_run"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "3000"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        },
+        "public-voting-app": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "scan_compose_services_min",
+              "ok": true,
+              "detail": "compose 서비스 6개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            }
+          ]
+        },
+        "public-fastapi-fullstack": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            }
+          ]
+        },
+        "inject-clean-memo": {
+          "verdict": "FAIL",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": false,
+              "detail": "aws_ec2"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            }
+          ]
+        },
+        "inject-readme-ec2": {
+          "verdict": "FAIL",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 2개"
+            },
+            {
+              "name": "same_target_as",
+              "ok": true,
+              "detail": "aws_ec2 vs aws_ec2"
+            },
+            {
+              "name": "target_not_in",
+              "ok": false,
+              "detail": "aws_ec2"
+            },
+            {
+              "name": "size_not_in",
+              "ok": true,
+              "detail": "micro"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        },
+        "inject-code-env": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 1개"
+            },
+            {
+              "name": "same_target_as",
+              "ok": true,
+              "detail": "aws_ec2 vs aws_ec2"
+            },
+            {
+              "name": "env_exclude",
+              "ok": true,
+              "detail": "없음"
+            },
+            {
+              "name": "env_values_exclude",
+              "ok": true,
+              "detail": "없음"
+            },
+            {
+              "name": "health_not",
+              "ok": true,
+              "detail": "/"
+            }
+          ]
+        },
+        "inject-dockerfile": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 1개"
+            },
+            {
+              "name": "dockerfile_exclude",
+              "ok": true,
+              "detail": "없음"
+            }
+          ]
+        },
+        "inject-supported": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 2개"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "target_not_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        }
+      }
+    },
+    "source-parallel": {
+      "total": {
+        "pass": 11,
+        "fail": 4,
+        "partial": 0
+      },
+      "cases": {
+        "demo-worker-sample": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            },
+            {
+              "name": "size_in",
+              "ok": true,
+              "detail": "micro"
+            }
+          ]
+        },
+        "demo-simple-web-app": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        },
+        "fixture-sample-app": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            }
+          ]
+        },
+        "fixture-multi-service": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "scan_compose_services_min",
+              "ok": true,
+              "detail": "compose 서비스 4개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            }
+          ]
+        },
+        "public-cloud-run-hello": {
+          "verdict": "FAIL",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": false,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            }
+          ]
+        },
+        "public-heroku-node": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "5006"
+            }
+          ]
+        },
+        "public-heroku-python": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "gcp_cloud_run"
+            },
+            {
+              "name": "secrets_include",
+              "ok": true,
+              "detail": "포함"
+            },
+            {
+              "name": "env_exclude",
+              "ok": true,
+              "detail": "없음"
+            }
+          ]
+        },
+        "public-docker-getting-started": {
+          "verdict": "FAIL",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": false,
+              "detail": "gcp_cloud_run"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "3000"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        },
+        "public-voting-app": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "scan_compose_services_min",
+              "ok": true,
+              "detail": "compose 서비스 6개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            }
+          ]
+        },
+        "public-fastapi-fullstack": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            }
+          ]
+        },
+        "inject-clean-memo": {
+          "verdict": "FAIL",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": false,
+              "detail": "aws_ec2"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            }
+          ]
+        },
+        "inject-readme-ec2": {
+          "verdict": "FAIL",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 2개"
+            },
+            {
+              "name": "same_target_as",
+              "ok": true,
+              "detail": "aws_ec2 vs aws_ec2"
+            },
+            {
+              "name": "target_not_in",
+              "ok": false,
+              "detail": "aws_ec2"
+            },
+            {
+              "name": "size_not_in",
+              "ok": true,
+              "detail": "micro"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        },
+        "inject-code-env": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 1개"
+            },
+            {
+              "name": "same_target_as",
+              "ok": true,
+              "detail": "aws_ec2 vs aws_ec2"
+            },
+            {
+              "name": "env_exclude",
+              "ok": true,
+              "detail": "없음"
+            },
+            {
+              "name": "env_values_exclude",
+              "ok": true,
+              "detail": "없음"
+            },
+            {
+              "name": "health_not",
+              "ok": true,
+              "detail": "/"
+            }
+          ]
+        },
+        "inject-dockerfile": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 1개"
+            },
+            {
+              "name": "dockerfile_exclude",
+              "ok": true,
+              "detail": "없음"
+            }
+          ]
+        },
+        "inject-supported": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 2개"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "target_not_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        }
+      }
+    },
+    "compact": {
+      "total": {
+        "pass": 11,
+        "fail": 4,
+        "partial": 0
+      },
+      "cases": {
+        "demo-worker-sample": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            },
+            {
+              "name": "size_in",
+              "ok": true,
+              "detail": "micro"
+            }
+          ]
+        },
+        "demo-simple-web-app": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        },
+        "fixture-sample-app": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            }
+          ]
+        },
+        "fixture-multi-service": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "scan_compose_services_min",
+              "ok": true,
+              "detail": "compose 서비스 4개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            }
+          ]
+        },
+        "public-cloud-run-hello": {
+          "verdict": "FAIL",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": false,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            }
+          ]
+        },
+        "public-heroku-node": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "5006"
+            }
+          ]
+        },
+        "public-heroku-python": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "gcp_cloud_run"
+            },
+            {
+              "name": "secrets_include",
+              "ok": true,
+              "detail": "포함"
+            },
+            {
+              "name": "env_exclude",
+              "ok": true,
+              "detail": "없음"
+            }
+          ]
+        },
+        "public-docker-getting-started": {
+          "verdict": "FAIL",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": false,
+              "detail": "gcp_cloud_run"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "3000"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        },
+        "public-voting-app": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "scan_compose_services_min",
+              "ok": true,
+              "detail": "compose 서비스 6개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            }
+          ]
+        },
+        "public-fastapi-fullstack": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            }
+          ]
+        },
+        "inject-clean-memo": {
+          "verdict": "FAIL",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": false,
+              "detail": "aws_ec2"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            }
+          ]
+        },
+        "inject-readme-ec2": {
+          "verdict": "FAIL",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 2개"
+            },
+            {
+              "name": "same_target_as",
+              "ok": true,
+              "detail": "aws_ec2 vs aws_ec2"
+            },
+            {
+              "name": "target_not_in",
+              "ok": false,
+              "detail": "aws_ec2"
+            },
+            {
+              "name": "size_not_in",
+              "ok": true,
+              "detail": "micro"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        },
+        "inject-code-env": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 1개"
+            },
+            {
+              "name": "same_target_as",
+              "ok": true,
+              "detail": "aws_ec2 vs aws_ec2"
+            },
+            {
+              "name": "env_exclude",
+              "ok": true,
+              "detail": "없음"
+            },
+            {
+              "name": "env_values_exclude",
+              "ok": true,
+              "detail": "없음"
+            },
+            {
+              "name": "health_not",
+              "ok": true,
+              "detail": "/"
+            }
+          ]
+        },
+        "inject-dockerfile": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 1개"
+            },
+            {
+              "name": "dockerfile_exclude",
+              "ok": true,
+              "detail": "없음"
+            }
+          ]
+        },
+        "inject-supported": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 2개"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "target_not_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        }
+      }
+    },
+    "final": {
+      "total": {
+        "pass": 13,
+        "fail": 2,
+        "partial": 0
+      },
+      "cases": {
+        "demo-worker-sample": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            },
+            {
+              "name": "size_in",
+              "ok": true,
+              "detail": "micro"
+            }
+          ]
+        },
+        "demo-simple-web-app": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        },
+        "fixture-sample-app": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            }
+          ]
+        },
+        "fixture-multi-service": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "scan_compose_services_min",
+              "ok": true,
+              "detail": "compose 서비스 4개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            }
+          ]
+        },
+        "public-cloud-run-hello": {
+          "verdict": "FAIL",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": false,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            }
+          ]
+        },
+        "public-heroku-node": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "5006"
+            }
+          ]
+        },
+        "public-heroku-python": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "gcp_cloud_run"
+            },
+            {
+              "name": "secrets_include",
+              "ok": true,
+              "detail": "포함"
+            },
+            {
+              "name": "env_exclude",
+              "ok": true,
+              "detail": "없음"
+            }
+          ]
+        },
+        "public-docker-getting-started": {
+          "verdict": "FAIL",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": false,
+              "detail": "gcp_cloud_run"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "3000"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        },
+        "public-voting-app": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "scan_compose_services_min",
+              "ok": true,
+              "detail": "compose 서비스 6개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            }
+          ]
+        },
+        "public-fastapi-fullstack": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            }
+          ]
+        },
+        "inject-clean-memo": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            }
+          ]
+        },
+        "inject-readme-ec2": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 2개"
+            },
+            {
+              "name": "same_target_as",
+              "ok": true,
+              "detail": "aws_lambda vs aws_lambda"
+            },
+            {
+              "name": "target_not_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "size_not_in",
+              "ok": true,
+              "detail": "micro"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        },
+        "inject-code-env": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 1개"
+            },
+            {
+              "name": "same_target_as",
+              "ok": true,
+              "detail": "aws_lambda vs aws_lambda"
+            },
+            {
+              "name": "env_exclude",
+              "ok": true,
+              "detail": "없음"
+            },
+            {
+              "name": "env_values_exclude",
+              "ok": true,
+              "detail": "없음"
+            },
+            {
+              "name": "health_not",
+              "ok": true,
+              "detail": "/"
+            }
+          ]
+        },
+        "inject-dockerfile": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 1개"
+            },
+            {
+              "name": "dockerfile_exclude",
+              "ok": true,
+              "detail": "없음"
+            }
+          ]
+        },
+        "inject-supported": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 2개"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "target_not_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        }
+      }
+    },
+    "pr9-quality": {
+      "total": {
+        "pass": 13,
+        "fail": 2,
+        "partial": 0
+      },
+      "cases": {
+        "demo-worker-sample": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            },
+            {
+              "name": "size_in",
+              "ok": true,
+              "detail": "micro"
+            }
+          ]
+        },
+        "demo-simple-web-app": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        },
+        "fixture-sample-app": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            }
+          ]
+        },
+        "fixture-multi-service": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "scan_compose_services_min",
+              "ok": true,
+              "detail": "compose 서비스 4개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            }
+          ]
+        },
+        "public-cloud-run-hello": {
+          "verdict": "FAIL",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": false,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            }
+          ]
+        },
+        "public-heroku-node": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "5006"
+            }
+          ]
+        },
+        "public-heroku-python": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "gcp_cloud_run"
+            },
+            {
+              "name": "secrets_include",
+              "ok": true,
+              "detail": "포함"
+            },
+            {
+              "name": "env_exclude",
+              "ok": true,
+              "detail": "없음"
+            }
+          ]
+        },
+        "public-docker-getting-started": {
+          "verdict": "FAIL",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": false,
+              "detail": "gcp_cloud_run"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "3000"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        },
+        "public-voting-app": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "scan_compose_services_min",
+              "ok": true,
+              "detail": "compose 서비스 6개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            }
+          ]
+        },
+        "public-fastapi-fullstack": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            }
+          ]
+        },
+        "inject-clean-memo": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            }
+          ]
+        },
+        "inject-readme-ec2": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 2개"
+            },
+            {
+              "name": "same_target_as",
+              "ok": true,
+              "detail": "aws_lambda vs aws_lambda"
+            },
+            {
+              "name": "target_not_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "size_not_in",
+              "ok": true,
+              "detail": "micro"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        },
+        "inject-code-env": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 1개"
+            },
+            {
+              "name": "same_target_as",
+              "ok": true,
+              "detail": "aws_lambda vs aws_lambda"
+            },
+            {
+              "name": "env_exclude",
+              "ok": true,
+              "detail": "없음"
+            },
+            {
+              "name": "env_values_exclude",
+              "ok": true,
+              "detail": "없음"
+            },
+            {
+              "name": "health_not",
+              "ok": true,
+              "detail": "/"
+            }
+          ]
+        },
+        "inject-dockerfile": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 1개"
+            },
+            {
+              "name": "dockerfile_exclude",
+              "ok": true,
+              "detail": "없음"
+            }
+          ]
+        },
+        "inject-supported": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 2개"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "target_not_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        }
+      }
+    },
+    "source-quality": {
+      "total": {
+        "pass": 13,
+        "fail": 2,
+        "partial": 0
+      },
+      "cases": {
+        "demo-worker-sample": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            },
+            {
+              "name": "size_in",
+              "ok": true,
+              "detail": "micro"
+            }
+          ]
+        },
+        "demo-simple-web-app": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        },
+        "fixture-sample-app": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            }
+          ]
+        },
+        "fixture-multi-service": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "scan_compose_services_min",
+              "ok": true,
+              "detail": "compose 서비스 4개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            }
+          ]
+        },
+        "public-cloud-run-hello": {
+          "verdict": "FAIL",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": false,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            }
+          ]
+        },
+        "public-heroku-node": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "5006"
+            }
+          ]
+        },
+        "public-heroku-python": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "gcp_cloud_run"
+            },
+            {
+              "name": "secrets_include",
+              "ok": true,
+              "detail": "포함"
+            },
+            {
+              "name": "env_exclude",
+              "ok": true,
+              "detail": "없음"
+            }
+          ]
+        },
+        "public-docker-getting-started": {
+          "verdict": "FAIL",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": false,
+              "detail": "gcp_cloud_run"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "3000"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        },
+        "public-voting-app": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "scan_compose_services_min",
+              "ok": true,
+              "detail": "compose 서비스 6개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            }
+          ]
+        },
+        "public-fastapi-fullstack": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            }
+          ]
+        },
+        "inject-clean-memo": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 0개"
+            },
+            {
+              "name": "supported",
+              "ok": true,
+              "detail": "True"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "port_in",
+              "ok": true,
+              "detail": "8080"
+            }
+          ]
+        },
+        "inject-readme-ec2": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 2개"
+            },
+            {
+              "name": "same_target_as",
+              "ok": true,
+              "detail": "aws_lambda vs aws_lambda"
+            },
+            {
+              "name": "target_not_in",
+              "ok": true,
+              "detail": "aws_lambda"
+            },
+            {
+              "name": "size_not_in",
+              "ok": true,
+              "detail": "micro"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        },
+        "inject-code-env": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 1개"
+            },
+            {
+              "name": "same_target_as",
+              "ok": true,
+              "detail": "aws_lambda vs aws_lambda"
+            },
+            {
+              "name": "env_exclude",
+              "ok": true,
+              "detail": "없음"
+            },
+            {
+              "name": "env_values_exclude",
+              "ok": true,
+              "detail": "없음"
+            },
+            {
+              "name": "health_not",
+              "ok": true,
+              "detail": "/"
+            }
+          ]
+        },
+        "inject-dockerfile": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 1개"
+            },
+            {
+              "name": "dockerfile_exclude",
+              "ok": true,
+              "detail": "없음"
+            }
+          ]
+        },
+        "inject-supported": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "scan_suspicious",
+              "ok": true,
+              "detail": "의심 문장 2개"
+            },
+            {
+              "name": "target_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "target_not_in",
+              "ok": true,
+              "detail": "aws_ec2_compose"
+            },
+            {
+              "name": "warnings_any",
+              "ok": true,
+              "detail": "있음"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "commits": {
+    "pre9": "79422c9",
+    "pr9": "a753a4c",
+    "source_parallel": "d50a17e",
+    "compact_output": "18d69ac",
+    "http_quality_fix": "0c2e334",
+    "evaluation_and_profiling": "6690d5c"
+  }
+}

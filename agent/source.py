@@ -12,6 +12,7 @@ import io
 import posixpath
 import tarfile
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .errors import AgentError
@@ -19,6 +20,7 @@ from .errors import AgentError
 MAX_FILES = 5000
 MAX_TOTAL_BYTES = 50 * 1024 * 1024        # 스냅샷 전체 50MB
 MAX_READ_CHARS = 20_000                    # LLM에 한 번에 넘기는 파일 내용 상한
+S3_DOWNLOAD_WORKERS = 8                    # 기본 botocore 연결 풀(10) 안에서 병렬 읽기
 
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build",
              ".next", ".nuxt", "target", ".idea", ".vscode", ".pytest_cache", ".terraform"}
@@ -167,7 +169,7 @@ def _load_s3(uri: str, s3) -> SourceTree:
     bucket, key = _split_s3(uri)
     try:
         if key.endswith("/") or key == "":
-            files: dict[str, bytes] = {}
+            objects: list[tuple[str, str]] = []
             total = 0
             for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=key):
                 for obj in page.get("Contents", []):
@@ -175,9 +177,22 @@ def _load_s3(uri: str, s3) -> SourceTree:
                     if not rel or _skipped(normalize(rel) or ".git/x"):
                         continue
                     total += obj["Size"]
-                    if total > MAX_TOTAL_BYTES or len(files) >= MAX_FILES:
+                    if total > MAX_TOTAL_BYTES or len(objects) >= MAX_FILES:
                         raise AgentError("source_too_large", "프로젝트가 너무 큽니다")
-                    files[rel] = s3.get_object(Bucket=bucket, Key=obj["Key"])["Body"].read()
+                    objects.append((rel, obj["Key"]))
+
+            def download(obj: tuple[str, str]) -> tuple[str, bytes]:
+                rel, object_key = obj
+                body = s3.get_object(Bucket=bucket, Key=object_key)["Body"]
+                try:
+                    return rel, body.read()
+                finally:
+                    body.close()
+
+            # 목록과 크기 제한을 먼저 확인하고 읽는다. map은 목록 순서를 보존하며
+            # 다운로드 실패는 기존과 같이 전체 분석 실패로 전달한다.
+            with ThreadPoolExecutor(max_workers=S3_DOWNLOAD_WORKERS) as pool:
+                files = dict(pool.map(download, objects))
             return SourceTree(files)
         body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
         return SourceTree(_unpack(key, body))

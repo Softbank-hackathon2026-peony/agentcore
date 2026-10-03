@@ -7,7 +7,7 @@ import json
 import posixpath
 import re
 
-from . import catalog, config, units
+from . import buildfiles, catalog, config, units
 from .errors import AgentError
 from .schemas import AnalysisOut, DockerfileFix, DockerfileOut, LLMRecommendation
 from .source import SourceTree, is_secret
@@ -182,8 +182,10 @@ DOCKERFILE_RUNTIME_RULES = """
 DOCKERFILE_RULES = (
     "- 하나의 이미지가 AWS Lambda(Lambda Web Adapter), EC2, Cloud Run 모두에서 동작해야 한다.\n"
     "  Lambda Web Adapter COPY 줄은 코드가 정해진 버전으로 넣으니 직접 쓰지 마라.\n"
-    "- linux/amd64, 앱은 환경변수 PORT 의 포트에서 0.0.0.0 으로 요청을 받아야 한다.\n"
-    "- 프로젝트에 Dockerfile이 있으면 그것을 기반으로 하라.\n"
+    "- linux/amd64, 앱은 추천 포트에서 0.0.0.0 으로 요청을 받아야 한다.\n"
+    "- 기존 Dockerfile과 고정 리슨 포트를 최대한 유지하라. Worker가 container_port를 전달하므로 "
+    "PORT 환경변수를 읽게 하려고 nginx 설정이나 실행 명령을 다시 쓰지 마라.\n"
+    "- 새 서버를 작성할 때만 환경변수 PORT를 사용하라.\n"
     "- 의존성 설치는 실제 의존성 파일을 사용하고, 개발용 서버(예: flask run --debug) 대신 운영용 실행 명령을 써라.\n"
     "- .env 나 키 파일을 COPY 하지 마라. 빌드 컨텍스트 루트는 프로젝트 루트다."
 )
@@ -241,7 +243,11 @@ class StrandsBrain:
             "1순위가 unverified 면 target 은 그대로 따르되 warnings 에 확인 필요를 적어라. "
             "recommendation.outcome 이 unverified 면 recommended 가 없다(모든 후보가 능력 확인 필요): target 은 top 1순위를 "
             "따르고 warnings 에 unknown_capabilities 를 확인 필요로 적어라. "
-            "required_secrets 는 inventory 의 external_services.secrets 와 스캔의 env_names 를 모두 보고 정하라.\n\n"
+            "required_secrets 는 inventory 의 external_services.secrets 와 스캔의 env_names 를 모두 보고 정하라.\n"
+            "출력 설명은 간결하게: candidates의 why는 핵심 적합/탈락 이유 한 문장(가능하면 60자 이내), "
+            "reason은 핵심 선택 이유 1~2문장, dockerfile_notes는 핵심 변경만 최대 2개로 적어라. "
+            "보안 경고·필수 비밀 변수·실제 파일 근거는 생략하지 마라. "
+            "파일 확인이 끝나면 일반 텍스트로 답을 반복하지 말고 구조화 출력 도구로 최종 답을 제출하라.\n\n"
             f"## 스캔 결과\n{json.dumps(scan_view, ensure_ascii=False, indent=1)}\n\n"
             f"## 파일 트리\n" + "\n".join(scan["tree"])
         )
@@ -278,6 +284,10 @@ class StrandsBrain:
         prompt += ("\n\n## Dockerfile (같은 답의 dockerfile 필드)\n추천과 함께 Dockerfile 도 만들어라.\n"
                    + DOCKERFILE_RULES + DOCKERFILE_RUNTIME_RULES)
         rec: AnalysisOut = self._run(agent, prompt, AnalysisOut)
+        existing = buildfiles.existing_dockerfile(src, rec.container_port)
+        if existing is not None:
+            rec.container_port = existing.container_port
+            return rec, existing
         if rec.dockerfile.strip():
             return rec, DockerfileOut(dockerfile=rec.dockerfile, container_port=rec.container_port,
                                       notes=rec.dockerfile_notes)
@@ -310,11 +320,20 @@ class StrandsBrain:
 
     # ---------------- Terraform ----------------
 
-    def _tf_agent(self):
+    def _tf_agent(self, reference: str | None = None):
         from strands import Agent
-        return Agent(model=_model(), tools=[], callback_handler=None, system_prompt=TF_SYSTEM_PROMPT)
+        system = TF_SYSTEM_PROMPT
+        if reference is not None:
+            # Stable prefix shared by repairs; changing code/logs follow the cache point.
+            system = [{"text": TF_SYSTEM_PROMPT + "\n\n## 검증된 견본\n" + reference}]
+            if config.TF_CACHE_PROMPT:
+                system.append({"cachePoint": {"type": "default"}})
+        return Agent(model=_model(), tools=[], callback_handler=None, system_prompt=system)
 
     def gen_terraform(self, ctx: dict, arch: str, reference: str, errors: list[str]):
+        if config.TF_USE_REFERENCE:
+            from .terraform import standard_module
+            return standard_module(arch)
         prompt = (
             f"아래 승인된 추천안에 맞는 `{arch}` 모듈을 작성하라.\n"
             "AWS·GCP 모듈을 따로따로 만든다. 추천안의 1순위(recommended)가 다른 클라우드여도 "
@@ -340,7 +359,25 @@ class StrandsBrain:
         )
         if errors:
             prompt += "\n## 직전 수정본이 검사에 걸렸다. 아래를 모두 고쳐라\n- " + "\n- ".join(errors)
-        from .schemas import TerraformFix
+        from .schemas import TerraformFix, TerraformPatch
+        if config.TF_PATCH_FIX:
+            patch_prompt = prompt.replace("고칠 때는 파일 전체를 다시 내라.",
+                "고칠 때는 edits에 최소 교체만 내라. old는 현재 파일에 정확히 한 번 있는 원문(공백 포함), "
+                "new는 교체할 코드다. 여러 교체는 순서대로 적용된다. 파일 추가·삭제와 주석 추가는 하지 마라.")
+            patch_prompt = patch_prompt.replace(f"\n\n## 견본\n{reference}\n", "\n")
+            patch = self._run(self._tf_agent(reference), patch_prompt, TerraformPatch)
+            if not patch.fixable:
+                return TerraformFix(fixable=False, cause=patch.cause)
+            updated = {f.name: f.content for f in files}
+            for edit in patch.edits:
+                if (edit.name not in updated or (arch == "ec2_compose" and edit.name != "main.tf")
+                        or updated[edit.name].count(edit.old) != 1):
+                    # Ambiguous edits must never be applied; retain the full-file repair fallback.
+                    break
+                updated[edit.name] = updated[edit.name].replace(edit.old, edit.new, 1)
+            else:
+                return TerraformFix(fixable=True, cause=patch.cause, changes=patch.changes,
+                    files=[f.model_copy(update={"content": updated[f.name]}) for f in files])
         return self._run(self._tf_agent(), prompt, TerraformFix)
 
     def fix_dockerfile(self, src: SourceTree, scan: dict, dockerfile: str, build_log: str, failed_phase: str,
