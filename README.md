@@ -172,6 +172,8 @@ Main Server 는 `start_build(projectName="pawploy-build", buildspecOverride=<응
 
 `ECR_REPO_URI`·`GCP_AR_REPO`·`GCP_SA_KEY_SECRET` 은 프로젝트 기본값으로 들어 있음 (필요하면 override).
 결과는 exported variables `ECR_IMAGE_URI`, `GCP_IMAGE_URI`(@sha256 digest 고정) → Worker `targets[].image_uri`.
+
+**`.dockerignore`**: 생성한 Dockerfile 은 `Dockerfile.pawploy.dockerignore`(BuildKit 이 프로젝트 `.dockerignore` 대신 읽는 파일)로 **우리 규칙만** 씁니다 (`.git`·`node_modules`·`.env`·키 파일 등, 하위 폴더 포함). 프로젝트 `.dockerignore` 가 생성 Dockerfile 이 COPY 하는 경로를 빼서 빌드가 깨지던 문제 때문입니다 (예: Terraform-worker 저장소는 `examples`·`*.json` 을 뺌 → `COPY examples/sample-app/app.py` 가 `not found`). 같은 소스·Dockerfile 로 예전 buildspec 은 실패, 지금 buildspec 은 성공 확인 (10/3).
 빌드 실패 시 `scripts/build.py` 가 로그 마지막 부분을 출력 → 그대로 `fix_build` 의 `build_log` 로.
 
 지금 설정: `setup_build.py --gcp-ar-repo asia-northeast3-docker.pkg.dev/softbankhackathon2026-peony/pawploy/pawploy-apps --gcp-key-secret pawploy/gcp-worker-key`
@@ -181,7 +183,7 @@ Main Server 는 `start_build(projectName="pawploy-build", buildspecOverride=<응
 이미지는 Lambda Web Adapter 포함 · `linux/amd64` · `$PORT` 로 받으므로 EC2·Lambda·Cloud Run 공용입니다.
 
 여러 컨테이너 (`buildspec-images.yml`, `env.shell: bash`):
-- `BUILD_FILES_URI` 폴더를 통째로 받아 `images.tsv`(코드가 형식 검사: `id \t 컨텍스트 \t Dockerfile \t 단계(-=마지막) \t 생성 여부`)를 한 줄씩 빌드: `docker build -f <Dockerfile> [--target <단계>] -t $ECR_REPO_URI:$IMAGE_TAG-<id> <컨텍스트>`. 생성 Dockerfile 은 소스 루트로 복사, 컨텍스트의 `.dockerignore`(+ `<Dockerfile>.dockerignore` 가 있으면 거기도)에 비밀 파일 규칙 추가
+- `BUILD_FILES_URI` 폴더를 통째로 받아 `images.tsv`(코드가 형식 검사: `id \t 컨텍스트 \t Dockerfile \t 단계(-=마지막) \t 생성 여부`)를 한 줄씩 빌드: `docker build -f <Dockerfile> [--target <단계>] -t $ECR_REPO_URI:$IMAGE_TAG-<id> <컨텍스트>`. 생성 Dockerfile 은 소스 루트로 복사하고 `<Dockerfile>.dockerignore` 로 우리 규칙만 씀. 프로젝트 Dockerfile 이면 컨텍스트의 `.dockerignore`(+ `<Dockerfile>.dockerignore` 가 있으면 거기도)에 비밀 파일 규칙 추가
 - 결과는 exported variable `IMAGE_DIGESTS` = `{"<이미지 id>": "<ECR_REPO_URI>@sha256:…", …}` (JSON 한 줄). Main 은 이것을 Worker 작업의 `targets[].images` 에 그대로 넣음
 - GCP push 없음 (`ec2_compose` 는 AWS 만). 빌드 실패 시 로그의 마지막 `[pawploy] build <id>` 가 실패한 이미지 → `fix_build(image_id=<id>)`
 

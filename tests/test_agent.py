@@ -207,6 +207,17 @@ def test_buildspec_is_fixed_template():
     assert "exported-variables" in spec
 
 
+def test_generated_dockerfile_ignores_project_dockerignore():
+    """프로젝트 .dockerignore 가 생성 Dockerfile 의 COPY 경로(examples/ 등)를 빼서 빌드가 깨지던 문제."""
+    spec = buildfiles.buildspec()
+    assert "./Dockerfile.pawploy.dockerignore" in spec and ">> .dockerignore" not in spec
+    assert "DOCKER_BUILDKIT=1 docker build" in spec
+    images = buildfiles.buildspec_images()
+    assert 'cp /tmp/pawploy/dockerignore "./$df.dockerignore"' in images   # 생성본은 우리 규칙만
+    assert 'cat /tmp/pawploy/dockerignore >> "$ctx/.dockerignore"' in images  # 프로젝트 Dockerfile 은 덧붙이기
+    assert "**/.env" in buildfiles.DOCKERIGNORE
+
+
 # ---------- gen_terraform / fix_terraform ----------
 
 from agent import terraform as tf  # noqa: E402

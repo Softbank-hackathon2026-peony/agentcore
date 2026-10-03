@@ -15,7 +15,7 @@ phases:
   build:
     commands:
       - cd "$(cat /tmp/build_dir)"
-      - fail=0; while IFS=$'\t' read -r id ctx df target gen; do if [ "$gen" = "true" ]; then cp "/tmp/pawploy/$df" "./$df"; fi; cat /tmp/pawploy/dockerignore >> "$ctx/.dockerignore"; if [ -f "$df.dockerignore" ]; then cat /tmp/pawploy/dockerignore >> "$df.dockerignore"; fi; tgt=(); if [ "$target" != "-" ]; then tgt=(--target "$target"); fi; echo "[pawploy] build $id ($df @ $ctx)"; docker build --platform linux/amd64 -f "$df" "${tgt[@]}" -t "$ECR_REPO_URI:$IMAGE_TAG-$id" "$ctx" || { fail=1; break; }; done < /tmp/pawploy/images.tsv; test "$fail" = 0
+      - fail=0; while IFS=$'\t' read -r id ctx df target gen; do if [ "$gen" = "true" ]; then cp "/tmp/pawploy/$df" "./$df"; cp /tmp/pawploy/dockerignore "./$df.dockerignore"; else cat /tmp/pawploy/dockerignore >> "$ctx/.dockerignore"; if [ -f "$df.dockerignore" ]; then cat /tmp/pawploy/dockerignore >> "$df.dockerignore"; fi; fi; tgt=(); if [ "$target" != "-" ]; then tgt=(--target "$target"); fi; echo "[pawploy] build $id ($df @ $ctx)"; DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -f "$df" "${tgt[@]}" -t "$ECR_REPO_URI:$IMAGE_TAG-$id" "$ctx" || { fail=1; break; }; done < /tmp/pawploy/images.tsv; test "$fail" = 0
   post_build:
     commands:
       - test "$CODEBUILD_BUILD_SUCCEEDING" = "1"

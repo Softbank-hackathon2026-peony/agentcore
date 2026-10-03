@@ -24,10 +24,13 @@ IMAGES_TSV = "images.tsv"        # 같은 목록을 buildspec 이 읽는 모양�
 _TSV_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")       # Worker job.IMAGE_ID_RE 와 같음
 _TSV_PATH = re.compile(r"^[A-Za-z0-9_.][A-Za-z0-9_./@+-]{0,250}$")  # 탭·줄바꿈·공백 없음, - 로 시작하지 않음
 
+# 생성한 Dockerfile 은 <Dockerfile>.dockerignore 로 이 규칙만 쓴다 (BuildKit 이 프로젝트 .dockerignore 대신 읽음).
+# 프로젝트 .dockerignore 가 생성 Dockerfile 이 COPY 하는 경로(examples/, *.json 등)를 빼서 빌드가 깨지는 일을 막기 위해서다.
+# 프로젝트 Dockerfile 을 그대로 쓸 때만 프로젝트 .dockerignore 뒤에 덧붙인다 (buildspec_images).
 DOCKERIGNORE = "\n".join([
-    "# Pawploy가 추가한 규칙: 비밀·불필요 파일은 이미지에 넣지 않는다",
-    ".git", "**/node_modules", "**/__pycache__", "**/.venv", "**/venv",
-    ".env", ".env.*", "!.env.example", "**/*.pem", "**/*.key", "**/id_rsa*", "**/*.tfstate*",
+    "# Pawploy 규칙: 비밀·불필요 파일은 이미지에 넣지 않는다",
+    "**/.git", "**/node_modules", "**/__pycache__", "**/.venv", "**/venv",
+    "**/.env", "**/.env.*", "!**/.env.example", "**/*.pem", "**/*.key", "**/id_rsa*", "**/*.tfstate*",
     "**/credentials",
 ]) + "\n"
 
@@ -123,15 +126,14 @@ phases:
       - case "$SOURCE_URI" in */) aws s3 cp --recursive "$SOURCE_URI" . ;; *.zip) aws s3 cp "$SOURCE_URI" /tmp/src.zip && unzip -q /tmp/src.zip -d . ;; *) aws s3 cp "$SOURCE_URI" /tmp/src.tgz && tar -xzf /tmp/src.tgz -C . ;; esac
       - if [ "$(ls -A | wc -l)" = "1" ] && [ -d "$(ls -A)" ]; then cd "$(ls -A)"; fi
       - aws s3 cp "${{BUILD_FILES_URI}}{DOCKERFILE_NAME}" ./{DOCKERFILE_NAME}
-      - aws s3 cp "${{BUILD_FILES_URI}}dockerignore" /tmp/pawploy.dockerignore
-      - cat /tmp/pawploy.dockerignore >> .dockerignore
+      - aws s3 cp "${{BUILD_FILES_URI}}dockerignore" ./{DOCKERFILE_NAME}.dockerignore
       - echo "$PWD" > /tmp/build_dir
       - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "${{ECR_REPO_URI%%/*}}"
       - if [ -n "$GCP_AR_REPO" ]; then aws secretsmanager get-secret-value --secret-id "$GCP_SA_KEY_SECRET" --query SecretString --output text | docker login -u _json_key --password-stdin "https://${{GCP_AR_REPO%%/*}}"; fi
   build:
     commands:
       - cd "$(cat /tmp/build_dir)"
-      - docker build --platform linux/amd64 -f {DOCKERFILE_NAME} -t "$ECR_REPO_URI:$IMAGE_TAG" .
+      - DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -f {DOCKERFILE_NAME} -t "$ECR_REPO_URI:$IMAGE_TAG" .
   post_build:
     commands:
       - test "$CODEBUILD_BUILD_SUCCEEDING" = "1"
@@ -180,7 +182,7 @@ phases:
   build:
     commands:
       - cd "$(cat /tmp/build_dir)"
-      - fail=0; while IFS=$'\\t' read -r id ctx df target gen; do if [ "$gen" = "true" ]; then cp "/tmp/pawploy/$df" "./$df"; fi; cat /tmp/pawploy/dockerignore >> "$ctx/.dockerignore"; if [ -f "$df.dockerignore" ]; then cat /tmp/pawploy/dockerignore >> "$df.dockerignore"; fi; tgt=(); if [ "$target" != "-" ]; then tgt=(--target "$target"); fi; echo "[pawploy] build $id ($df @ $ctx)"; docker build --platform linux/amd64 -f "$df" "${tgt[@]}" -t "$ECR_REPO_URI:$IMAGE_TAG-$id" "$ctx" || { fail=1; break; }; done < /tmp/pawploy/IMAGES_TSV; test "$fail" = 0
+      - fail=0; while IFS=$'\\t' read -r id ctx df target gen; do if [ "$gen" = "true" ]; then cp "/tmp/pawploy/$df" "./$df"; cp /tmp/pawploy/dockerignore "./$df.dockerignore"; else cat /tmp/pawploy/dockerignore >> "$ctx/.dockerignore"; if [ -f "$df.dockerignore" ]; then cat /tmp/pawploy/dockerignore >> "$df.dockerignore"; fi; fi; tgt=(); if [ "$target" != "-" ]; then tgt=(--target "$target"); fi; echo "[pawploy] build $id ($df @ $ctx)"; DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -f "$df" "${tgt[@]}" -t "$ECR_REPO_URI:$IMAGE_TAG-$id" "$ctx" || { fail=1; break; }; done < /tmp/pawploy/IMAGES_TSV; test "$fail" = 0
   post_build:
     commands:
       - test "$CODEBUILD_BUILD_SUCCEEDING" = "1"
