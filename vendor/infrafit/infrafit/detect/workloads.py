@@ -26,7 +26,10 @@ from infrafit.repo import Snapshot, parent_dir
 
 WEB_FRAMEWORKS = ("next", "express", "fastify", "koa", "@nestjs/core", "hono", "fastapi", "flask", "django")
 STATIC_OUTPUT_DIRS = ("dist", "build", "out")  # 정적 프런트엔드 빌드 결과 디렉터리
-PROC_KINDS = {"web": "web", "worker": "worker", "clock": "scheduled", "release": "migration-job"}
+PROC_KINDS = {"web": "web", "worker": "worker", "clock": "scheduled", "beat": "scheduled", "scheduler": "scheduled",
+              "cron": "scheduled", "release": "migration-job"}
+# 표에 없는 Procfile 유형이라도 Celery beat(정기 작업 스케줄러)를 실행하면 정기 작업이다
+CELERY_BEAT = re.compile(r"\bcelery\b(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^\s-]\S*)?)*\s+beat(?=\s|$)")
 # 워커 프로세스를 뜻하는 토큰 끝(`board.worker`, `jobs/worker.py` 등). `--workers 4`, `uvicorn.workers.UvicornWorker`는 아니다
 WORKER_SUFFIXES = (".worker", "/worker", ":worker", "worker.py", "worker.js", "worker.ts")
 # 진입점 파일이 계속 도는 프로세스라는 근거(무한 루프, 서버·소비자 루프). 없으면 실행하고 끝나는 배치·CLI(batch)
@@ -57,10 +60,14 @@ class WorkloadInfo:
     framework: str = ""  # 코드에서 찾은 웹 프레임워크(Spring: spring-mvc·spring-webflux). 출력에는 쓰지 않는다
     framework_evidence: dict | None = None  # 프레임워크를 정한 의존성 줄(Spring 웹 스타터)
     schedule_evidence: dict | None = None  # 배치 진입점을 실행하는 GitHub Actions 스케줄의 cron 줄
+    scaling: dict | None = None  # 확장 요구(detect/scaling.py): {min, max, autoscale, evidence, load_tests?}
 
     def to_dict(self) -> dict:
-        return {"id": self.id, "kind": self.kind, "name": self.name,
-                "entrypoint": self.entrypoint, "status": self.status}
+        out = {"id": self.id, "kind": self.kind, "name": self.name,
+               "entrypoint": self.entrypoint, "status": self.status}
+        if self.scaling is not None:
+            out["scaling"] = self.scaling
+        return out
 
 
 def is_worker_command(text: str) -> bool:
@@ -247,7 +254,7 @@ def _from_code(snap: Snapshot, manifests: Manifests, artifacts: list[ParsedArtif
             found.setdefault(key, info)
     for key, (cmd, rel, line) in sorted(manifests.procfile.items()):
         d, proc = key.split(":", 1)
-        wkind = PROC_KINDS.get(proc)
+        wkind = PROC_KINDS.get(proc) or ("scheduled" if CELERY_BEAT.search(cmd) else None)
         if not wkind or is_test_dir(d):
             continue
         entry = found.setdefault((wkind, d), {})

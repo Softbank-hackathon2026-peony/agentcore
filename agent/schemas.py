@@ -7,7 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-TargetId = Literal["aws_lambda", "aws_ec2", "aws_ec2_compose", "gcp_cloud_run", "aws_ecs_fargate", "gcp_compute_engine"]
+TargetId = Literal["aws_lambda", "aws_ec2", "aws_ec2_compose", "gcp_cloud_run", "aws_ecs_fargate", "gcp_compute_engine",
+                   "gcp_gke", "aws_eks"]
 Size = Literal["micro", "small", "medium"]
 Verdict = Literal["추천", "적합", "과함", "낭비", "부적합"]
 

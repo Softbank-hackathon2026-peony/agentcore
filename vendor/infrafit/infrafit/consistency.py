@@ -108,6 +108,12 @@ def check_s1(inventory: dict, repo_root: Path | None) -> list[str]:
         for h in p["hops"]:
             if h["component"] not in SPECIAL_COMPONENTS and h["component"] not in catalog:
                 issues.append(f"request path {p['id']}: not in catalog {h['component']}")
+    for w in inventory["workloads"]:
+        sc = w.get("scaling")
+        if sc and sc["min"] > sc["max"]:
+            issues.append(f"workload {w['id']}: scaling min {sc['min']} > max {sc['max']}")
+        if sc and sc["autoscale"] and sc["min"] == sc["max"]:
+            issues.append(f"workload {w['id']}: scaling autoscale with min == max")
     issues += _check_deploy_units(inventory.get("deploy_units"), workloads,
                                   {d["id"] for d in inventory["datastores"]})
     if repo_root is not None:
@@ -186,6 +192,13 @@ def check_s2(profile: dict, inventory: dict, repo_root: Path | None) -> list[str
             issues.append(f"{where}: value outside vocabulary {r['value']!r}")
         if r["source"] == "assumption" and r.get("assumption_key") not in keys:
             issues.append(f"{where}: assumption_key not in assumptions {r.get('assumption_key')}")
+    batch = profile.get("batch_only")
+    if batch:
+        for w in batch["workloads"]:
+            if w not in workloads:
+                issues.append(f"batch_only: unknown workload {w}")
+        if batch["value"] != bool(batch["workloads"]):
+            issues.append("batch_only: value must be true exactly when workloads is non-empty")
     if profile.get("llm_used") is not False:
         issues.append("profile: llm_used must be false (no inference in this stage)")
     if repo_root is not None:
@@ -251,15 +264,32 @@ def check_s4(rec: dict, fit: dict, inventory: dict, profile: dict | None,
             cell = cells.get((scope, comp))
             if cell is not None and cell["result"] == "infeasible":
                 issues.append(f"candidate {cand['id']}: infeasible assignment {scope} × {comp}")
+        placement = cand.get("placement") or []
+        for p in placement:
+            if cand["assignment"].get(p["scope"]) != p["component"]:
+                issues.append(f"candidate {cand['id']}: placement {p['scope']} × {p['component']} not in assignment")
+        compute_scopes = {s for s, c in cand["assignment"].items() if c.startswith("cp:")}
+        if "placement" in cand and compute_scopes != {p["scope"] for p in placement}:
+            issues.append(f"candidate {cand['id']}: placement does not cover compute scopes")
+        if cand.get("topology") in ("vm-compose", "kubernetes") and len({p["component"] for p in placement}) > 1:
+            issues.append(f"candidate {cand['id']}: {cand['topology']} places workloads on several compute components")
         known_tf = {t["id"] for t in rec["transforms"]}
         for t in cand["transforms"]:
             if t not in known_tf:
                 issues.append(f"candidate {cand['id']}: unknown transform {t}")
+    by_id = {c["id"]: c for c in rec["candidates"]}
     if rec["recommended"] is None:
-        if ids:
+        if ids and rec["outcome"] != "unverified":
             issues.append("recommended is null although candidates exist")
     elif rec["recommended"] not in ids:
         issues.append(f"recommended {rec['recommended']} is not a candidate")
+    elif by_id[rec["recommended"]].get("unknown"):
+        issues.append(f"recommended {rec['recommended']} has unknown capabilities for detected requirements")
+    if rec["outcome"] == "unverified":
+        if rec["recommended"] is not None or not ids or not all(c.get("unknown") for c in by_id.values()):
+            issues.append("outcome unverified requires no recommended and unknown on every candidate")
+    if ((profile or {}).get("batch_only") or {}).get("value") and (ids or rec["outcome"] != "not_deployable"):
+        issues.append("profile.batch_only is true but recommendation is not not_deployable without candidates")
     return sorted(set(issues))
 
 

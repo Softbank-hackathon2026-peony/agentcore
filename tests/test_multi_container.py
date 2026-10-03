@@ -367,24 +367,41 @@ CELERY = str(FIX / "procfile_celery")       # Flask + Celery, Procfile web/worke
 NGINX_CONF = str(FIX / "compose_nginx_conf")  # 공식 nginx 이미지 + 저장소 설정 파일 bind mount (build 없음)
 
 
-def test_code_only_redis_is_flagged_not_called_managed(tmp_path):
+def test_code_path_redis_beat_and_port(tmp_path):
     fixes = [UnitFix(field="port", id="web", value="8000", why="gunicorn 기본"),
              UnitFix(field="entry", id="web", value="8000", why="웹 프로세스")]
     out, _, _ = _analyze(tmp_path, CELERY, fixes)
     rec = out["recommendation"]
     du = rec["deploy_units"]
-    assert du["datastores"] == []                                             # compose 가 없어 Redis 컨테이너가 없다
-    missing = [w for w in rec["warnings"] if "redis 컨테이너가 없습니다" in w]
-    assert len(missing) == 1 and "requirements.txt:3" in missing[0]
-    assert not any("관리형" in w for w in rec["warnings"])                   # 띄우지도 않는 저장소를 "컨테이너로 띄운다"고 하지 않음
+    # InfraFit(QA 후속): compose 가 없어도 코드가 쓰는 Redis 컨테이너와 접속 주소, Procfile beat 를 묶음에 넣는다
+    assert [(d["id"], d["image"]) for d in du["datastores"]] == [("redis", "redis:7-alpine")]
+    cs = {c["id"]: c for c in du["containers"]}
+    assert set(cs) == {"web", "worker", "scheduled"}
+    assert all(c["run"]["env"]["REDIS_URL"] == ["redis://redis:6379/0"] for c in cs.values())
+    assert not any("컨테이너가 없습니다" in w for w in rec["warnings"]) and rec["required_secrets"] == []
     # $PORT 는 compose 가 서버 환경변수로 바꿔 빈 값이 되므로 듣는 포트로 바꾼다
-    web = next(c for c in du["containers"] if c["id"] == "web")
-    assert web["command"] == "gunicorn app:app --bind 0.0.0.0:8000"
+    assert cs["web"]["command"] == "gunicorn app:app --bind 0.0.0.0:8000"
     assert any("web.command: $PORT → 8000" in w for w in rec["warnings"])
     # 코드에 없는 포트를 AI 가 채우면 "코드 확인"이라 하지 않는다
     assert any(w.startswith("AI 보완 (근거 없음, 확인 필요): web 포트 → 8000") for w in rec["warnings"])
     assert not any(w.startswith("AI 보완 (코드 확인): web 포트") for w in rec["warnings"])
     assert len(rec["candidates"]) <= 5
+
+
+def test_store_missing_from_bundle_is_flagged_not_called_managed():
+    from agent.analyze import _infrafit_compute_warnings
+    inv = {"datastores": [{"id": "svc-redis", "component": "ca:unspecified/redis/default", "status": "confirmed",
+                           "at": ["tasks.py:4"]},
+                          {"id": "ds-postgresql", "component": "ds:unspecified/postgresql/default", "status": "confirmed",
+                           "at": ["app.py:3"]},
+                          {"id": "svc-celery", "component": "qu:lib/celery/default", "status": "confirmed"}]}
+    reco = {"recommended": {"target": "aws_ec2", "placement": {"w-web": {"component": "cp:aws/ec2/docker-compose"}},
+                            "datastores": {"svc-redis": "ca:aws/elasticache/node-based",
+                                           "ds-postgresql": "ds:aws/rds-postgres/single-az"}}}
+    u = {"containers": [{"id": "web"}], "datastores": [{"id": "redis", "datastore": "svc-redis", "image": "redis:7-alpine"}]}
+    w = _infrafit_compute_warnings(reco, u, inv)
+    assert w[0].startswith("코드가 postgresql 를 쓰는데(app.py:3) 이번 배포 묶음에 postgresql 컨테이너가 없습니다")
+    assert len(w) == 2 and "관리형(ca:aws/elasticache/node-based)" in w[1]        # 묶음에 없는 RDS 는 "컨테이너로 띄운다"고 하지 않음
 
 
 def test_registry_image_config_mount_is_baked_into_image(tmp_path):

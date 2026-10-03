@@ -28,7 +28,7 @@ def image_name(image: str) -> str:
 
 
 def classify_image(image) -> dict | None:
-    """knowledge/images.yaml로 이미지를 분류한다: {role, component, hosting_hint, port, label}, 맞는 항목이 없으면 None.
+    """knowledge/images.yaml로 이미지를 분류한다: {role, component, hosting_hint, port, label, image, url_scheme, url_template}, 맞는 항목이 없으면 None.
     label은 패턴에 맞은 이름(마지막 이름 또는 `저장소/이름`)이다."""
     keys = image_keys(image) if isinstance(image, str) else []
     for entry in kb.images():
@@ -36,7 +36,9 @@ def classify_image(image) -> dict | None:
             key = next((k for k in keys if fnmatchcase(k, str(pattern).lower())), None)
             if key:
                 return {"role": entry.get("role"), "component": entry.get("component"),
-                        "hosting_hint": entry.get("hosting_hint"), "port": entry.get("port"), "label": key}
+                        "hosting_hint": entry.get("hosting_hint"), "port": entry.get("port"), "label": key,
+                        "image": entry.get("image"), "url_scheme": entry.get("url_scheme"),
+                        "url_template": entry.get("url_template")}
     return None
 
 

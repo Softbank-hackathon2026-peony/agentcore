@@ -250,8 +250,8 @@ def validate_multi(rec: LLMRecommendation, src: source.SourceTree, scan: dict, d
             continue
         seen.add(c.target)
         candidates.append(_candidate(c.target, c.fit, c.verdict, c.why, rec.size))
-    for tid in catalog.TARGETS:
-        if tid not in seen:
+    for tid, t in catalog.TARGETS.items():   # k8s 비교 대상은 LLM이 고를 때만
+        if tid not in seen and not (t.get("kubernetes") and not catalog.is_deployable(tid)):
             candidates.append(_candidate(tid, None, "부적합", "모델이 평가하지 않음", rec.size))
     candidates = candidates[:MAX_CANDIDATES]
     for i, c in enumerate(candidates, 1):
@@ -303,8 +303,9 @@ def _infrafit_compute_warnings(reco: dict, u: dict, inv_summary: dict) -> list[s
     """InfraFit 추천과 이번 배포 묶음(deploy_units)이 다른 점. 코드가 쓰는 저장소가 묶음에 없으면 그것부터 알린다."""
     count = len(u["containers"]) + len(u["datastores"])
     rec = reco.get("recommended") or {}
-    assignment = rec.get("assignment") or {}
-    compute = next((c for c in assignment.values() if str(c).startswith("cp:")), None)
+    # 요약 형식: placement = 워크로드별 컴퓨트, datastores = 저장소별 구성 요소 (ds:vm/·ca:vm/ 은 같은 서버 컨테이너)
+    computes = sorted({p.get("component") for p in (rec.get("placement") or {}).values()} - {None})
+    stores = rec.get("datastores") or {}
     out = []
     # 저장소 컨테이너가 묶음에 있는지는 InfraFit 인벤토리의 저장소(id·엔진)와 deploy_units.datastores 를 맞춰 본다
     found = {d["id"]: d for d in inv_summary.get("datastores") or [] if d.get("status") == "confirmed"}
@@ -325,11 +326,12 @@ def _infrafit_compute_warnings(reco: dict, u: dict, inv_summary: dict) -> list[s
         out.append(f"코드가 {eng} 를 쓰는데({at}) 이번 배포 묶음에 {eng} 컨테이너가 없습니다 (compose 에 없는 저장소는 "
                    f"띄우지 않음). 접속 주소를 환경변수로 따로 넣지 않으면 앱이 localhost 로 접속하다 실패합니다. "
                    f"docker-compose.yml 에 {eng} 서비스를 추가하고 다시 분석하세요.")
-    if compute and compute != COMPOSE_COMPUTE:
-        out.append(f"InfraFit 1순위 컴퓨트는 {rec.get('target') or '?'}({compute})지만, 컨테이너 {count}개를 그대로 함께 "
+    if computes and computes != [COMPOSE_COMPUTE]:
+        out.append(f"InfraFit 1순위 컴퓨트는 {'+'.join(rec.get('targets') or [rec.get('target') or '?'])}"
+                   f"({', '.join(computes[:3])})지만, 컨테이너 {count}개를 그대로 함께 "
                    f"띄울 수 있는 배포 대상은 {MULTI_TARGET} 뿐이라 이것으로 정했습니다.")
-    managed = sorted(c for scope, c in assignment.items()
-                     if not str(c).startswith("cp:") and in_bundle(scope, _engine((found.get(scope) or {}).get("component"))))
+    managed = sorted(c for scope, c in stores.items()
+                     if not str(c).split("/")[0].endswith(":vm") and in_bundle(scope, _engine((found.get(scope) or {}).get("component"))))
     if managed:
         out.append(f"InfraFit 은 데이터 저장소를 관리형({', '.join(managed[:4])})으로 추천했지만, 이번 배포는 같은 서버의 "
                    "컨테이너로 띄웁니다 (서버를 지우면 데이터도 사라짐).")

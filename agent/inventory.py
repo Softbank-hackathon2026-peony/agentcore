@@ -194,8 +194,7 @@ def summarize(inv: dict, profile: dict | None = None, fit: dict | None = None,
                            "settings": settings[:8]}
 
     summary = {
-        "workloads": [{"id": w["id"], "kind": w.get("kind"), "name": w.get("name"), "status": w.get("status"),
-                       "at": _at(w.get("entrypoint"))} for w in inv.get("workloads") or []][:20],
+        "workloads": [_workload(w) for w in inv.get("workloads") or []][:20],
         "endpoints": {"total": len(eps), "per_workload": dict(list(per_workload.items())[:20]),
                       "first": [endpoint_line(e) for e in eps[:25]]},
         "datastores": [{"id": d["id"], "role": d.get("role"), "component": _component_of(inv, d["id"]),
@@ -219,7 +218,8 @@ def summarize(inv: dict, profile: dict | None = None, fit: dict | None = None,
     if reco is None or profile is None:
         _bound(summary, MAX_SUMMARY_BYTES - reserved)
     else:
-        block = _bound_recommendation(recommendation_summary(profile, fit or {}, reco))
+        kinds = {w["id"]: w.get("kind") for w in inv.get("workloads") or [] if w.get("id")}
+        block = _bound_recommendation(recommendation_summary(profile, fit or {}, reco, kinds))
         _bound(summary, MAX_SUMMARY_BYTES - reserved - _size(block) - len(', "recommendation": '))
         summary["recommendation"] = block
     if units:
@@ -254,6 +254,15 @@ def deploy_units_summary(du: dict) -> dict:
         while _size(out) > MAX_DEPLOY_UNITS_BYTES and out[key]:
             out[key] = out[key][:-1]
             out["truncated"] = True
+    return out
+
+
+def _workload(w: dict) -> dict:
+    out = {"id": w["id"], "kind": w.get("kind"), "name": w.get("name"), "status": w.get("status"),
+           "at": _at(w.get("entrypoint"))}
+    sc = w.get("scaling")
+    if isinstance(sc, dict):                         # 저장소가 정한 레플리카·오토스케일 (HPA, compose replicas 등)
+        out["scaling"] = {"min": sc.get("min"), "max": sc.get("max"), "autoscale": bool(sc.get("autoscale"))}
     return out
 
 
@@ -326,15 +335,65 @@ def _dim_value(v):
     return v
 
 
-def _candidate(c: dict) -> dict:
+BASIS = {"official": "공식", "derived": "유도"}
+
+
+def _target_of(component: str | None) -> str | None:
+    """구성 요소 id(또는 'vm-compose/cp:…/managed-data' 같은 조합 id) → AgentCore 대상 id."""
     targets = _targets()
-    assignment = c.get("assignment") or {}
-    compute = next((comp for comp in assignment.values() if str(comp).startswith("cp:")), None)
-    target = targets.get(compute)
-    out = {"id": c.get("id"), "rank": c.get("rank"), "target": target,
+    comp = str(component or "")
+    if "cp:" in comp:
+        comp = comp[comp.index("cp:"):]
+    while comp:
+        if comp in targets:
+            return targets[comp]
+        if "/" not in comp:
+            return None
+        comp = comp.rsplit("/", 1)[0]
+    return None
+
+
+def _placements(c: dict) -> list[dict]:
+    """[{scope, component, target}] — S4 placement, 없으면 assignment 의 컴퓨트(cp:)에서 만든다."""
+    rows = [p for p in c.get("placement") or [] if isinstance(p, dict) and p.get("scope")]
+    if not rows:
+        rows = [{"scope": s, "component": comp} for s, comp in sorted((c.get("assignment") or {}).items())
+                if str(comp).startswith("cp:")]
+    return [{"scope": p["scope"], "component": p.get("component"),
+             "target": p.get("target") or _target_of(p.get("component"))} for p in rows]
+
+
+def _main_placement(rows: list[dict], kinds: dict[str, str]) -> dict | None:
+    """주 웹 워크로드(웹 범위 중 id 순 첫째)의 배치. 없으면 첫 배치."""
+    web = sorted((r for r in rows if kinds.get(r["scope"]) == "web"), key=lambda r: r["scope"])
+    return web[0] if web else (rows[0] if rows else None)
+
+
+def _derived_fact(f: dict) -> str:
+    src = f.get("source") or {}
+    reason = src.get("reasoning") or f.get("message") or ""
+    return _short(f"{f.get('scope')} {f.get('capability_key')}={json.dumps(f.get('actual'), ensure_ascii=False)}: {reason}", 160)
+
+
+def _candidate(c: dict, kinds: dict[str, str] | None = None) -> dict:
+    rows = _placements(c)
+    main = _main_placement(rows, kinds or {})
+    target = (main or {}).get("target")
+    placed = {r["scope"] for r in rows}
+    targets = sorted({r["target"] for r in rows if r["target"]})
+    out = {"id": c.get("id"), "rank": c.get("rank"), "topology": c.get("topology"),
+           "target": target, "targets": targets,
            "deployable": catalog.is_deployable(target) if target else False,
-           "assignment": assignment,
+           "placement": {r["scope"]: {"component": r["component"], "target": r["target"],
+                                      "deployable": catalog.is_deployable(r["target"]) if r["target"] else False}
+                         for r in rows},
+           "datastores": {s: comp for s, comp in sorted((c.get("assignment") or {}).items()) if s not in placed},
            "unknown_count": c.get("unknown_count", 0)}
+    if len(targets) > 1:
+        out["multi_target"] = True
+    facts = list(dict.fromkeys(_derived_fact(f) for f in c.get("derived_facts") or [] if isinstance(f, dict)))
+    if facts:
+        out["derived_facts"] = facts[:3]
     if c.get("transforms"):
         out["transforms"] = c["transforms"]
     if c.get("external_scopes"):                     # 바꾸지 않고 그대로 쓰는 외부 서비스(BaaS 등)
@@ -361,11 +420,17 @@ def worker_limit(target: str | None, dims: dict) -> str | None:
     return None
 
 
-def recommendation_summary(profile: dict, fit: dict, reco: dict) -> dict:
+def _worker_limit_any(c: dict, dims: dict) -> str | None:
+    """후보의 배치 대상 중 하나라도 Worker 상한에 걸리면 그 이유 (워크로드마다 대상이 다를 수 있음)."""
+    return next((why for t in c.get("targets") or [c.get("target")] if (why := worker_limit(t, dims))), None)
+
+
+def recommendation_summary(profile: dict, fit: dict, reco: dict, kinds: dict[str, str] | None = None) -> dict:
     scope = _app_scope(profile, reco)
     reasons_by_assumption = {a.get("key"): a.get("reason") for a in profile.get("assumptions") or []}
-    dims, dim_values = {}, {}
+    dims, dim_values, scope_values = {}, {}, {}
     for d in profile.get("dimensions") or []:
+        scope_values.setdefault((d.get("scope"), d.get("dimension")), _dim_value(d.get("value")))
         if d.get("scope") != scope or d.get("dimension") not in APP_DIMENSIONS:
             continue
         row = {"value": _dim_value(d.get("value"))}
@@ -378,25 +443,41 @@ def recommendation_summary(profile: dict, fit: dict, reco: dict) -> dict:
         dims[d["dimension"]] = row
         dim_values[d["dimension"]] = row["value"]
 
-    targets = _targets()
     rejected, seen = [], set()
 
-    def add_reason(component: str, v: dict | None, detail: str | None = None):
-        entry = next((r for r in rejected if r["component"] == component), None)
-        if entry is None:
-            entry = {"component": component, "target": targets.get(component), "reasons": []}
-            rejected.append(entry)
+    def _value_for(dim, at_scope):
+        """위반이 난 범위의 차원 값. 범위를 모르면 앱 범위, 그다음 그 차원이 있는 첫 범위."""
+        if at_scope and (at_scope, dim) in scope_values:
+            return scope_values[(at_scope, dim)]
+        if dim in dim_values:
+            return dim_values[dim]
+        return next((v for (sc, d), v in sorted(scope_values.items(), key=lambda kv: str(kv[0]))
+                     if d == dim and v is not None), None)
+
+    def add_reason(component: str, v: dict | None, detail: str | None = None, scope: str | None = None):
         if v:
-            key = (component, v.get("rule"), v.get("dimension"), v.get("capability_key"))
+            cp = component[component.index("cp:"):] if "cp:" in component else component
+            key = (cp, v.get("rule"), v.get("dimension"), v.get("capability_key"))
             if key in seen:
                 return
             seen.add(key)
+        entry = next((r for r in rejected if r["component"] == component), None)
+        if entry is None:
+            entry = {"component": component, "target": _target_of(component), "reasons": []}
+            rejected.append(entry)
+        if v:
             src = v.get("source") or {}
-            entry["reasons"].append({
+            reason = {
                 "rule": v.get("rule"), "dimension": v.get("dimension"),
-                "dimension_value": dim_values.get(v.get("dimension")),
+                "dimension_value": _value_for(v.get("dimension"), scope),
                 "capability": v.get("capability_key"), "capability_value": v.get("actual"),
-                "source": {"url": src.get("ref") or src.get("url"), "quote": _short(src.get("quote"), 140)}})
+                "basis": BASIS.get(src.get("basis"), "공식"),
+                "source": {"url": src.get("ref") or src.get("url"), "quote": _short(src.get("quote"), 140)}}
+            if src.get("basis") == "derived" and src.get("reasoning"):
+                reason["reasoning"] = _short(src["reasoning"], 120)
+            if scope:
+                reason["scope"] = scope
+            entry["reasons"].append(reason)
         elif detail:
             entry["reasons"].append({"detail": _short(detail, 160)})
 
@@ -406,22 +487,23 @@ def recommendation_summary(profile: dict, fit: dict, reco: dict) -> dict:
     for cell in fit.get("matrix") or []:            # S4 가 조합으로 못 만든 컴퓨트 탈락도 놓치지 않게
         if cell.get("result") == "infeasible" and str(cell.get("candidate", "")).startswith("cp:"):
             for v in cell.get("violations") or []:
-                add_reason(cell["candidate"], v)
+                add_reason(cell["candidate"], v, scope=cell.get("scope"))
+    rejected = [e for e in rejected if e["reasons"]]
     for entry in rejected:
         entry["reasons"] = entry["reasons"][:3]
 
     cands = reco.get("candidates") or []
     rec = next((c for c in cands if c.get("id") == reco.get("recommended")), None)
-    top = [_candidate(c) for c in cands[:5]]
+    top = [_candidate(c, kinds) for c in cands[:5]]
     for c in top:
-        why = worker_limit(c["target"], dim_values)
+        why = _worker_limit_any(c, dim_values)
         if why:
             c["worker_limit"] = why
-    out = {"recommended": _candidate(rec) if rec else None,
+    out = {"recommended": _candidate(rec, kinds) if rec else None,
            "top": top,
            "rejected": rejected,
            "app_scope": scope, "dimensions": dims}
-    first_why = worker_limit((out["recommended"] or {}).get("target"), dim_values)
+    first_why = _worker_limit_any(out["recommended"], dim_values) if out["recommended"] else None
     if first_why:                                     # InfraFit 1순위가 우리 Worker 설정으로는 안 됨 → 다음 후보
         nxt = next((c for c in top if not c.get("worker_limit") and c["id"] != out["recommended"]["id"]), None)
         out["worker_override"] = {"infrafit_target": out["recommended"]["target"], "why": first_why}
@@ -440,18 +522,38 @@ def recommendation_summary(profile: dict, fit: dict, reco: dict) -> dict:
 
 
 def _bound_recommendation(block: dict) -> dict:
-    """recommendation 블록 상한: 탈락 근거 인용 → 후보 수 → 탈락 수 순으로 줄인다."""
-    if _size(block) > MAX_RECOMMENDATION_BYTES:
+    """recommendation 블록 상한. 목록부터 줄인다: 하위 후보의 유도 근거 → 후보 수(3개까지) → 탈락 근거 인용
+    → 후보 수(1개까지) → 탈락 수 → 차원 설명 → 1순위 유도 근거 → 배치 목록(반씩)."""
+    def over() -> bool:
+        return _size(block) > MAX_RECOMMENDATION_BYTES
+
+    if over():
+        for c in block["top"][1:]:
+            c.pop("derived_facts", None)
+    while over() and len(block["top"]) > 3:
+        block["top"] = block["top"][:-1]
+    if over():
         for entry in block["rejected"]:
             for r in entry["reasons"]:
                 if "source" in r:
                     r["source"].pop("quote", None)
-    while _size(block) > MAX_RECOMMENDATION_BYTES and len(block["top"]) > 1:
+    while over() and len(block["top"]) > 1:
         block["top"] = block["top"][:-1]
-    while _size(block) > MAX_RECOMMENDATION_BYTES and block["rejected"]:
+    while over() and block["rejected"]:
         block["rejected"] = block["rejected"][:-1]
     for d in block["dimensions"].values():
-        if _size(block) <= MAX_RECOMMENDATION_BYTES:
+        if not over():
             break
         d.pop("why", None)
+    if over():
+        for c in [block.get("recommended"), *block["top"]]:
+            if c:
+                c.pop("derived_facts", None)
+    while over():
+        cands = [c for c in [block.get("recommended"), *block["top"]] if c and len(c.get("placement") or {}) > 1]
+        if not cands:
+            break
+        for c in cands:
+            c["placement"] = dict(list(c["placement"].items())[: len(c["placement"]) // 2])
+            c["placement_truncated"] = True
     return block

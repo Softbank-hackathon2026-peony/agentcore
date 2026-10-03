@@ -11,8 +11,16 @@
 # - COST.monthly_pinned_usd 는 인스턴스 1개를 상시 둘 때의 서울 월 비용(조사 문서 줄에 그 값이 있을 때만).
 #   scale-to-zero 플랫폼에서 인스턴스 고정 설정(CP.single_instance_config·CP.always_on_config)이 필요한 후보는
 #   바닥 비용 대신 이 값을 쓰고, 키가 없으면 비용을 모른다(null).
-# - CP.always_on_config 는 상시 실행이 아닌 플랫폼에서 워커를 붙잡아 두는 설정. 요청 기반 과금 Cloud Run은 요청 밖
-#   CPU가 없어(05:134) 두지 않는다.
+# - CP.always_on_config 는 상시 실행이 아닌 플랫폼에서 워커·앱 안 스케줄러를 붙잡아 두는 설정. 요청 기반 과금 Cloud Run은
+#   요청 밖 CPU가 없어(05:134) 두지 않는다.
+# - 유도 값(정의상/유도, 2026-10-03 승인): 공식 문장이 값을 직접 말하지 않지만 인용한 사실 하나에서 한 단계로 이끌 수 있는
+#   값은 source: {basis: derived, from: {doc, line, url, quote}, reasoning}로 공급자 인용 값(basis: official, 기본)과 따로 적는다.
+#   from 은 전제 인용(공식 값과 같은 검사: doc:line에 그대로, 적격 URL), reasoning 은 한국어 한 문장. 출처는
+#   docs/research/post-response-work.md §4(D1~D16). fit.json·recommendation.json의 근거에 basis와 reasoning이 붙는다.
+# - CP.platform_request_timeout: 요청과 컨테이너 사이에 요청 시간을 강제하는 플랫폼 계층이 있는가. VM compose는 false(유도 D14)라
+#   A2 시간 규칙이 통과한다. 나머지는 CP.max_request_seconds와 같은 인용으로 true.
+# - CP.runs_long_lived_server: 서버 프로세스(리버스 프록시 등)가 계속 떠서 요청을 받는가. Lambda false(유도 D15, D1·D13 전제),
+#   나머지 true(유도). 리버스 프록시 워크로드는 CAP-PROXY-001에서 이 값을 요구한다.
 # - ops_burden 은 조사 문서의 해당 줄이 모두 ` ⚠️근거없음`(평가)이라 어느 구성 요소에도 두지 않았다.
 #
 # 생략한 키와 이유(조사 문서 줄 번호, 2026-10-02 공식 문서 재조사 후):
@@ -21,12 +29,22 @@
 # - Cloud Run(두 모드): max-instances 는 "잠시 초과될 수 있다"(05:139)고 적혀 있어 쓰지 않고, CP.single_instance_config 는
 #   수동 확장(05:149·194)을 쓴다. 요청 기반의 CP.cpu_after_response_config — 켜는 방법은 다른 후보(인스턴스 기반 과금)라
 #   일부러 두지 않는다(없으면 A4 규칙에서 infeasible, 인스턴스 기반 후보가 따로 평가됨).
-# - ECS Fargate: CP.cpu_after_response(05:334 인용은 초 단위 과금만 말함. 응답 후 CPU를 명시한 공식 문장 없음)
-# - EC2: CP.max_request_seconds(05:911 '평가'. 상한 없음은 키 생략과 구별할 수 없어 둘 수 없음),
-#   CP.websocket·CP.cpu_after_response(공식 문서에 명시 문장 없음, 05:912·913 ⚠️근거없음)
-# - Compute Engine: CP.max_request_seconds·CP.websocket·CP.cpu_after_response(EC2와 같은 이유, 05:951~954),
+# - ECS Fargate·EC2·Compute Engine·GKE Autopilot·EKS: CP.cpu_after_response 공식 문장은 없고 유도 값(D5~D8)으로 둔다.
+# - EC2: CP.max_request_seconds(05:911 '평가'. 상한 없음은 키 생략과 구별할 수 없어 둘 수 없음 → CP.platform_request_timeout: false),
+#   CP.websocket(공식 문서에 명시 문장 없음, 05:912 ⚠️근거없음)
+# - Compute Engine: CP.max_request_seconds·CP.websocket(EC2와 같은 이유, 05:951~954),
 #   CP.always_on·CP.scale_to_zero(인스턴스 수명 문서는 "You control the lifecycle"만 말하고 유휴 시 동작을 적지 않음)
 # - SQLite: COST(01:83·119 ⚠️근거없음)
+#
+# 계획 2b(2026-10-03, 05 §9·01 §7·03 끝 절에 공식 문서 재조사 줄 추가):
+# - CP.horizontal_scaling: EC2·Compute Engine 단일 VM + compose 는 false. Docker 공식 문서 "Compose ... deploys everything
+#   to a single node"(05:1012, 05 §9). 같은 VM 안의 컨테이너 수와 별개로 VM 1대를 넘지 못한다.
+# - GKE CP.max_request_seconds_config: Ingress 백엔드 타임아웃(기본 30초)을 BackendConfig timeoutSec로 바꾼다(05:1013).
+# - GKE Autopilot·EKS: CP.cpu_after_response 클라우드 문서 명시 문장 없음(05:614·732 ⚠️근거없음) → kubernetes.io 전제로 유도(D8).
+#   EKS CP.scale_to_zero(EKS 문서에 명시 문장 없음, 05:733 ⚠️근거없음). EKS COST.per_replica_usd(노드에 Pod를
+#   얼마나 담는지에 달려 단가가 없음)
+# - GKE·EKS CP.persistent_local_disk true 는 PVC(GKE PD, EKS EBS CSI)를 쓸 때다. Pod 임시 스토리지는 영속하지 않는다.
+# - VM 안 데이터 저장소(ds:vm/compose-postgres/default, ca:vm/compose-redis/default): cloud: local(호스트 VM의 클라우드를 따름).
 
 components:
   # ---------- 컴퓨트 ----------
@@ -54,6 +72,19 @@ components:
       CP.single_instance_config:
         value: "예약 동시성(reserved concurrency) = 1"
         source: {doc: "capabilities/05-compute-tier1-2.md", line: 510, url: "https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html", quote: "Reserved concurrency sets the maximum and minimum number of concurrent instances that you want to allocate to your function."}
+      CP.horizontal_scaling:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 499, url: "https://docs.aws.amazon.com/lambda/latest/dg/scaling-behavior.html", quote: "your concurrency scaling rate is 1,000 execution environment instances every 10 seconds"}
+      CP.platform_request_timeout:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 492, url: "https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html", quote: "900 seconds (15 minutes)."}
+      # post-response-work.md §4 D1·D13. 리버스 프록시(nginx 게이트웨이)는 CAP-PROXY-001에서 탈락한다.
+      CP.runs_long_lived_server:
+        value: false
+        source:
+          basis: derived
+          from: {doc: "post-response-work.md", line: 39, url: "https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html", quote: "During this entire process, this execution environment is busy and cannot process other requests."}
+          reasoning: "실행 환경은 한 번에 요청 하나만 처리하고 호출이 끝나면 동결되므로(D1·D13) 계속 떠서 요청을 받는 서버 프로세스(게이트웨이)를 둘 수 없다"
 
   - id: "cp:gcp/cloud-run/request-billing"
     target: gcp_cloud_run
@@ -90,6 +121,18 @@ components:
       CP.single_instance_config:
         value: "수동 확장 --scaling=1"
         source: {doc: "capabilities/05-compute-tier1-2.md", line: 149, url: "https://docs.cloud.google.com/run/docs/configuring/services/manual-scaling", quote: "Manual scaling lets you set a specific instance count, regardless of traffic or utilization, and without requiring redeployment."}
+      CP.horizontal_scaling:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1010, url: "https://docs.cloud.google.com/run/docs/about-instance-autoscaling", quote: "By default, each Cloud Run revision is automatically scaled to the number of instances needed to handle incoming requests, events, or CPU utilization."}
+      CP.platform_request_timeout:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 132, url: "https://docs.cloud.google.com/run/docs/configuring/request-timeout", quote: "set by default to 5 minutes (300 seconds) and can be extended up to 60 minutes (3600 seconds)"}
+      CP.runs_long_lived_server:
+        value: true
+        source:
+          basis: derived
+          from: {doc: "capabilities/05-compute-tier1-2.md", line: 91, url: "https://docs.cloud.google.com/run/docs/container-contract", quote: "The ingress container within an instance must listen for requests on `0.0.0.0` on the port to which requests are sent."}
+          reasoning: "인스턴스의 컨테이너는 포트를 리슨하는 서버 프로세스로 실행되어 그 프로세스가 요청을 받는다"
 
   - id: "cp:gcp/cloud-run/instance-billing"
     target: gcp_cloud_run
@@ -124,10 +167,22 @@ components:
       CP.always_on:
         value: false
         source: {doc: "capabilities/05-compute-tier1-2.md", line: 195, url: "https://docs.cloud.google.com/run/docs/configuring/billing-settings", quote: "can be shut down at any time"}
-      # 05:176 "상시 워커는 가능하나 인스턴스가 유휴 시 언제든 종료될 수 있어 min-instances ≥1 필요"
+      # 05:1014 about-instance-autoscaling: 요청 밖 작업에는 최소 인스턴스 ≥ 1(인스턴스 기반 과금과 함께)
       CP.always_on_config:
         value: "min-instances ≥ 1"
-        source: {doc: "capabilities/05-compute-tier1-2.md", line: 176, url: "https://docs.cloud.google.com/run/docs/configuring/billing-settings", quote: "allocates CPU even outside of request processing"}
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1014, url: "https://docs.cloud.google.com/run/docs/about-instance-autoscaling", quote: "set minimum instances to at least 1 to ensure that the CPU remains allocated for background processing"}
+      CP.horizontal_scaling:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1010, url: "https://docs.cloud.google.com/run/docs/about-instance-autoscaling", quote: "By default, each Cloud Run revision is automatically scaled to the number of instances needed to handle incoming requests, events, or CPU utilization."}
+      CP.platform_request_timeout:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 177, url: "https://docs.cloud.google.com/run/docs/configuring/request-timeout", quote: "can be extended up to 60 minutes (3600 seconds)"}
+      CP.runs_long_lived_server:
+        value: true
+        source:
+          basis: derived
+          from: {doc: "capabilities/05-compute-tier1-2.md", line: 91, url: "https://docs.cloud.google.com/run/docs/container-contract", quote: "The ingress container within an instance must listen for requests on `0.0.0.0` on the port to which requests are sent."}
+          reasoning: "인스턴스의 컨테이너는 포트를 리슨하는 서버 프로세스로 실행되어 그 프로세스가 요청을 받는다"
 
   - id: "cp:aws/ecs-fargate/alb"
     target: aws_ecs_fargate
@@ -155,6 +210,25 @@ components:
       COST.monthly_floor_usd:
         value: 37.74
         source: {doc: "capabilities/05-compute-tier1-2.md", line: 351, url: "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonECS/current/ap-northeast-2/index.json", quote: "AWS Fargate - vCPU  - Asia Pacific (Seoul)"}
+      CP.horizontal_scaling:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1011, url: "https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-auto-scaling.html", quote: "Increase or decrease the number of tasks that your service runs based on a target value for a specific metric."}
+      CP.platform_request_timeout:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 332, url: "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/edit-load-balancer-attributes.html", quote: "By default, Elastic Load Balancing sets the idle timeout value for your load balancer to 60 seconds."}
+      # post-response-work.md §4 D5
+      CP.cpu_after_response:
+        value: true
+        source:
+          basis: derived
+          from: {doc: "post-response-work.md", line: 74, url: "https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_definition_parameters.html", quote: "The hard limit of CPU units to present for the task."}
+          reasoning: "Fargate 태스크 CPU는 HTTP 요청이 아니라 태스크 단위로 정해지므로 응답 뒤에도 태스크가 실행 중이면 CPU를 쓴다"
+      CP.runs_long_lived_server:
+        value: true
+        source:
+          basis: derived
+          from: {doc: "capabilities/05-compute-tier1-2.md", line: 349, url: "https://docs.aws.amazon.com/AmazonECS/latest/developerguide/ecs_services.html", quote: "You can use an Amazon ECS service to run and maintain a specified number of instances of a task definition simultaneously in an Amazon ECS cluster."}
+          reasoning: "서비스가 태스크를 계속 실행·유지하므로 태스크 안 서버 프로세스가 요청과 무관하게 떠 있다"
 
   - id: "cp:aws/ec2/docker-compose"
     target: aws_ec2
@@ -177,6 +251,36 @@ components:
       CP.single_instance_config:
         value: "VM 1대 + compose container_name 지정"
         source: {doc: "capabilities/05-compute-tier1-2.md", line: 929, url: "https://docs.docker.com/reference/compose-file/services/", quote: "Compose does not scale a service beyond one container if the Compose file specifies a `container_name`."}
+      CP.horizontal_scaling:
+        value: false
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1012, url: "https://docs.docker.com/engine/swarm/stack-deploy/", quote: "This is because Compose doesn't take advantage of swarm mode, and deploys everything to a single node."}
+      # post-response-work.md §4 D6
+      CP.cpu_after_response:
+        value: true
+        source:
+          basis: derived
+          from: {doc: "post-response-work.md", line: 85, url: "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-lifecycle.html", quote: "The instance is running and ready for use."}
+          reasoning: "VM 안 프로세스는 HTTP 응답 여부와 무관하게 인스턴스가 running인 동안 실행된다"
+      # post-response-work.md §4 D14. A2 시간 규칙(CAP-TIMEOUT-*)은 이 값이 false면 통과한다(CP.max_request_seconds는 계속 생략).
+      CP.platform_request_timeout:
+        value: false
+        source:
+          basis: derived
+          from: {doc: "capabilities/05-compute-tier1-2.md", line: 1012, url: "https://docs.docker.com/engine/swarm/stack-deploy/", quote: "This is because Compose doesn't take advantage of swarm mode, and deploys everything to a single node."}
+          reasoning: "VM compose 구성은 요청이 컨테이너로 직접 들어가 플랫폼이 요청 시간을 강제하지 않는다"
+      CP.runs_long_lived_server:
+        value: true
+        source:
+          basis: derived
+          from: {doc: "capabilities/05-compute-tier1-2.md", line: 928, url: "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-lifecycle.html", quote: "that you keep the instance running, even if the instance remains idle"}
+          reasoning: "인스턴스는 유휴여도 계속 실행되므로 VM 안 서버 프로세스가 떠 있다"
+      # 웹소켓: VM 위 Docker Compose 는 앱 포트를 직접 열고 플랫폼 프록시가 없다(정의상/유도)
+      CP.websocket:
+        value: true
+        source:
+          basis: derived
+          from: {doc: "capabilities/05-compute-tier1-2.md", line: 928, url: "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-lifecycle.html", quote: "that you keep the instance running, even if the instance remains idle"}
+          reasoning: "VM 위 Docker Compose 는 앱 컨테이너 포트를 직접 열고 플랫폼 프록시·요청 계층이 없다. 앱 서버가 처리하는 웹소켓 업그레이드를 가로막는 계층이 없어 장시간 연결을 유지한다"
 
   - id: "cp:gcp/compute-engine/docker-compose"
     target: gcp_compute_engine
@@ -193,6 +297,157 @@ components:
       COST.monthly_floor_usd:
         value: 20.64
         source: {doc: "capabilities/05-compute-tier1-2.md", line: 970, url: "https://cloud.google.com/products/compute/pricing/general-purpose", quote: "$0.02149143 / 1 hour"}
+      CP.horizontal_scaling:
+        value: false
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1012, url: "https://docs.docker.com/engine/swarm/stack-deploy/", quote: "This is because Compose doesn't take advantage of swarm mode, and deploys everything to a single node."}
+      # post-response-work.md §4 D7
+      CP.cpu_after_response:
+        value: true
+        source:
+          basis: derived
+          from: {doc: "post-response-work.md", line: 95, url: "https://docs.cloud.google.com/compute/docs/instances/instance-lifecycle", quote: "You control the lifecycle of your compute instances."}
+          reasoning: "플랫폼이 요청 유무로 VM을 멈추지 않으므로 응답 뒤에도 VM 안 프로세스가 CPU를 쓴다"
+      # post-response-work.md §4 D7 와 같은 전제: VM 은 사용자가 멈추기 전까지 계속 실행된다
+      CP.always_on:
+        value: true
+        source:
+          basis: derived
+          from: {doc: "post-response-work.md", line: 95, url: "https://docs.cloud.google.com/compute/docs/instances/instance-lifecycle", quote: "You control the lifecycle of your compute instances."}
+          reasoning: "VM 인스턴스는 사용자가 멈추기 전까지 계속 실행된다(수명 주기를 사용자가 제어). 요청이 없어도 프로세스가 유지된다"
+      # post-response-work.md §4 D14
+      CP.platform_request_timeout:
+        value: false
+        source:
+          basis: derived
+          from: {doc: "capabilities/05-compute-tier1-2.md", line: 1012, url: "https://docs.docker.com/engine/swarm/stack-deploy/", quote: "This is because Compose doesn't take advantage of swarm mode, and deploys everything to a single node."}
+          reasoning: "VM compose 구성은 요청이 컨테이너로 직접 들어가 플랫폼이 요청 시간을 강제하지 않는다"
+      CP.runs_long_lived_server:
+        value: true
+        source:
+          basis: derived
+          from: {doc: "post-response-work.md", line: 95, url: "https://docs.cloud.google.com/compute/docs/instances/instance-lifecycle", quote: "You control the lifecycle of your compute instances."}
+          reasoning: "VM 수명을 사용자가 정하므로 VM 안 서버 프로세스는 요청과 무관하게 떠 있다"
+      # 웹소켓: VM 위 Docker Compose 는 앱 포트를 직접 열고 플랫폼 프록시가 없다(정의상/유도)
+      CP.websocket:
+        value: true
+        source:
+          basis: derived
+          from: {doc: "post-response-work.md", line: 95, url: "https://docs.cloud.google.com/compute/docs/instances/instance-lifecycle", quote: "You control the lifecycle of your compute instances."}
+          reasoning: "VM 위 Docker Compose 는 앱 컨테이너 포트를 직접 열고 플랫폼 프록시·요청 계층이 없다. 앱 서버가 처리하는 웹소켓 업그레이드를 가로막는 계층이 없어 장시간 연결을 유지한다"
+
+  # ---------- 관리형 쿠버네티스(계획 2b) ----------
+  - id: "cp:gcp/gke/autopilot"
+    target: gcp_gke
+    cloud: gcp
+    family: cp
+    capabilities:
+      # GKE Ingress(클래식 Application LB) 백엔드 타임아웃 기본값(05:612). ECS(ALB 기본 60초)와 같이 기본값을 쓴다. BackendConfig timeoutSec로 바꿀 수 있다.
+      CP.max_request_seconds:
+        value: 30
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 612, url: "https://docs.cloud.google.com/kubernetes-engine/docs/how-to/ingress-configuration", quote: "If you do not specify a value, the default value is 30 seconds."}
+      # 기본 30초보다 긴 요청은 BackendConfig timeoutSec로 늘린다(05:1013). 상한 값은 인용이 없어 "제한 없음"(A2 그 이상)에는 쓰지 않는다.
+      CP.max_request_seconds_config:
+        value: "BackendConfig timeoutSec"
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1013, url: "https://docs.cloud.google.com/kubernetes-engine/docs/how-to/ingress-configuration", quote: "You can use a BackendConfig to set a backend service timeout period in seconds."}
+      # 지원하지만 클래식 LB는 웹소켓을 백엔드 타임아웃(기본 30초)에 끊는다(05:613). 오래 열려면 timeoutSec 조정.
+      CP.websocket:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1000, url: "https://docs.cloud.google.com/load-balancing/docs/https/request-distribution", quote: "The WebSocket protocol is supported with GKE Ingress."}
+      CP.always_on:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1001, url: "https://docs.cloud.google.com/kubernetes-engine/docs/how-to/stateless-apps", quote: "Deployments manage the desired state of your application: how many Pods should run your application"}
+      # 롤링 업데이트 중 잠시 2개가 겹칠 수 있다(기본 maxSurge 25%, 05:622).
+      CP.single_instance_config:
+        value: "Deployment replicas: 1 (HPA 없음)"
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1001, url: "https://docs.cloud.google.com/kubernetes-engine/docs/how-to/stateless-apps", quote: ".spec.replicas: is the number of replicated Pods that the Deployment manages."}
+      # PVC(PD)를 쓸 때. Pod 임시 스토리지는 영속하지 않고, RWO라 Deployment보다 StatefulSet(05:618, 05:1002).
+      CP.persistent_local_disk:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1002, url: "https://docs.cloud.google.com/kubernetes-engine/docs/concepts/persistent-volumes", quote: "PersistentVolume resources are cluster resources that exist independently of Pods."}
+      # 기본 동작은 아니다(GKE 1.37+ HPA 설정). 클러스터 요금·LB 고정비는 남는다.
+      CP.scale_to_zero:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1003, url: "https://docs.cloud.google.com/kubernetes-engine/docs/concepts/horizontalpodautoscaler", quote: "In GKE version 1.37 or later, you can configure the horizontal Pod autoscaler to scale a workload down to 0 replicas when there is no demand"}
+      CP.horizontal_scaling:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1003, url: "https://docs.cloud.google.com/kubernetes-engine/docs/concepts/horizontalpodautoscaler", quote: "The horizontal Pod autoscaler changes the shape of your Kubernetes workload by automatically increasing or decreasing the number of Pods"}
+      CP.multi_workload:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1004, url: "https://docs.cloud.google.com/kubernetes-engine/docs/concepts/autopilot-overview", quote: "workloads in the cluster can communicate with each other and with the internet."}
+      # 05:1005 요금 $73 − 무료 크레딧(첫 클러스터) = 0 + Pod 1개(0.25 vCPU·0.5 GiB·임시 1 GiB) $12.86 + Ingress 포워딩 규칙 $18.25 = $31.11.
+      # 같은 결제 계정의 두 번째 클러스터면 +$73.
+      COST.monthly_floor_usd:
+        value: 31.11
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1005, url: "https://cloud.google.com/kubernetes-engine/pricing", quote: "The GKE free tier provides $74.40 in monthly credits per billing account, which is equivalent to one free Autopilot or zonal Standard cluster per month."}
+      # 05:1005 Pod 1개: 0.25 × $0.0571 × 730 + 0.5 × $0.0063215 × 730 + 1 × $0.0001784 × 730 = $12.86 (서울).
+      COST.per_replica_usd:
+        value: 12.86
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1005, url: "https://cloud.google.com/kubernetes-engine/pricing", quote: "GKE Autopilot vCPU Price (vCPU)"}
+      CP.platform_request_timeout:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 612, url: "https://docs.cloud.google.com/kubernetes-engine/docs/how-to/ingress-configuration", quote: "If you do not specify a value, the default value is 30 seconds."}
+      # post-response-work.md §4 D8
+      CP.cpu_after_response:
+        value: true
+        source:
+          basis: derived
+          from: {doc: "post-response-work.md", line: 105, url: "https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/", quote: "The kubelet also reserves at least the request amount of that system resource specifically for that container to use."}
+          reasoning: "CPU는 HTTP 요청이 아니라 컨테이너 단위로 예약·제한되므로 응답 뒤 작업도 limit까지 CPU를 쓴다"
+      CP.runs_long_lived_server:
+        value: true
+        source:
+          basis: derived
+          from: {doc: "capabilities/05-compute-tier1-2.md", line: 1001, url: "https://docs.cloud.google.com/kubernetes-engine/docs/how-to/stateless-apps", quote: "Deployments manage the desired state of your application: how many Pods should run your application"}
+          reasoning: "Deployment가 정한 수의 Pod를 계속 실행하므로 Pod 안 서버 프로세스가 떠 있다"
+
+  - id: "cp:aws/eks/managed-node-group"
+    target: aws_eks
+    cloud: aws
+    family: cp
+    capabilities:
+      # AWS Load Balancer Controller가 만드는 ALB 유휴 타임아웃 기본값(05:730). ECS와 같이 기본값을 쓴다.
+      CP.max_request_seconds:
+        value: 60
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 730, url: "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/application-load-balancers.html", quote: "The idle timeout value, in seconds. The default is 60 seconds."}
+      CP.websocket:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 731, url: "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-listeners.html", quote: "native support for WebSockets"}
+      CP.always_on:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1006, url: "https://docs.aws.amazon.com/eks/latest/userguide/sample-deployment.html", quote: "Kubernetes maintains the number of replicas that are specified in the manifest."}
+      CP.single_instance_config:
+        value: "Deployment replicas: 1 (HPA 없음)"
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1006, url: "https://docs.aws.amazon.com/eks/latest/userguide/sample-deployment.html", quote: "Kubernetes maintains the number of replicas that are specified in the manifest."}
+      # EBS CSI 애드온 + PVC를 쓸 때. 볼륨과 노드는 같은 AZ(05:736).
+      CP.persistent_local_disk:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1008, url: "https://docs.aws.amazon.com/eks/latest/userguide/ebs-csi.html", quote: "The Amazon EBS CSI driver makes Amazon EBS volumes for these types of Kubernetes volumes: generic ephemeral volumes and persistent volumes."}
+      CP.horizontal_scaling:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1007, url: "https://docs.aws.amazon.com/eks/latest/userguide/horizontal-pod-autoscaler.html", quote: "The Kubernetes Horizontal Pod Autoscaler automatically scales the number of Pods in a deployment"}
+      CP.multi_workload:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1007, url: "https://docs.aws.amazon.com/eks/latest/userguide/horizontal-pod-autoscaler.html", quote: "thus freeing up your nodes for other applications"}
+      # 05:1009 컨트롤 플레인 $73.00 + t3.medium 1대 $37.96 + gp3 20 GB $1.82 + ALB $16.43 + 공인 IPv4 3개 $10.95 = $140.16.
+      COST.monthly_floor_usd:
+        value: 140.16
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 1009, url: "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEKS/current/ap-northeast-2/index.json", quote: "Amazon EKS cluster usage in Asia Pacific (Seoul)"}
+      CP.platform_request_timeout:
+        value: true
+        source: {doc: "capabilities/05-compute-tier1-2.md", line: 730, url: "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/application-load-balancers.html", quote: "The idle timeout value, in seconds. The default is 60 seconds."}
+      # post-response-work.md §4 D8
+      CP.cpu_after_response:
+        value: true
+        source:
+          basis: derived
+          from: {doc: "post-response-work.md", line: 105, url: "https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/", quote: "The kubelet also reserves at least the request amount of that system resource specifically for that container to use."}
+          reasoning: "CPU는 HTTP 요청이 아니라 컨테이너 단위로 예약·제한되므로 응답 뒤 작업도 limit까지 CPU를 쓴다"
+      CP.runs_long_lived_server:
+        value: true
+        source:
+          basis: derived
+          from: {doc: "capabilities/05-compute-tier1-2.md", line: 1006, url: "https://docs.aws.amazon.com/eks/latest/userguide/sample-deployment.html", quote: "Kubernetes maintains the number of replicas that are specified in the manifest."}
+          reasoning: "매니페스트의 레플리카 수를 계속 유지하므로 Pod 안 서버 프로세스가 떠 있다"
 
   # ---------- 저장소·캐시 ----------
   - id: "ds:aws/rds-postgres/single-az"
@@ -257,3 +512,49 @@ components:
       DS.engine:
         value: sqlite
         source: {doc: "capabilities/01-sql-databases.md", line: 72, url: "https://www.sqlite.org/whentouse.html", quote: "SQLite only supports one writer at a time per database file."}
+
+  # VM compute 안 컨테이너(계획 2b). VM compute(EC2·Compute Engine)와만 짝짓는다(DS.colocated_vm).
+  # 데이터는 호스트 VM 디스크의 Docker 볼륨에 있어 영속성은 그 VM 디스크를 따른다(EBS 05:917, PD 05:968).
+  - id: "ds:vm/compose-postgres/default"
+    cloud: local
+    family: ds
+    capabilities:
+      DS.engine:
+        value: postgres
+        source: {doc: "capabilities/01-sql-databases.md", line: 769, url: "https://hub.docker.com/_/postgres", quote: "Example `compose.yaml` for `postgres`:"}
+      DS.colocated_vm:
+        value: true
+        source: {doc: "capabilities/01-sql-databases.md", line: 771, url: "https://docs.docker.com/engine/storage/volumes/", quote: "When you create a volume, it's stored within a directory on the Docker host."}
+      # 별도 과금 자원이 없다. VM·디스크 비용은 compute 바닥 비용에 들어 있다.
+      COST.monthly_floor_usd:
+        value: 0
+        source: {doc: "capabilities/01-sql-databases.md", line: 769, url: "https://hub.docker.com/_/postgres", quote: "Example `compose.yaml` for `postgres`:"}
+      DS.durability:
+        value: "이름 있는 Docker 볼륨(호스트 VM 디스크)"
+        source: {doc: "capabilities/01-sql-databases.md", line: 771, url: "https://docs.docker.com/engine/storage/volumes/", quote: "Using a volume ensures that the data is persisted even if the container using it is removed."}
+      DS.backup_config:
+        value: "사용자가 스냅샷/덤프 설정"
+        source: {doc: "capabilities/01-sql-databases.md", line: 772, url: "https://docs.docker.com/engine/storage/volumes/", quote: "Volumes are useful for backups, restores, and migrations."}
+
+  # VM compute 안 컨테이너(계획 2b). VM compute(EC2·Compute Engine)와만 짝짓는다(DS.colocated_vm).
+  # 데이터는 호스트 VM 디스크의 Docker 볼륨에 있어 영속성은 그 VM 디스크를 따른다(EBS 05:917, PD 05:968).
+  - id: "ca:vm/compose-redis/default"
+    cloud: local
+    family: ca
+    capabilities:
+      DS.engine:
+        value: redis
+        source: {doc: "capabilities/03-cache-queue-scheduler-realtime-storage.md", line: 1448, url: "https://hub.docker.com/_/redis", quote: "$ docker run --name some-redis -d redis"}
+      DS.colocated_vm:
+        value: true
+        source: {doc: "capabilities/03-cache-queue-scheduler-realtime-storage.md", line: 1450, url: "https://docs.docker.com/engine/storage/volumes/", quote: "When you create a volume, it's stored within a directory on the Docker host."}
+      # 별도 과금 자원이 없다. VM·디스크 비용은 compute 바닥 비용에 들어 있다.
+      COST.monthly_floor_usd:
+        value: 0
+        source: {doc: "capabilities/03-cache-queue-scheduler-realtime-storage.md", line: 1448, url: "https://hub.docker.com/_/redis", quote: "$ docker run --name some-redis -d redis"}
+      DS.durability:
+        value: "영속 설정(--save 등) 시 /data 볼륨(호스트 VM 디스크)"
+        source: {doc: "capabilities/03-cache-queue-scheduler-realtime-storage.md", line: 1449, url: "https://hub.docker.com/_/redis", quote: "If persistence is enabled, data is stored in the `VOLUME /data`"}
+      DS.backup_config:
+        value: "사용자가 스냅샷/덤프 설정"
+        source: {doc: "capabilities/03-cache-queue-scheduler-realtime-storage.md", line: 1451, url: "https://docs.docker.com/engine/storage/volumes/", quote: "Volumes are useful for backups, restores, and migrations."}

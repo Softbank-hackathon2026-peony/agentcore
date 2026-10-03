@@ -2,6 +2,8 @@
 
 형식은 계획 2의 `고정 형식`을 따른다.
 - 능력: `components[].capabilities[KEY] = {value, source: {doc, line, url, quote}}`
+  유도 값(정의상/유도): `source: {basis: derived, from: {doc, line, url, quote}, reasoning}`. 출력 근거에는
+  `basis`(official|derived)와 유도면 `reasoning`이 붙고, 위반·설정·통과 설명에 "정의상/유도: <reasoning>"을 적는다.
 - 규칙: `{id, when: {dimension, equals|...}, require: {capability, equals|...}, otherwise: infeasible|config,
   config_from, message}`
 
@@ -42,9 +44,23 @@ def cap_value(component: dict | None, key: str, default=None):
     return default if entry is MISSING else entry["value"]
 
 
+def _raw_source(entry) -> dict:
+    return (entry.get("source") if isinstance(entry, dict) else None) or {}
+
+
+def is_derived(entry) -> bool:
+    return _raw_source(entry).get("basis") == "derived"
+
+
+def _premise(entry) -> dict:
+    """인용 위치: 공식 값은 source 자체, 유도 값은 전제(from)."""
+    src = _raw_source(entry)
+    return (src.get("from") or {}) if src.get("basis") == "derived" else src
+
+
 def source_of(entry) -> dict:
-    """능력 출처(doc, line, url, quote)를 스키마 Source({ref, quote})로 옮긴다."""
-    src = (entry.get("source") if isinstance(entry, dict) else None) or {}
+    """능력 출처를 스키마 Source({ref, quote, basis, reasoning})로 옮긴다. 유도 값은 전제의 url·quote를 쓴다."""
+    src = _premise(entry)
     doc_ref = ""
     if src.get("doc"):
         doc_ref = f"docs/research/{src['doc']}" + (f"#L{src['line']}" if src.get("line") else "")
@@ -53,14 +69,25 @@ def source_of(entry) -> dict:
         out["quote"] = str(src["quote"])
     if src.get("checked_at"):
         out["checked_at"] = str(src["checked_at"])
+    if isinstance(entry, dict) and entry.get("source"):
+        out["basis"] = "derived" if is_derived(entry) else "official"
+        if is_derived(entry):
+            out["reasoning"] = str(_raw_source(entry).get("reasoning") or "")
     return out
 
 
 def doc_location(entry) -> str | None:
-    src = (entry.get("source") if isinstance(entry, dict) else None) or {}
+    src = _premise(entry)
     if src.get("doc"):
         return f"docs/research/{src['doc']}" + (f":{src['line']}" if src.get("line") else "")
     return None
+
+
+def basis_note(entry) -> str:
+    """유도 값이면 " (정의상/유도: <reasoning>)", 아니면 빈 문자열."""
+    if not is_derived(entry):
+        return ""
+    return f" (정의상/유도: {_raw_source(entry).get('reasoning', '')})"
 
 
 def engine_of(component_id: str, components: dict[str, dict]) -> str | None:
@@ -133,7 +160,9 @@ def dim_value(value):
 
 
 def check_require(require: dict | None, component: dict | None):
-    """요구 조건 평가 → ("pass"|"fail"|"unknown", 실패/모름에 관련된 (key, entry) 목록)."""
+    """요구 조건 평가 → ("pass"|"fail"|"unknown", 관련된 (key, entry) 목록).
+
+    pass면 통과에 쓴 값, fail·unknown이면 실패·모름에 관련된 값."""
     if require is None:
         return "fail", []
     if "any" in require or "all" in require:
@@ -142,11 +171,12 @@ def check_require(require: dict | None, component: dict | None):
         refs = [r for _, rs in children for r in rs]
         if "any" in require:
             if "pass" in states:
-                return "pass", []
+                # 통과에 쓴 값: 처음 통과한 갈래
+                return "pass", next(rs for s, rs in children if s == "pass")
             return ("unknown" if "unknown" in states else "fail"), refs
         if "fail" in states:
             return "fail", [r for (s, rs) in children if s == "fail" for r in rs]
-        return ("unknown" if "unknown" in states else "pass"), refs if "unknown" in states else []
+        return ("unknown" if "unknown" in states else "pass"), refs
     key = require["capability"]
     entry = cap_entry(component, key)
     if entry is MISSING:
@@ -195,7 +225,13 @@ class Cell:
     violations: list[dict] = field(default_factory=list)
     requires_config: list[dict] = field(default_factory=list)
     unknown_keys: list[str] = field(default_factory=list)
+    # 유도 값(정의상/유도)으로 통과한 규칙의 설명
+    derived_passes: list[dict] = field(default_factory=list)
     is_current: bool = False
+    # 모름이 근거 있는 차원 값(source=detector)에서 나왔는가(가정 값에서 나온 모름은 순위를 내리지 않는다). 출력하지 않는다.
+    evidence_unknown: bool = False
+    # 위 모름의 상세: [{rule, dimension, dimension_value, capability, at}]. 범위·컴포넌트는 Recommender 가 붙인다. 출력하지 않는다.
+    evidence_unknowns: list[dict] = field(default_factory=list)
 
     @property
     def result(self) -> str:
@@ -210,7 +246,8 @@ class Cell:
     def to_dict(self) -> dict:
         return {"scope": self.scope, "candidate": self.candidate, "result": self.result,
                 "violations": self.violations, "requires_config": self.requires_config,
-                "unknown_keys": sorted(set(self.unknown_keys)), "is_current": self.is_current}
+                "unknown_keys": sorted(set(self.unknown_keys)), "derived_passes": self.derived_passes,
+                "is_current": self.is_current}
 
 
 def _violation(rule: dict, dims: list[dict], key: str, entry, required) -> dict:
@@ -220,6 +257,8 @@ def _violation(rule: dict, dims: list[dict], key: str, entry, required) -> dict:
     message += f" — 요구: {_evidence_text(dims)}"
     if loc:
         message += f" — 능력 근거: {loc}"
+    if entry is not None:
+        message += basis_note(entry)
     return {"rule": rule["id"], "dimension": dim_ids[0] if len(dim_ids) == 1 else dim_ids,
             "required": required, "capability_key": key,
             "actual": None if entry is None else entry["value"],
@@ -239,9 +278,26 @@ def evaluate(scope: str, kind: str, component_id: str, component: dict | None,
             continue
         state, refs = check_require(rule.get("require"), component)
         if state == "pass":
+            for key, entry in refs:
+                if entry is not None and is_derived(entry):
+                    cell.derived_passes.append({
+                        "rule": rule["id"], "capability_key": key, "actual": entry["value"],
+                        "source": source_of(entry),
+                        "message": f"{key}={entry['value']!r}로 통과 — 능력 근거: {doc_location(entry)}"
+                                   + basis_note(entry)})
             continue
         if state == "unknown":
-            cell.unknown_keys += [k for k, e in refs if e is None]
+            missing = [k for k, e in refs if e is None]
+            cell.unknown_keys += missing
+            seen = next((d for d in hit if d.get("source") == "detector"), None)
+            if seen is not None:
+                cell.evidence_unknown = True
+                at = [f"{e['path']}:{e['line']}" if e.get("line") else e["path"]
+                      for e in (seen.get("evidence") or [])[:2]]
+                for k in sorted(set(missing)):
+                    cell.evidence_unknowns.append({
+                        "rule": rule["id"], "dimension": seen["dimension"],
+                        "dimension_value": dim_value(seen.get("value")), "capability": k, "at": at})
             continue
         required = required_spec(rule.get("require"))
         if rule.get("otherwise") == "config" and rule.get("config_from"):
@@ -252,6 +308,10 @@ def evaluate(scope: str, kind: str, component_id: str, component: dict | None,
                        "why": (rule.get("message") or rule["id"]) + f" — 요구: {_evidence_text(hit)}"}
                 if setting.get("source"):
                     req["why"] += f" — 설정 근거: {doc_location(setting) or source_of(setting)['ref']}"
+                    req["why"] += basis_note(setting)
+                for key, entry in refs:
+                    if entry is not None and is_derived(entry):
+                        req["why"] += f" — {key} 근거: {doc_location(entry)}{basis_note(entry)}"
                 cell.requires_config.append(req)
                 continue
             # 설정 이름이 없다 = 켤 방법이 없다(형식: 없으면 키 생략) → 위반

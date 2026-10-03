@@ -3,6 +3,8 @@
 범위: 앱 워크로드(knowledge/profile_detectors.yaml `app_kinds`)마다 워크로드 행, 탐지된 값이 있는 엔드포인트 행,
 그리고 앱 워크로드 전체를 합친 앱 집계 범위(`app_scope`, 기본 `w-app`; 워크로드 ID와 겹치면 `w-app.all`) 행.
 앱 집계 행은 aggregated_from에 합친 워크로드 ID를 담는다. 가정(D2·G3 등)은 assumptions[]와 앱 집계 행에 둔다.
+D2(평시 동시성)·D6(확장 요구)는 워크로드마다 인벤토리 scaling으로 정하고, 근거가 없으면 D2만 가정(낮음)이다.
+batch_only: 앱 워크로드가 모두 batch이고 정적 프런트엔드가 없으면 value=true(사람이 실행하는 도구, S4 not_deployable).
 """
 
 from __future__ import annotations
@@ -25,6 +27,19 @@ def app_scope_id(inventory: dict, cfg: dict | None = None) -> str:
     base = cfg["app_scope"]
     taken = {w["id"] for w in inventory["workloads"]}
     return base if base not in taken else base + ".all"
+
+
+def batch_only(inventory: dict, app_ids: list[str], cfg: dict | None = None) -> dict:
+    """앱 워크로드가 하나 이상이고 모두 batch(일회성 실행)이며 정적 프런트엔드가 없으면 value=true."""
+    cfg = cfg or kb.profile_detectors()
+    by_id = {w["id"]: w for w in inventory["workloads"]}
+    static = any(w["kind"] == "static-frontend" for w in inventory["workloads"])
+    value = bool(app_ids) and not static and all(by_id[i]["kind"] == "batch" for i in app_ids)
+    out = {"value": value, "workloads": app_ids if value else [],
+           "evidence": [by_id[i]["entrypoint"] for i in app_ids] if value else []}
+    if value:
+        out["reason"] = (cfg.get("batch_only") or {}).get("reason", "")
+    return out
 
 
 def build_profile(snap: Snapshot, inventory: dict, cfg: dict | None = None) -> dict:
@@ -60,6 +75,7 @@ def build_profile(snap: Snapshot, inventory: dict, cfg: dict | None = None) -> d
         "dropped_inferences": [],
         "llm_used": False,
         "resolutions": [],
+        "batch_only": batch_only(inventory, app_ids, cfg),
     }
 
 
