@@ -2,7 +2,7 @@
 
 만드는 것 (이미 있으면 재사용·갱신):
   1. ECR 저장소      pawploy-apps          : AWS 배포용 이미지 (푸시 때 스캔, 최근 50개만 보관)
-  2. IAM 역할        pawploy-codebuild     : 소스·빌드 파일 읽기, ECR 푸시, GCP 키 읽기, 로그
+  2. IAM 역할        ppw-codebuild     : 소스·빌드 파일 읽기, ECR 푸시, GCP 키 읽기, 로그
   3. CodeBuild       pawploy-build         : buildspec 은 agent/buildfiles.py 의 고정 템플릿을 그대로 넣는다
 
 GCP Artifact Registry 는 여기서 만들지 않는다 (이미 있는 저장소를 쓴다).
@@ -25,7 +25,7 @@ from agent.buildfiles import buildspec  # noqa: E402
 
 REGION = "ap-northeast-2"
 ECR_REPO = "pawploy-apps"
-ROLE_NAME = "pawploy-codebuild"
+ROLE_NAME = "ppw-codebuild"
 PROJECT = "pawploy-build"
 IMAGE = "aws/codebuild/amazonlinux-x86_64-standard:5.0"
 
@@ -51,7 +51,8 @@ def main():
     repo_uri = ensure_ecr()
     role_arn = ensure_role(account, source_buckets, a.gcp_key_secret)
     ensure_project(role_arn, repo_uri, a.gcp_ar_repo, a.gcp_key_secret)
-    print(f"\n[완료] start_build(projectName={PROJECT!r}) 에 SOURCE_URI · BUILD_FILES_URI · IMAGE_TAG 만 넘기면 된다")
+    print(f"\n[완료] start_build(projectName={PROJECT!r}, buildspecOverride=<build_files.buildspec>) 에 "
+          "SOURCE_URI · BUILD_FILES_URI · IMAGE_TAG 를 넘기면 된다")
     print(f"ECR_REPO_URI={repo_uri}")
 
 

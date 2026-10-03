@@ -2,7 +2,7 @@
 
 만드는 것 (이미 있으면 재사용):
   1. S3 버킷  pawploy-agent-<계정ID>      : 코드 zip + 에이전트 결과물(projects/...) 저장
-  2. IAM 역할 pawploy-agentcore-runtime   : 런타임이 쓰는 권한 (Bedrock 호출, 위 버킷 읽기/쓰기, 로그)
+  2. IAM 역할 ppw-agentcore-runtime   : 런타임이 쓰는 권한 (Bedrock 호출, 위 버킷 읽기/쓰기, 로그)
   3. 코드 zip (arm64 리눅스용 의존성 포함) → s3://<버킷>/agent-code/<버전>.zip
   4. AgentCore Runtime pawploy_agent (없으면 생성, 있으면 새 버전으로 업데이트)
 
@@ -23,7 +23,7 @@ import boto3
 REGION = "ap-northeast-2"
 ROOT = Path(__file__).resolve().parent.parent
 RUNTIME_NAME = "pawploy_agent"
-ROLE_NAME = "pawploy-agentcore-runtime"
+ROLE_NAME = "ppw-agentcore-runtime"
 PY_VERSION = "3.13"
 RUNTIME = "PYTHON_3_13"
 

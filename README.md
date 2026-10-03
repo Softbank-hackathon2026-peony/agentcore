@@ -155,7 +155,7 @@ Worker 는 `PAWPLOY_AGENT_BUCKET` 이 있으면 `terraform_uri` 없이도 이 �
 |---|---|---|
 | CodeBuild 프로젝트 | `pawploy-build` | buildspec = `agent/buildfiles.py` 고정 템플릿 (컨테이너 1개 [examples/buildspec.yml](examples/buildspec.yml), 여러 개 [examples/buildspec-images.yml](examples/buildspec-images.yml) — 응답 `build_files.buildspec` 이 그 앱에 맞는 것), amd64·privileged, 20분 제한 |
 | ECR 저장소 | `pawploy-apps` | 푸시 때 스캔, 최근 50개 보관 |
-| IAM 역할 | `pawploy-codebuild` | 소스 버킷(`pawploy-agent-*`, `fawploy-source-*`) 읽기, `pawploy-apps` 푸시, GCP 키 읽기, 로그 |
+| IAM 역할 | `ppw-codebuild` | 소스 버킷(`pawploy-agent-*`, `fawploy-source-*`) 읽기, `pawploy-apps` 푸시, GCP 키 읽기, 로그 |
 | GCP AR | `asia-northeast3-docker.pkg.dev/softbankhackathon2026-peony/pawploy/pawploy-apps` | 이미 있는 저장소 `pawploy`. 키는 워커 키 `pawploy/gcp-worker-key` (저장소 단위 작성자 권한 추가됨) |
 
 만들기·갱신: `AWS_PROFILE=peony python scripts/setup_build.py [--gcp-ar-repo <AR 주소> --gcp-key-secret <Secrets Manager 이름>]`
@@ -252,7 +252,7 @@ AWS_PROFILE=peony .venv/Scripts/python -m agent.app   # 로컬 서버 → POST h
 |---|---|
 | Runtime ARN | `arn:aws:bedrock-agentcore:ap-northeast-2:135808950984:runtime/pawploy_agent-kcEfwY3zhC` |
 | 결과물 버킷 | `pawploy-agent-135808950984` (공개 차단) |
-| 실행 역할 | `pawploy-agentcore-runtime` (Bedrock 호출, 위 버킷 읽기·쓰기, 로그) |
+| 실행 역할 | `ppw-agentcore-runtime` (Bedrock 호출, 위 버킷 읽기·쓰기, 로그) |
 | 모델 | `global.anthropic.claude-sonnet-4-6` (계정 사용 승인 완료) |
 | 배포 | `AWS_PROFILE=<프로필> python scripts/deploy.py` (없으면 생성, 있으면 업데이트) |
 | 로그 | CloudWatch `/aws/bedrock-agentcore/runtimes/pawploy_agent-kcEfwY3zhC-DEFAULT` |
