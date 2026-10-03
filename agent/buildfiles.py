@@ -10,6 +10,7 @@
   buildspec 은 그 목록을 도는 고정 템플릿(buildspec_images)이다. 프로젝트 Dockerfile 은 그대로 쓰고,
   없을 때만 LLM 이 만든 Dockerfile.pawploy.<이미지 id> 를 쓴다.
 """
+import json
 import re
 
 from .errors import AgentError
@@ -41,6 +42,13 @@ _FROM = re.compile(r"^\s*FROM\s+", re.I)
 def generated_name(image_id: str) -> str:
     """여러 이미지 중 하나를 위해 만든 Dockerfile 이름 (빌드 파일 폴더 안, CodeBuild 에서는 소스 루트에 둔다)."""
     return f"{DOCKERFILE_NAME}.{image_id}"
+
+
+def baked_dockerfile(base: str, copies: list[dict]) -> str:
+    """레지스트리 이미지에 저장소 파일(compose 의 bind mount 자리)을 넣은 Dockerfile (코드가 만듦, 빌드 컨텍스트는 저장소 루트)."""
+    lines = ["# Pawploy: compose 의 저장소 파일 마운트를 이미지 안으로 옮김", f"FROM {base}"]
+    lines += [f"COPY {json.dumps([c['from'], c['to']])}" for c in copies]
+    return "\n".join(lines) + "\n"
 
 
 def normalize_dockerfile(text: str, port: int | None, lambda_adapter: bool = True) -> tuple[str, list[str]]:

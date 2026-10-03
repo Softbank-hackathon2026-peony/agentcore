@@ -520,7 +520,7 @@ def test_inventory_recommendation_fixtures():
     rec = reco["recommended"]
     assert rec["target"] == "aws_ec2" and rec["assignment"]["w-app"] == "cp:aws/ec2/docker-compose"
     assert set(rec["assignment"]) == {"w-app", "ds-postgresql", "svc-redis"}
-    assert rec["monthly_baseline_usd"] is None or rec["monthly_baseline_usd"] > 0
+    assert "monthly_baseline_usd" not in rec                # 화면 비용은 cost.estimate(prices.json) 하나만
     lam = next(r for r in reco["rejected"] if r["target"] == "aws_lambda")
     why = lam["reasons"][0]
     assert why["rule"] == "CAP-ALWAYSON-001" and why["dimension"] == "A1"

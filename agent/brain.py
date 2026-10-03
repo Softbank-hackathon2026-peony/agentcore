@@ -115,6 +115,8 @@ class StrandsBrain:
             "추천(`inventory.summary.recommendation`)은 공식 출처가 붙은 능력 값과 명시 규칙으로 판정한 것이다. "
             "target 은 inventory.recommendation 의 1순위 대상(recommended.target)을 따르고, 다르게 고르면 그 이유를 warnings 에 써라. "
             "탈락 이유(rejected)는 candidates 의 why 에 반영하라. "
+            "worker_override·top[].worker_limit 은 우리 Worker 설정(Lambda 요청 30초, Cloud Run 60초)으로는 안 되는 대상이다. "
+            "비용 숫자는 why·reason·summary 에 쓰지 말라 (화면 비용은 코드가 따로 계산한다). "
             "candidate(확정 아님) 사실은 단정하지 말라. "
             "required_secrets 는 inventory 의 external_services.secrets 와 스캔의 env_names 를 모두 보고 정하라.\n\n"
             f"## 스캔 결과\n{json.dumps(scan_view, ensure_ascii=False, indent=1)}\n\n"
