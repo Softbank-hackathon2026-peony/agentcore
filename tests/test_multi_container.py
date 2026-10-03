@@ -101,6 +101,7 @@ def test_board_end_to_end(tmp_path):
     assert sum(w.startswith("AI 보완 (코드 확인)") for w in rec["warnings"]) == 2
     assert not any("개발용 실행 명령" in w for w in rec["warnings"])
     assert any("관리형" in w for w in rec["warnings"])                     # InfraFit 은 RDS 추천 → 컨테이너로 띄움
+    assert not any(w.startswith("외부 데이터베이스/캐시가 필요해 보입니다") for w in rec["warnings"])  # postgres·redis 모두 묶음에
 
     # 빌드 파일: 프로젝트 Dockerfile 3개를 그대로 쓴다 (LLM 생성 없음)
     imgs = out["build_files"]["images"]
@@ -489,6 +490,8 @@ def test_code_only_redis_becomes_bundled_container_in_compose(tmp_path):
     out, store, _ = _analyze(tmp_path, CELERY, fixes, brain=_brain(fixes, required_secrets=["REDIS_URL"]))
     rec = out["recommendation"]
     assert rec["supported"] is True, rec["warnings"]
+    assert rec["architecture"] == "ec2_compose"                                # 앱 컨테이너 3개 → 여러 컨테이너 경로
+    assert not any(w.startswith("외부 데이터베이스/캐시가 필요해 보입니다") for w in rec["warnings"])  # redis 는 묶음에 있음
     du = rec["deploy_units"]
     assert [(d["id"], d["datastore"], d["image"]) for d in du["datastores"]] == [("redis", "svc-redis", "redis:7-alpine")]
     cs = {c["id"]: c for c in du["containers"]}
@@ -541,6 +544,7 @@ def test_code_only_password_store_still_flagged(tmp_path):
     assert [d["image"] for d in du["datastores"]] == ["redis:7-alpine"]          # postgres 컨테이너는 없음
     missing = [w for w in rec["warnings"] if "컨테이너가 없습니다" in w]
     assert len(missing) == 1 and missing[0].startswith("코드가 postgresql 를 쓰는데(requirements.txt:5")
+    assert "외부 데이터베이스/캐시가 필요해 보입니다: postgres" in rec["warnings"]   # 묶음에 없는 저장소만 남김
     assert "띄우지 않음" not in missing[0]                                       # 029e195 전의 틀린 설명 없음
     assert any(w.startswith("InfraFit 미해결: datastores.ds-postgresql — 접속 정보(비밀번호)") for w in rec["warnings"])
     for cid in ("web", "worker", "scheduled"):
@@ -548,3 +552,40 @@ def test_code_only_password_store_still_flagged(tmp_path):
         assert "REDIS_URL" not in next(c for c in du["containers"] if c["id"] == cid)["env"]
     assert "REDIS_URL" in rec["required_secrets"]                                # 값을 못 넣었으니 사용자에게 묻는다
     assert not any("관리형(ca:aws/rds" in w for w in rec["warnings"])           # 띄우지 않는 postgres 는 "컨테이너로 띄운다"고 하지 않음
+
+
+FLASK_REDIS = str(FIX / "code_flask_redis")   # Flask 앱 하나 + 코드만 Redis (compose 없음)
+
+
+def test_single_container_code_redis_stays_single_path(tmp_path):
+    """승인 스펙: 컨테이너 1개 앱은 단일 경로 그대로, 저장소 주소는 required_secrets.
+    InfraFit 029e195 가 코드 경로에서 redis 컨테이너를 만들어도 여러 컨테이너 경로로 가지 않는다."""
+    du = units.from_scan(scan(source.load(FLASK_REDIS)))
+    assert du["source"]["kind"] == "code" and len(du["containers"]) == 1 and du["datastores"]
+    assert units.is_multi(du) is False
+    out = handle({"mode": "analyze", "project_id": "prj_demo", "source_uri": FLASK_REDIS},
+                 brain=FakeBrain(rec=recommendation(target="aws_ec2", required_secrets=["REDIS_URL"])),
+                 store=LocalStore(str(tmp_path)))
+    rec = out["recommendation"]
+    assert rec["architecture"] == "ec2" and rec["target"] == "aws_ec2" and "deploy_units" not in rec
+    assert "REDIS_URL" in rec["required_secrets"]
+    assert "외부 데이터베이스/캐시가 필요해 보입니다: redis" in rec["warnings"]
+
+
+def test_is_multi_counts_code_stores_only_with_two_apps():
+    one = {"containers": [{"id": "web"}], "datastores": [{"id": "redis"}]}
+    assert not units.is_multi({**one, "source": {"kind": "code"}})
+    assert units.is_multi({**one, "source": {"kind": "compose"}})        # compose 저장소는 그대로 (PR #5)
+    assert units.is_multi({**one, "containers": [{"id": "web"}, {"id": "worker"}], "source": {"kind": "code"}})
+
+
+def test_drop_bundled_stores_matches_image_and_scope():
+    from agent import analyze as an
+    from agent.scan import STORE_WARNING
+    w = [STORE_WARNING + "postgres, redis", "기타"]
+    u = {"datastores": [{"id": "cache", "datastore": "svc-redis", "image": "docker.io/library/redis:7-alpine"}]}
+    assert an._drop_bundled_stores(w, {"datastores": ["postgres", "redis"]}, u) == [STORE_WARNING + "postgres", "기타"]
+    # 프로젝트 Dockerfile 로 빌드하는 저장소(image 없음)는 InfraFit 범위 id(ds-postgresql)로 맞춘다
+    u = {"datastores": [{"id": "db", "datastore": "ds-postgresql", "build_image": "db"},
+                        {"id": "redis", "image": "redis:7"}]}
+    assert an._drop_bundled_stores(w, {"datastores": ["postgres", "redis", "sql"]}, u) == ["기타"]
